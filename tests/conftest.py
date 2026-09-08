@@ -39,6 +39,8 @@ class FakeSpeaking:
     def __init__(self, *, ready: bool = True, fail: bool = False) -> None:
         self.ready = ready
         self._fail = fail
+        self.heard_text = ""
+        self.heard_language = ""
 
     def load(self) -> None:
         if self._fail:
@@ -46,8 +48,9 @@ class FakeSpeaking:
             raise RuntimeError(message)
         self.ready = True
 
-    def pcm_chunks(self, text: str) -> Iterator[bytes]:
-        del text
+    def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
+        self.heard_text = text
+        self.heard_language = language
         pcm = sine_pcm(0.3, rate=self.sample_rate)
         mid = (len(pcm) // 2) // BYTES_PER_SAMPLE * BYTES_PER_SAMPLE
         yield pcm[:mid]

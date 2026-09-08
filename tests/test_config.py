@@ -14,7 +14,7 @@ from tests.conftest import FakeHearing, FakeSpeaking, an_app
 def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SPEECH_PORT", "9001")
     monkeypatch.setenv("SPEECH_DEVICE", "cpu")
-    monkeypatch.setenv("SPEECH_SPEAKING_MODEL", "de_DE-thorsten-medium")
+    monkeypatch.setenv("SPEECH_SPEAKING_MODEL", "ResembleAI/chatterbox")
     monkeypatch.setenv("SPEECH_HEARING_MODEL", "Systran/faster-whisper-large-v3")
     monkeypatch.setenv("SPEECH_DEBUG", "true")
 
@@ -22,7 +22,7 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
 
     assert settings.port == 9001
     assert settings.device == "cpu"
-    assert settings.speaking_model == "de_DE-thorsten-medium"
+    assert settings.speaking_model == "ResembleAI/chatterbox"
     assert settings.hearing_model == "Systran/faster-whisper-large-v3"
     assert settings.debug is True
 

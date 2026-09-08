@@ -23,10 +23,23 @@ def test_health_answers_while_models_are_not_ready() -> None:
         "model": "fake-voice",
         "ready": False,
         "streams": False,
+        "sample_rate": 22_050,
     }
     assert body["hearing"] == {"model": "fake-ears", "ready": False}
     assert body["sample_rate"] == 16_000
     assert body["card_memory_mb"] == 17
+
+
+def test_health_reports_a_streaming_voice_and_its_sample_rate() -> None:
+    speaking = FakeSpeaking()
+    speaking.streams = True
+    speaking.sample_rate = 24_000
+
+    body = TestClient(an_app(speaking, memory_probe=lambda: 1)).get("/health").json()
+
+    assert body["speaking"]["streams"] is True
+    assert body["speaking"]["sample_rate"] == 24_000
+    assert body["sample_rate"] == 16_000
 
 
 def test_health_reports_ready_models() -> None:
@@ -34,6 +47,7 @@ def test_health_reports_ready_models() -> None:
 
     assert body["speaking"]["ready"] is True
     assert body["speaking"]["streams"] is False
+    assert body["speaking"]["sample_rate"] == 22_050
     assert body["hearing"]["ready"] is True
     assert body["sample_rate"] == 16_000
     assert body["card_memory_mb"] == 9
@@ -66,6 +80,7 @@ def test_health_answers_while_load_is_blocked() -> None:
             body = client.get("/health").json()
             assert body["speaking"]["ready"] is False
             assert body["hearing"]["ready"] is False
+            assert body["speaking"]["sample_rate"] == 22_050
             assert body["sample_rate"] == 16_000
             assert body["card_memory_mb"] == 42
         finally:

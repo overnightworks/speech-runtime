@@ -1,15 +1,18 @@
-"""The resident Piper voice."""
+"""The resident speaking engines: Piper by default, Chatterbox when configured."""
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
 
+from speech.config import CHATTERBOX_SPEAKING_MODEL
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
     from speech.config import Settings
+    from speech.service import SpeakingEngine
 
 _LOG = logging.getLogger(__name__)
 
@@ -43,8 +46,9 @@ class PiperSpeaking:
         self.ready = True
         _LOG.info("speaking model %s ready", self.model_name)
 
-    def pcm_chunks(self, text: str) -> Iterator[bytes]:
+    def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
         """Yield 16-bit mono PCM as soon as Piper produces a chunk."""
+        del language
         if self._voice is None:
             message = "speaking model is not loaded"
             raise RuntimeError(message)
@@ -52,6 +56,10 @@ class PiperSpeaking:
             yield chunk.audio_int16_bytes
 
 
-def speaking_from_settings(settings: Settings) -> PiperSpeaking:
-    """The configured Piper voice."""
+def speaking_from_settings(settings: Settings) -> SpeakingEngine:
+    """The configured voice: Chatterbox when named, otherwise Piper."""
+    if settings.speaking_model == CHATTERBOX_SPEAKING_MODEL:
+        from speech.chatterbox import ChatterboxSpeaking
+
+        return ChatterboxSpeaking(settings.speaking_model, settings.device)
     return PiperSpeaking(settings.speaking_model, settings.voice_cache)

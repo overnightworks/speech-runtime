@@ -62,7 +62,7 @@ class SpeakingEngine(Protocol):
     def load(self) -> None:
         """Load weights and become ready, or raise."""
 
-    def pcm_chunks(self, text: str) -> Iterator[bytes]:
+    def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
         """16-bit mono PCM as soon as the model produces it."""
 
 
@@ -117,6 +117,7 @@ class Runtime:
                 "model": self.speaking.model_name,
                 "ready": self.speaking.ready,
                 "streams": self.speaking.streams,
+                "sample_rate": self.speaking.sample_rate,
             },
             "hearing": {
                 "model": self.hearing.model_name,
@@ -147,9 +148,9 @@ def _log_text(*, debug: bool, kind: str, text: str) -> None:
         _LOG.debug("%s text: %s", kind, text)
 
 
-def _wav_chunks(runtime: Runtime, text: str) -> Iterator[bytes]:
+def _wav_chunks(runtime: Runtime, text: str, language: str) -> Iterator[bytes]:
     first = True
-    for pcm in runtime.speaking.pcm_chunks(text):
+    for pcm in runtime.speaking.pcm_chunks(text, language):
         if first:
             yield wav_header(runtime.speaking.sample_rate) + pcm
             first = False
@@ -197,7 +198,7 @@ def _mount_routes(app: FastAPI, runtime: Runtime) -> None:
             )
         _log_text(debug=runtime.debug, kind="speak", text=body.text)
         return StreamingResponse(
-            iterate_in_threadpool(_wav_chunks(runtime, body.text)),
+            iterate_in_threadpool(_wav_chunks(runtime, body.text, body.language)),
             media_type="audio/wav",
         )
 

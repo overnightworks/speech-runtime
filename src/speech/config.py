@@ -6,6 +6,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_SPEAKING_MODEL = "de_DE-thorsten-medium"
+CHATTERBOX_SPEAKING_MODEL = "ResembleAI/chatterbox"
 DEFAULT_HEARING_MODEL = "Systran/faster-whisper-large-v3"
 HEAR_SAMPLE_RATE = 16_000
 
