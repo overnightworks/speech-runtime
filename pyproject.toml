@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "presentator-speech"
+version = "0.0.0"
+description = "Local speaking and hearing for agent-presentator, one process on the card."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.141.1",
+    "faster-whisper==1.2.1",
+    "numpy==2.5.3",
+    "nvidia-cublas-cu12==12.4.5.8",
+    "nvidia-cudnn-cu12==9.1.0.70",
+    "piper-tts==1.8.0",
+    "pydantic-settings==2.15.0",
+    "uvicorn==0.52.4",
+]
+
+[project.scripts]
+presentator-speech = "speech.__main__:main"
+
+[dependency-groups]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.1.1",
+    "ruff==0.16.2",
+    "websockets==15.0.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/speech"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "CPY001",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "D101", "D102", "D103", "D107", "ARG002", "ANN001", "PLR2004"]
+"scripts/**" = [
+    "INP001",
+    "T201",
+    "S404",
+    "S603",
+    "S310",
+    "S108",
+    "S607",
+    "PLR2004",
+    "PLR0915",
+    "TRY003",
+    "EM101",
+    "ASYNC109",
+    "SIM113",
+]
+# nvidia-smi is resolved on PATH; the arguments are a constant.
+"src/speech/card.py" = ["S404", "S603"]
+# A failed load can be any library error; the process still names the model and stops.
+"src/speech/service.py" = ["BLE001"]
+# Piper and faster-whisper stay unloaded until the process actually holds them.
+"src/speech/speaking.py" = ["PLC0415"]
+"src/speech/hearing.py" = ["PLC0415"]
