@@ -35,6 +35,8 @@ from speech.speaking import speaking_from_settings
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
 
+    from starlette.types import Receive, Scope, Send
+
     from speech.config import Settings
 
 _LOG = logging.getLogger(__name__)
@@ -158,6 +160,29 @@ def _wav_chunks(runtime: Runtime, text: str, language: str) -> Iterator[bytes]:
             yield pcm
 
 
+class _ClosingWavResponse(StreamingResponse):
+    """A WAV stream that closes its synchronous generator once ASGI delivery ends.
+
+    Starlette's ASGI 2.3 `__call__` waits for an in-flight thread-pool `next()`
+    to return before delivering a client-disconnect cancellation, so by the
+    time this `finally` runs, `chunks` is never mid-execution: closing it here
+    releases synthesis (and the voice lock it holds) without relying on the
+    cyclic garbage collector.
+    """
+
+    def __init__(self, chunks: Iterator[bytes]) -> None:
+        """Wrap the sync generator for threaded iteration and remember it to close."""
+        self._chunks = chunks
+        super().__init__(iterate_in_threadpool(chunks), media_type="audio/wav")
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Stream as usual, then close the owned generator no matter the outcome."""
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._chunks.close()
+
+
 def create_app(
     settings: Settings | None = None,
     runtime: Runtime | None = None,
@@ -197,10 +222,7 @@ def _mount_routes(app: FastAPI, runtime: Runtime) -> None:
                 detail="speaking model is not ready",
             )
         _log_text(debug=runtime.debug, kind="speak", text=body.text)
-        return StreamingResponse(
-            iterate_in_threadpool(_wav_chunks(runtime, body.text, body.language)),
-            media_type="audio/wav",
-        )
+        return _ClosingWavResponse(_wav_chunks(runtime, body.text, body.language))
 
     @app.websocket("/hear")
     async def hear(websocket: WebSocket, language: str = "de") -> None:
