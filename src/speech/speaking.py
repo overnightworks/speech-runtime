@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from speech.config import CHATTERBOX_SPEAKING_MODEL
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
     from pathlib import Path
 
     from speech.config import Settings
@@ -46,7 +46,7 @@ class PiperSpeaking:
         self.ready = True
         _LOG.info("speaking model %s ready", self.model_name)
 
-    def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
+    def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
         """Yield 16-bit mono PCM as soon as Piper produces a chunk."""
         del language
         if self._voice is None:

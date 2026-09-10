@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
 _LOG = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class ChatterboxSpeaking:
         self.ready = True
         _LOG.info("speaking model %s ready", self.model_name)
 
-    def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
+    def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
         """Yield 16-bit mono PCM while Chatterbox is still synthesising."""
         if self._model is None:
             message = "speaking model is not loaded"

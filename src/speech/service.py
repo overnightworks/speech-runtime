@@ -33,7 +33,7 @@ from speech.pcm import wav_header
 from speech.speaking import speaking_from_settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Iterator
+    from collections.abc import AsyncIterator, Callable, Generator, Iterator
 
     from starlette.types import Receive, Scope, Send
 
@@ -64,7 +64,7 @@ class SpeakingEngine(Protocol):
     def load(self) -> None:
         """Load weights and become ready, or raise."""
 
-    def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
+    def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
         """16-bit mono PCM as soon as the model produces it."""
 
 
@@ -152,12 +152,16 @@ def _log_text(*, debug: bool, kind: str, text: str) -> None:
 
 def _wav_chunks(runtime: Runtime, text: str, language: str) -> Iterator[bytes]:
     first = True
-    for pcm in runtime.speaking.pcm_chunks(text, language):
-        if first:
-            yield wav_header(runtime.speaking.sample_rate) + pcm
-            first = False
-        else:
-            yield pcm
+    synthesis = runtime.speaking.pcm_chunks(text, language)
+    try:
+        for pcm in synthesis:
+            if first:
+                yield wav_header(runtime.speaking.sample_rate) + pcm
+                first = False
+            else:
+                yield pcm
+    finally:
+        synthesis.close()
 
 
 class _ClosingWavResponse(StreamingResponse):
