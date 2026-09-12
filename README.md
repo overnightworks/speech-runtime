@@ -118,9 +118,11 @@ All `SPEECH_*`:
 | `SPEECH_HEARING_MODEL` | `Systran/faster-whisper-large-v3` | Hugging Face id or faster-whisper size name |
 | `SPEECH_DEBUG` | `false` | When true, logs the text of what was spoken or heard. Audio is never logged. |
 | `SPEECH_VOICE_CACHE` | `~/.cache/piper` | Where Piper ONNX files are kept |
-| `SPEECH_HUGGINGFACE_CACHE` | `~/.cache/huggingface` | The shared local Hub cache for Chatterbox loading and status lookup |
+| `SPEECH_HUGGINGFACE_CACHE` | Provider Hub cache (normally `~/.cache/huggingface/hub`) | The shared local Hub cache for Chatterbox loading and status lookup |
 | `SPEECH_PRIVATE_DIRECTORY` | `/run/presentator-speech` | Private directory that owns `speech.sock` |
 | `SPEECH_STATE_DIRECTORY` | `~/.local/state/presentator-speech` | Private directory containing the durable selected voice |
+
+When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 
 `PRESENTATOR_RUNTIME_UID` is the same positive runtime UID the co-presenter
 uses. Speech creates its private directory at mode 0700 and its socket at 0600;

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from huggingface_hub import constants as huggingface_hub_constants
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,7 +27,7 @@ class Settings(BaseSettings):
     debug: bool = False
     voice_cache: Path = Field(default_factory=lambda: Path.home() / ".cache" / "piper")
     huggingface_cache: Path = Field(
-        default_factory=lambda: Path.home() / ".cache" / "huggingface"
+        default_factory=lambda: Path(huggingface_hub_constants.HF_HUB_CACHE)
     )
     private_directory: Path = Path("/run/presentator-speech")
     state_directory: Path = Field(

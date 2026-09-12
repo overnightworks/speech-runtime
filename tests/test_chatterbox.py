@@ -10,6 +10,8 @@ from speech.chatterbox import (
     _speech_token_chunks,
     language_id,
 )
+from speech.config import Settings
+from speech.voices import VoiceId, installed_voice_ids
 
 
 @pytest.mark.parametrize(
@@ -45,6 +47,28 @@ def test_chatterbox_checkpoint_refuses_network_access(tmp_path, monkeypatch) -> 
         "local_files_only": True,
         "cache_dir": tmp_path,
     }
+
+
+def test_chatterbox_catalogue_and_loader_find_the_provider_default_snapshot(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache_root = tmp_path / "hub"
+    snapshot = (
+        cache_root
+        / "models--ResembleAI--chatterbox"
+        / "snapshots"
+        / CHATTERBOX_REVISION
+    )
+    snapshot.mkdir(parents=True)
+    for artifact in CHATTERBOX_ARTIFACTS:
+        (snapshot / artifact).touch()
+    monkeypatch.delenv("SPEECH_HUGGINGFACE_CACHE", raising=False)
+    monkeypatch.setattr("huggingface_hub.constants.HF_HUB_CACHE", cache_root)
+
+    settings = Settings()
+
+    assert VoiceId.CHATTERBOX in installed_voice_ids(settings)
+    assert _checkpoint_dir(settings.huggingface_cache) == snapshot
 
 
 class _FakeHyperParams:

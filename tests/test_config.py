@@ -31,6 +31,25 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
     assert settings.debug is True
 
 
+def test_settings_default_uses_the_provider_hub_cache(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider_cache = tmp_path / "provider-hub-cache"
+    monkeypatch.delenv("SPEECH_HUGGINGFACE_CACHE", raising=False)
+    monkeypatch.setattr("huggingface_hub.constants.HF_HUB_CACHE", provider_cache)
+
+    assert Settings().huggingface_cache == provider_cache
+
+
+def test_settings_preserves_an_explicit_huggingface_cache(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    explicit_cache = tmp_path / "operator-hub-cache"
+    monkeypatch.setenv("SPEECH_HUGGINGFACE_CACHE", str(explicit_cache))
+
+    assert Settings().huggingface_cache == explicit_cache
+
+
 def test_settings_accepts_only_a_positive_shared_runtime_uid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
