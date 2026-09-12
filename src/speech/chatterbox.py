@@ -10,6 +10,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
+    from pathlib import Path
 
 _LOG = logging.getLogger(__name__)
 
@@ -18,13 +19,21 @@ CHATTERBOX_T3_WEIGHTS = "t3_mtl23ls_v3.safetensors"
 # Pinned to the snapshot this service was measured against; a moving "main"
 # could swap in weights nobody here has timed or listened to.
 CHATTERBOX_REVISION = "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18"
+CHATTERBOX_ARTIFACTS = (
+    "ve.pt",
+    CHATTERBOX_T3_WEIGHTS,
+    "s3gen.pt",
+    "grapheme_mtl_merged_expanded_v1.json",
+    "conds.pt",
+    "Cangjie5_TC.json",
+)
 # 25 speech tokens per second of 24 kHz audio; 12 tokens is about half a second.
 STREAM_TOKEN_CHUNK = 12
 MAX_NEW_TOKENS = 1000
 WARMUP_TEXT = "Hallo."
 
 
-def _checkpoint_dir() -> object:
+def _checkpoint_dir(cache: Path) -> object:
     """Local Hub snapshot. 0.1.7 from_pretrained takes only device and loads V2."""
     import os
     from pathlib import Path
@@ -36,21 +45,15 @@ def _checkpoint_dir() -> object:
             repo_id="ResembleAI/chatterbox",
             repo_type="model",
             revision=CHATTERBOX_REVISION,
-            allow_patterns=[
-                "ve.pt",
-                CHATTERBOX_T3_WEIGHTS,
-                "s3gen.pt",
-                "grapheme_mtl_merged_expanded_v1.json",
-                "conds.pt",
-                "Cangjie5_TC.json",
-            ],
+            allow_patterns=CHATTERBOX_ARTIFACTS,
             local_files_only=os.environ.get("HF_HUB_OFFLINE") == "1",
             token=os.getenv("HF_TOKEN"),
+            cache_dir=cache,
         )
     )
 
 
-def _load_v3(device: str) -> object:
+def _load_v3(device: str, cache: Path) -> object:
     """Load Multilingual V3 weights the installed package has no t3_model flag for."""
     import torch
     from chatterbox.models.s3gen import S3Gen
@@ -61,7 +64,7 @@ def _load_v3(device: str) -> object:
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS, Conditionals
     from safetensors.torch import load_file as load_safetensors
 
-    ckpt_dir = _checkpoint_dir()
+    ckpt_dir = _checkpoint_dir(cache)
     map_location = torch.device("cpu") if device in {"cpu", "mps"} else None
     voice_encoder = VoiceEncoder()
     voice_encoder.load_state_dict(
@@ -113,11 +116,12 @@ class ChatterboxSpeaking:
     streams = True
     sample_rate = CHATTERBOX_SAMPLE_RATE
 
-    def __init__(self, model_name: str, device: str) -> None:
+    def __init__(self, model_name: str, device: str, cache: Path) -> None:
         """Remember the Hub id and the device the weights will occupy."""
         self.model_name = model_name
         self.ready = False
         self._device = device
+        self._cache = cache
         self._model = None
         self._lock = threading.Lock()
 
@@ -127,7 +131,7 @@ class ChatterboxSpeaking:
 
         prepare_cuda_libraries()
         _LOG.info("loading speaking model %s on %s", self.model_name, self._device)
-        model = _load_v3(self._device)
+        model = _load_v3(self._device, self._cache)
         self._model = model
         self.sample_rate = int(model.sr)
         for _chunk in _stream_pcm(model, WARMUP_TEXT, "de"):

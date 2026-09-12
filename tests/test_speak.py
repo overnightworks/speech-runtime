@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import threading
 from collections.abc import Iterator
 
@@ -14,6 +15,7 @@ from starlette.status import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
+from speech import chatterbox, cuda_libs
 from speech.chatterbox import CHATTERBOX_SAMPLE_RATE
 from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
 from speech.pcm import BYTES_PER_SAMPLE, is_silence, pcm_from_wav
@@ -79,7 +81,7 @@ def test_speak_wav_header_uses_the_voice_sample_rate() -> None:
 
 def test_default_speaking_model_is_piper(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SPEECH_SPEAKING_MODEL", raising=False)
-    engine = speaking_from_settings(Settings())
+    engine = speaking_from_settings(Settings(PRESENTATOR_RUNTIME_UID=os.geteuid()))
 
     assert isinstance(engine, PiperSpeaking)
     assert engine.streams is False
@@ -88,12 +90,45 @@ def test_default_speaking_model_is_piper(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_chatterbox_model_name_selects_the_streaming_voice() -> None:
     engine = speaking_from_settings(
-        Settings(speaking_model=CHATTERBOX_SPEAKING_MODEL, device="cuda"),
+        Settings(
+            speaking_model=CHATTERBOX_SPEAKING_MODEL,
+            device="cuda",
+            PRESENTATOR_RUNTIME_UID=os.geteuid(),
+        ),
     )
 
     assert engine.model_name == CHATTERBOX_SPEAKING_MODEL
     assert engine.streams is True
     assert engine.sample_rate == CHATTERBOX_SAMPLE_RATE
+
+
+def test_chatterbox_load_uses_the_configured_huggingface_cache(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    observed: list[tuple[str, object]] = []
+
+    class LoadedModel:
+        sr = CHATTERBOX_SAMPLE_RATE
+
+    def load_from_cache(device: str, cache: object) -> LoadedModel:
+        observed.append((device, cache))
+        return LoadedModel()
+
+    monkeypatch.setattr(cuda_libs, "prepare_cuda_libraries", lambda: None)
+    monkeypatch.setattr(chatterbox, "_load_v3", load_from_cache)
+    monkeypatch.setattr(chatterbox, "_stream_pcm", lambda *_args: iter(()))
+    settings = Settings(
+        speaking_model=CHATTERBOX_SPEAKING_MODEL,
+        device="cpu",
+        huggingface_cache=tmp_path,
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+    )
+
+    engine = speaking_from_settings(settings)
+    engine.load()
+
+    assert observed == [("cpu", tmp_path)]
+    assert engine.ready is True
 
 
 # TestClient's ASGITransport never delivers a mid-stream `http.disconnect`, so the

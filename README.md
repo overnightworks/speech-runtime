@@ -96,6 +96,9 @@ Weights stay in:
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
 - `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox), also reported as `speaking.sample_rate`. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
+- `GET /voices` exists only on `speech.sock` in `SPEECH_PRIVATE_DIRECTORY`. It
+  reports the five fixed admin catalogue rows from the shared runtime and local
+  artifact evidence. The public TCP application has no `/voices` route.
 
 `sample_rate` is the hear rate. Speak is a WAV, so its rate is in the header. A caller that feeds speak output into hear must resample.
 
@@ -112,6 +115,12 @@ All `SPEECH_*`:
 | `SPEECH_HEARING_MODEL` | `Systran/faster-whisper-large-v3` | Hugging Face id or faster-whisper size name |
 | `SPEECH_DEBUG` | `false` | When true, logs the text of what was spoken or heard. Audio is never logged. |
 | `SPEECH_VOICE_CACHE` | `~/.cache/piper` | Where Piper ONNX files are kept |
+| `SPEECH_HUGGINGFACE_CACHE` | `~/.cache/huggingface` | The shared local Hub cache for Chatterbox loading and status lookup |
+| `SPEECH_PRIVATE_DIRECTORY` | `/run/presentator-speech` | Private directory that owns `speech.sock` |
+
+`PRESENTATOR_RUNTIME_UID` is the same positive runtime UID the co-presenter
+uses. Speech creates its private directory at mode 0700 and its socket at 0600;
+an existing socket or an unsafe directory refuses startup.
 
 If a model cannot be loaded the process exits and names which one failed.
 

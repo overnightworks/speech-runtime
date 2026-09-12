@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     hearing_model: str = DEFAULT_HEARING_MODEL
     debug: bool = False
     voice_cache: Path = Field(default_factory=lambda: Path.home() / ".cache" / "piper")
+    huggingface_cache: Path = Field(
+        default_factory=lambda: Path.home() / ".cache" / "huggingface"
+    )
+    private_directory: Path = Path("/run/presentator-speech")
+    runtime_uid: int | None = Field(
+        default=None,
+        gt=0,
+        validation_alias="PRESENTATOR_RUNTIME_UID",
+    )
 
 
 def load_settings() -> Settings:

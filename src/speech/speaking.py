@@ -61,5 +61,7 @@ def speaking_from_settings(settings: Settings) -> SpeakingEngine:
     if settings.speaking_model == CHATTERBOX_SPEAKING_MODEL:
         from speech.chatterbox import ChatterboxSpeaking
 
-        return ChatterboxSpeaking(settings.speaking_model, settings.device)
+        return ChatterboxSpeaking(
+            settings.speaking_model, settings.device, settings.huggingface_cache
+        )
     return PiperSpeaking(settings.speaking_model, settings.voice_cache)

@@ -101,4 +101,4 @@ def an_app(
         debug=debug,
         memory_probe=memory_probe if memory_probe is not None else (lambda: 0),
     )
-    return create_app(runtime=runtime, load_models=False)
+    return create_app(runtime=runtime)

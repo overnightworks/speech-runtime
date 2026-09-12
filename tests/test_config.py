@@ -1,6 +1,7 @@
 """Configuration comes from the environment; a failed load names the model."""
 
 import logging
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,6 +18,7 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("SPEECH_SPEAKING_MODEL", "ResembleAI/chatterbox")
     monkeypatch.setenv("SPEECH_HEARING_MODEL", "Systran/faster-whisper-large-v3")
     monkeypatch.setenv("SPEECH_DEBUG", "true")
+    monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", str(os.geteuid()))
 
     settings = Settings()
 
@@ -27,18 +29,24 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
     assert settings.debug is True
 
 
-def test_a_failed_load_names_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    exits: list[int] = []
-    monkeypatch.setattr(
-        "speech.service.os._exit",
-        lambda code: exits.append(code) or (_ for _ in ()).throw(SystemExit(code)),
-    )
+def test_settings_accepts_only_a_positive_shared_runtime_uid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PRESENTATOR_RUNTIME_UID", raising=False)
+
+    assert Settings().runtime_uid is None
+
+    monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", "0")
+    with pytest.raises(ValueError, match="greater than 0"):
+        Settings()
+
+
+def test_a_failed_load_names_the_model() -> None:
     runtime = Runtime(FakeSpeaking(fail=True), FakeHearing())
 
-    with pytest.raises(SystemExit):
+    with pytest.raises(RuntimeError, match="speaking model fake-voice failed to load"):
         runtime.load()
 
-    assert exits == [1]
     assert (
         failed_to_load_message("speaking", "fake-voice")
         == "speaking model fake-voice failed to load"

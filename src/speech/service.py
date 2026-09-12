@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import sys
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -31,9 +28,11 @@ from speech.hearing import (
 )
 from speech.pcm import wav_header
 from speech.speaking import speaking_from_settings
+from speech.voices import VoiceStatus, statuses
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Generator, Iterator
+    import threading
+    from collections.abc import Callable, Generator, Iterator
 
     from starlette.types import Receive, Scope, Send
 
@@ -96,6 +95,7 @@ class Runtime:
         self.speaking = speaking
         self.hearing = hearing
         self.debug = debug
+        self.loading = False
         self._memory_probe = memory_probe or card_memory_mb
 
     @classmethod
@@ -107,10 +107,16 @@ class Runtime:
             debug=settings.debug,
         )
 
-    def load(self) -> None:
-        """Load both models, exiting the process if either cannot."""
-        _load_or_die("speaking", self.speaking.model_name, self.speaking.load)
-        _load_or_die("hearing", self.hearing.model_name, self.hearing.load)
+    def load(self, stopping: threading.Event | None = None) -> None:
+        """Load both models, leaving process ownership to the orchestrator."""
+        self.loading = True
+        try:
+            _load_or_raise("speaking", self.speaking.model_name, self.speaking.load)
+            if stopping is not None and stopping.is_set():
+                return
+            _load_or_raise("hearing", self.hearing.model_name, self.hearing.load)
+        finally:
+            self.loading = False
 
     def health(self) -> dict[str, object]:
         """The contract body for GET /health."""
@@ -135,14 +141,13 @@ def failed_to_load_message(which: str, model: str) -> str:
     return f"{which} model {model} failed to load"
 
 
-def _load_or_die(which: str, model: str, load: Callable[[], None]) -> None:
+def _load_or_raise(which: str, model: str, load: Callable[[], None]) -> None:
     try:
         load()
     except Exception:
         message = failed_to_load_message(which, model)
         _LOG.exception("%s", message)
-        sys.stderr.write(f"{message}\n")
-        os._exit(1)
+        raise RuntimeError(message) from None
 
 
 def _log_text(*, debug: bool, kind: str, text: str) -> None:
@@ -190,26 +195,31 @@ class _ClosingWavResponse(StreamingResponse):
 def create_app(
     settings: Settings | None = None,
     runtime: Runtime | None = None,
-    *,
-    load_models: bool = True,
 ) -> FastAPI:
-    """The FastAPI app that holds both models."""
-    settings = settings or load_settings()
-    runtime = runtime or Runtime.from_settings(settings)
+    """Build the public application over the orchestrator-owned runtime."""
+    if runtime is None:
+        runtime = Runtime.from_settings(settings or load_settings())
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        loader = None
-        if load_models:
-            loader = asyncio.create_task(asyncio.to_thread(runtime.load))
-            app.state.loader = loader
-        yield
-        if loader is not None and not loader.done():
-            loader.cancel()
-
-    app = FastAPI(title="presentator-speech", lifespan=lifespan)
+    app = FastAPI(title="presentator-speech")
     app.state.runtime = runtime
     _mount_routes(app, runtime)
+    return app
+
+
+def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
+    """Build the private read-only control surface over the shared runtime."""
+    app = FastAPI(title="presentator-speech-control", docs_url=None, redoc_url=None)
+
+    @app.get("/voices")
+    def voices() -> dict[str, tuple[VoiceStatus, ...]]:
+        return {
+            "voices": statuses(
+                settings,
+                ready=runtime.speaking.ready,
+                loading=runtime.loading,
+            )
+        }
+
     return app
 
 
