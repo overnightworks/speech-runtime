@@ -40,6 +40,27 @@ def test_session_partial_then_final_then_a_second_utterance() -> None:
     assert second == {"text": "eins", "final": False}
 
 
+def test_session_skips_silence_until_speech_and_keeps_its_context() -> None:
+    transcribed: list[bytes] = []
+
+    def transcribe(pcm: bytes) -> str:
+        transcribed.append(pcm)
+        return "eins"
+
+    session = HearingSession(transcribe, HEAR_SAMPLE_RATE)
+    silence = _silence(0.5)
+    speech = sine_pcm(0.5)
+    session.add_pcm(silence)
+
+    assert session.poll() is None
+    assert transcribed == []
+
+    session.add_pcm(speech)
+
+    assert session.poll() == {"text": "eins", "final": False}
+    assert transcribed == [silence + speech]
+
+
 def test_session_rejects_a_frame_over_the_size_bound() -> None:
     session = HearingSession(lambda _pcm: "x", HEAR_SAMPLE_RATE)
     too_big = sine_pcm(MAX_FRAME_SECONDS + 0.1)
@@ -60,3 +81,25 @@ def test_session_forces_a_final_at_the_duration_cap() -> None:
     session.add_pcm(sine_pcm(0.5))
     second = session.poll()
     assert second == {"text": "lang", "final": False}
+
+
+def test_session_resets_silent_audio_at_the_duration_cap() -> None:
+    transcribed: list[bytes] = []
+
+    def transcribe(pcm: bytes) -> str:
+        transcribed.append(pcm)
+        return "eins"
+
+    session = HearingSession(transcribe, HEAR_SAMPLE_RATE)
+    silent_frame = _silence(MAX_FRAME_SECONDS)
+    for _ in range(int(MAX_UTTERANCE_SECONDS / MAX_FRAME_SECONDS)):
+        session.add_pcm(silent_frame)
+
+    assert session.poll() is None
+    assert transcribed == []
+
+    speech = sine_pcm(0.5)
+    session.add_pcm(speech)
+
+    assert session.poll() == {"text": "eins", "final": False}
+    assert transcribed == [speech]

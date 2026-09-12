@@ -90,6 +90,8 @@ class HearingSession:
                 self._heard_speech and self._tail_is_silent()
             ):
                 return self._take_final_locked()
+            if not self._heard_speech:
+                return None
             now = time.monotonic()
             if (
                 now - self._last_transcribe_at < PARTIAL_PERIOD_SECONDS
