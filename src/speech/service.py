@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -73,6 +74,19 @@ class SpeakRequest(BaseModel):
     language: str
 
 
+class SampleLanguage(StrEnum):
+    """The two fixed phrases the private sample endpoint can synthesize."""
+
+    GERMAN = "de"
+    ENGLISH = "en"
+
+
+_SAMPLE_TEXT: dict[SampleLanguage, str] = {
+    SampleLanguage.GERMAN: "Hallo, ich bin die Stimme deiner Präsentation.",
+    SampleLanguage.ENGLISH: "Hello, I am the voice of your presentation.",
+}
+
+
 class SpeakingEngine(Protocol):
     """A resident voice."""
 
@@ -134,6 +148,7 @@ class Runtime:
             self._engines[dependencies.default_voice] = speaking
         self._state_lock = threading.Lock()
         self._transition_guard = threading.Lock()
+        self._synthesis_gate = threading.Lock()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Runtime:
@@ -220,6 +235,31 @@ class Runtime:
             if self.loading:
                 return None
             return self.speaking
+
+    def preacquire_sample(self, voice: VoiceId) -> _SampleSynthesis | None:
+        """Reserve one verified active voice without delaying an ongoing talk."""
+        with self._state_lock:
+            speaking = self.speaking
+            if (
+                self.loading
+                or self._selected is not voice
+                or speaking is None
+                or not speaking.ready
+            ):
+                return None
+            sample_rate = speaking.sample_rate
+        if not self._synthesis_gate.acquire(blocking=False):
+            raise _SynthesisBusyError from None
+        return _SampleSynthesis(
+            speaking=speaking,
+            sample_rate=sample_rate,
+            lease=_SynthesisLease(self._synthesis_gate),
+        )
+
+    def acquire_synthesis(self) -> _SynthesisLease:
+        """Wait for the one request-synthesis owner before generating PCM."""
+        self._synthesis_gate.acquire()
+        return _SynthesisLease(self._synthesis_gate)
 
     def _load_saved_selection(self) -> None:
         selection = self._selection
@@ -335,6 +375,36 @@ class RuntimeDependencies:
     default_voice: VoiceId | None = VoiceId.PIPER
 
 
+class _SynthesisBusyError(RuntimeError):
+    """The active voice is already generating a request."""
+
+
+class _SynthesisLease:
+    """One close-idempotent reservation of Runtime's synthesis gate."""
+
+    def __init__(self, gate: threading.Lock) -> None:
+        self._gate = gate
+        self._closed = False
+        self._guard = threading.Lock()
+
+    def close(self) -> None:
+        """Release the reserved synthesis slot once."""
+        with self._guard:
+            if self._closed:
+                return
+            self._closed = True
+            self._gate.release()
+
+
+@dataclass(frozen=True, slots=True)
+class _SampleSynthesis:
+    """The active engine, native rate, and gate reservation a sample owns."""
+
+    speaking: SpeakingEngine
+    sample_rate: int
+    lease: _SynthesisLease
+
+
 def _load_or_raise(which: str, model: str, load: Callable[[], None]) -> None:
     try:
         load()
@@ -349,18 +419,35 @@ def _log_text(*, debug: bool, kind: str, text: str) -> None:
         _LOG.debug("%s text: %s", kind, text)
 
 
-def _wav_chunks(speaking: SpeakingEngine, text: str, language: str) -> Iterator[bytes]:
+def _wav_chunks(
+    speaking: SpeakingEngine,
+    text: str,
+    language: str,
+    *,
+    sample_rate: int | None = None,
+) -> Iterator[bytes]:
     first = True
     synthesis = speaking.pcm_chunks(text, language)
     try:
         for pcm in synthesis:
             if first:
-                yield wav_header(speaking.sample_rate) + pcm
+                yield wav_header(sample_rate or speaking.sample_rate) + pcm
                 first = False
             else:
                 yield pcm
     finally:
         synthesis.close()
+
+
+def _public_wav_chunks(
+    runtime: Runtime, speaking: SpeakingEngine, text: str, language: str
+) -> Iterator[bytes]:
+    """Acquire Runtime's gate only when a returned public stream first runs."""
+    lease = runtime.acquire_synthesis()
+    try:
+        yield from _wav_chunks(speaking, text, language)
+    finally:
+        lease.close()
 
 
 class _ClosingWavResponse(StreamingResponse):
@@ -373,9 +460,12 @@ class _ClosingWavResponse(StreamingResponse):
     cyclic garbage collector.
     """
 
-    def __init__(self, chunks: Iterator[bytes]) -> None:
+    def __init__(
+        self, chunks: Iterator[bytes], lease: _SynthesisLease | None = None
+    ) -> None:
         """Wrap the sync generator for threaded iteration and remember it to close."""
         self._chunks = chunks
+        self._lease = lease
         super().__init__(iterate_in_threadpool(chunks), media_type="audio/wav")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -384,6 +474,8 @@ class _ClosingWavResponse(StreamingResponse):
             await super().__call__(scope, receive, send)
         finally:
             self._chunks.close()
+            if self._lease is not None:
+                self._lease.close()
 
 
 def create_app(
@@ -417,6 +509,27 @@ def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
             )
         return {"outcome": outcome}
 
+    @app.post("/voices/{voice}/sample/{language}")
+    def sample(voice: VoiceId, language: SampleLanguage) -> StreamingResponse:
+        try:
+            admitted = runtime.preacquire_sample(voice)
+        except _SynthesisBusyError:
+            raise HTTPException(status_code=409, detail="speech is busy") from None
+        if admitted is None:
+            raise HTTPException(status_code=404, detail="active voice is unavailable")
+        chunks = _wav_chunks(
+            admitted.speaking,
+            _SAMPLE_TEXT[language],
+            language.value,
+            sample_rate=admitted.sample_rate,
+        )
+        try:
+            return _ClosingWavResponse(chunks, admitted.lease)
+        except Exception:
+            chunks.close()
+            admitted.lease.close()
+            raise
+
     return app
 
 
@@ -434,7 +547,9 @@ def _mount_routes(app: FastAPI, runtime: Runtime) -> None:
                 detail="speaking model is not ready",
             )
         _log_text(debug=runtime.debug, kind="speak", text=body.text)
-        return _ClosingWavResponse(_wav_chunks(speaking, body.text, body.language))
+        return _ClosingWavResponse(
+            _public_wav_chunks(runtime, speaking, body.text, body.language)
+        )
 
     @app.websocket("/hear")
     async def hear(websocket: WebSocket, language: str = "de") -> None:

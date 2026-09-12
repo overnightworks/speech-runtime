@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -118,7 +117,6 @@ class ChatterboxSpeaking:
         self._device = device
         self._cache = cache
         self._model = None
-        self._lock = threading.Lock()
 
     def load(self) -> None:
         """Load V3 weights onto the configured device from the local Hub cache."""
@@ -137,8 +135,7 @@ class ChatterboxSpeaking:
         if self._model is None:
             message = "speaking model is not loaded"
             raise RuntimeError(message)
-        with self._lock:
-            yield from _stream_pcm(self._model, text, language_id(language))
+        yield from _stream_pcm(self._model, text, language_id(language))
 
 
 def _stream_pcm(model: object, text: str, language: str) -> Iterator[bytes]:

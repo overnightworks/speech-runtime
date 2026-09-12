@@ -169,15 +169,8 @@ def test_piper_load_requires_local_onnx_and_metadata(tmp_path, monkeypatch) -> N
 _ASGI_TIMEOUT_SECONDS = 5.0
 
 
-class _LockSerializedVoice:
-    """A synthesis fake serialised by a real lock, paced by test-controlled gates.
-
-    Mirrors production Chatterbox's `with self._lock: yield ...` shape so a
-    disconnect regression proves the voice lock is released, not a stand-in.
-    The acquire itself is bounded: if a production regression ever leaves a
-    prior generator holding this lock forever, a later request fails fast
-    with a clear exception instead of hanging the test process.
-    """
+class _GatedVoice:
+    """A synthesis fake whose first PCM step waits for a test-controlled gate."""
 
     model_name = "gated-voice"
     ready = True
@@ -187,25 +180,18 @@ class _LockSerializedVoice:
     def __init__(self) -> None:
         self.entered_first_step = threading.Event()
         self.release_first_step = threading.Event()
-        self._lock = threading.Lock()
 
     def load(self) -> None:
         self.ready = True
 
     def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
         del text, language
-        if not self._lock.acquire(timeout=_ASGI_TIMEOUT_SECONDS):
-            message = "voice lock still held after the bound: synthesis never released"
-            raise TimeoutError(message)
-        try:
-            self.entered_first_step.set()
-            self.release_first_step.wait(timeout=_ASGI_TIMEOUT_SECONDS)
-            pcm = sine_pcm(0.05, rate=self.sample_rate)
-            mid = (len(pcm) // 2) // BYTES_PER_SAMPLE * BYTES_PER_SAMPLE
-            yield pcm[:mid]
-            yield pcm[mid:]
-        finally:
-            self._lock.release()
+        self.entered_first_step.set()
+        self.release_first_step.wait(timeout=_ASGI_TIMEOUT_SECONDS)
+        pcm = sine_pcm(0.05, rate=self.sample_rate)
+        mid = (len(pcm) // 2) // BYTES_PER_SAMPLE * BYTES_PER_SAMPLE
+        yield pcm[:mid]
+        yield pcm[mid:]
 
 
 def _speak_scope() -> dict[str, object]:
@@ -328,7 +314,7 @@ def test_speak_disconnect_between_chunks_frees_the_voice_for_the_next_request() 
     """ASGI2.3 cancels the send-side task while it awaits `send()` holding a chunk."""
 
     async def scenario() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-        voice = _LockSerializedVoice()
+        voice = _GatedVoice()
         app = an_app(voice)
         receive = _DisconnectingReceive()
         send = _HoldingSend(hold_after_first_chunk=True)
@@ -358,7 +344,7 @@ def test_speak_disconnect_during_synthesis_frees_the_voice() -> None:
     """ASGI2.3 defers cancellation until the in-flight thread-pool `next()` returns."""
 
     async def scenario() -> list[dict[str, object]]:
-        voice = _LockSerializedVoice()
+        voice = _GatedVoice()
         app = an_app(voice)
         receive = _DisconnectingReceive()
         send = _HoldingSend()

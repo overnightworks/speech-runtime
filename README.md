@@ -67,7 +67,7 @@ implicit net both need `pkg_resources`, restored by pinning `setuptools`):
 | WAV RMS | not silence on every repetition |
 | First partial transcript | 0.966 s (frame 7), while frames were still being sent |
 | Final transcript | matched the spoken sentence at 7.901 s |
-| Second `/speak` while the first streams | both WAVs distinct speech; the voice lock serialises generation |
+| Second `/speak` while the first streams | both WAVs distinct speech; Runtime serialises request synthesis |
 | Card before this process | 6296 MiB |
 | Card with Chatterbox + Whisper resident (before any `/speak` call) | 13465 MiB |
 | Chatterbox + hearing footprint together | ~7169 MiB GPU (Chatterbox itself ~3.5 GB, matching #70's inference for a 0.5B model beside Whisper's ~3.9 GB) |
@@ -94,13 +94,15 @@ Weights stay in:
 ## Contract
 
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
-- `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox), also reported as `speaking.sample_rate`. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
+- `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox), also reported as `speaking.sample_rate`. Runtime serialises request synthesis across both engines. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
 - `GET /voices` exists only on `speech.sock` in `SPEECH_PRIVATE_DIRECTORY`. It
   reports the five fixed admin catalogue rows, typed recovery detail, and local
   artifact evidence. `POST /voices/{piper|chatterbox}/load` is private too; it
   synchronously loads an already-downloaded baseline, atomically persists the
-  choice, and retains loaded baseline engines for the process lifetime. The
+  choice, and retains loaded baseline engines for the process lifetime.
+  `POST /voices/{piper|chatterbox}/sample/{de|en}` returns one fixed WAV only
+  when its named voice is still active and ready; contention returns 409. The
   public TCP application has no `/voices` route.
 
 `sample_rate` is the hear rate. Speak is a WAV, so its rate is in the header. A caller that feeds speak output into hear must resample.
