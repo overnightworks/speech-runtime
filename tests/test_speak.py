@@ -3,8 +3,10 @@
 import asyncio
 import json
 import os
+import sys
 import threading
 from collections.abc import Iterator
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -19,7 +21,8 @@ from speech import chatterbox, cuda_libs
 from speech.chatterbox import CHATTERBOX_SAMPLE_RATE
 from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
 from speech.pcm import BYTES_PER_SAMPLE, is_silence, pcm_from_wav
-from speech.speaking import PiperSpeaking, speaking_from_settings
+from speech.speaking import PiperSpeaking, speaking_for_voice
+from speech.voices import VoiceId
 from tests.conftest import SPEAK_SAMPLE_RATE, FakeSpeaking, an_app, sine_pcm
 
 
@@ -79,22 +82,23 @@ def test_speak_wav_header_uses_the_voice_sample_rate() -> None:
     assert rate == CHATTERBOX_SAMPLE_RATE
 
 
-def test_default_speaking_model_is_piper(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("SPEECH_SPEAKING_MODEL", raising=False)
-    engine = speaking_from_settings(Settings(PRESENTATOR_RUNTIME_UID=os.geteuid()))
+def test_piper_voice_id_constructs_the_local_piper_engine() -> None:
+    engine = speaking_for_voice(
+        Settings(PRESENTATOR_RUNTIME_UID=os.geteuid()), VoiceId.PIPER
+    )
 
     assert isinstance(engine, PiperSpeaking)
     assert engine.streams is False
     assert engine.model_name == "de_DE-thorsten-medium"
 
 
-def test_chatterbox_model_name_selects_the_streaming_voice() -> None:
-    engine = speaking_from_settings(
+def test_chatterbox_voice_id_constructs_the_streaming_voice() -> None:
+    engine = speaking_for_voice(
         Settings(
-            speaking_model=CHATTERBOX_SPEAKING_MODEL,
             device="cuda",
             PRESENTATOR_RUNTIME_UID=os.geteuid(),
         ),
+        VoiceId.CHATTERBOX,
     )
 
     assert engine.model_name == CHATTERBOX_SPEAKING_MODEL
@@ -124,10 +128,38 @@ def test_chatterbox_load_uses_the_configured_huggingface_cache(
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
 
-    engine = speaking_from_settings(settings)
+    engine = speaking_for_voice(settings, VoiceId.CHATTERBOX)
     engine.load()
 
     assert observed == [("cpu", tmp_path)]
+    assert engine.ready is True
+
+
+def test_piper_load_requires_local_onnx_and_metadata(tmp_path, monkeypatch) -> None:
+    loaded: list[object] = []
+
+    class LocalVoice:
+        config = SimpleNamespace(sample_rate=22_050)
+
+    def load(path: object) -> LocalVoice:
+        loaded.append(path)
+        return LocalVoice()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "piper",
+        SimpleNamespace(PiperVoice=SimpleNamespace(load=load)),
+    )
+    engine = PiperSpeaking("local-voice", tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        engine.load()
+    (tmp_path / "local-voice.onnx").touch()
+    (tmp_path / "local-voice.onnx.json").touch()
+
+    engine.load()
+
+    assert loaded == [tmp_path / "local-voice.onnx"]
     assert engine.ready is True
 
 

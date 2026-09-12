@@ -32,6 +32,7 @@ class VoiceState(StrEnum):
 
     ACTIVE = "active"
     LOADING = "loading"
+    FAILED = "failed"
     DOWNLOADED = "downloaded"
     NOT_DOWNLOADED = "not_downloaded"
     UNAVAILABLE = "unavailable"
@@ -47,15 +48,52 @@ class VoiceStatus:
     state: VoiceState
 
 
-def statuses(
-    settings: Settings, *, ready: bool, loading: bool
-) -> tuple[VoiceStatus, ...]:
+class VoiceRecoveryKind(StrEnum):
+    """Why speaking currently has no active engine."""
+
+    INVALID_SELECTION = "invalid_selection"
+    LOAD_FAILED = "load_failed"
+    DURABILITY_UNCONFIRMED = "durability_unconfirmed"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VoiceRecovery:
+    """Typed, non-sensitive recovery detail for the private snapshot."""
+
+    kind: VoiceRecoveryKind
+    voice: VoiceId | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VoiceSnapshot:
+    """The complete private status and any recoverable selection fact."""
+
+    voices: tuple[VoiceStatus, ...]
+    recovery: VoiceRecovery | None
+
+
+class VoiceLoadOutcome(StrEnum):
+    """The only outcomes a Load caller receives."""
+
+    ACTIVATED = "activated"
+    ACTIVATED_DURABILITY_UNCONFIRMED = "activated_durability_unconfirmed"
+    NOT_ACTIVATED = "not_activated"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class VoiceRuntimeState:
+    """The runtime facts that determine the closed catalogue's row states."""
+
+    selected: VoiceId | None
+    ready: bool
+    loading: bool
+    pending: VoiceId | None
+    failed: VoiceId | None
+
+
+def statuses(settings: Settings, runtime: VoiceRuntimeState) -> tuple[VoiceStatus, ...]:
     """Report the complete catalogue, refusing to guess after a failed lookup."""
-    installed = _installed(settings)
-    configured = _configured_id(settings.speaking_model)
-    if configured is None:
-        message = "the configured speaking model is not in the catalogue"
-        raise ValueError(message)
+    installed = installed_voice_ids(settings)
     return tuple(
         VoiceStatus(
             id=voice_id,
@@ -63,10 +101,8 @@ def statuses(
             language=language,
             state=_state(
                 voice_id,
-                configured=configured,
+                runtime=runtime,
                 installed=installed,
-                ready=ready,
-                loading=loading,
             ),
         )
         for voice_id, name, language in _CATALOGUE
@@ -82,15 +118,7 @@ _CATALOGUE = (
 )
 
 
-def _configured_id(model: str) -> VoiceId | None:
-    if model == DEFAULT_SPEAKING_MODEL:
-        return VoiceId.PIPER
-    if model == CHATTERBOX_SPEAKING_MODEL:
-        return VoiceId.CHATTERBOX
-    return None
-
-
-def _installed(settings: Settings) -> frozenset[VoiceId]:
+def installed_voice_ids(settings: Settings) -> frozenset[VoiceId]:
     """Inspect only exact artifacts; this does not read credentials or the network."""
     installed: set[VoiceId] = set()
     if _piper_is_present(settings.voice_cache, DEFAULT_SPEAKING_MODEL):
@@ -124,16 +152,16 @@ def _chatterbox_is_present(cache: Path) -> bool:
 def _state(
     voice_id: VoiceId,
     *,
-    configured: VoiceId,
+    runtime: VoiceRuntimeState,
     installed: frozenset[VoiceId],
-    ready: bool,
-    loading: bool,
 ) -> VoiceState:
     if voice_id in {VoiceId.QWEN, VoiceId.VOXCPM, VoiceId.MAGPIE}:
         return VoiceState.UNAVAILABLE
-    if voice_id is configured and ready:
+    if voice_id is runtime.failed:
+        return VoiceState.FAILED
+    if voice_id is runtime.selected and runtime.ready:
         return VoiceState.ACTIVE
-    if voice_id is configured and loading:
+    if runtime.loading and voice_id is (runtime.pending or runtime.selected):
         return VoiceState.LOADING
     if voice_id in installed:
         return VoiceState.DOWNLOADED

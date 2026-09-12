@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
-from speech.config import CHATTERBOX_SPEAKING_MODEL
+from speech.config import CHATTERBOX_SPEAKING_MODEL, DEFAULT_SPEAKING_MODEL
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -13,8 +12,7 @@ if TYPE_CHECKING:
 
     from speech.config import Settings
     from speech.service import SpeakingEngine
-
-_LOG = logging.getLogger(__name__)
+    from speech.voices import VoiceId
 
 
 class PiperSpeaking:
@@ -31,20 +29,16 @@ class PiperSpeaking:
         self._voice = None
 
     def load(self) -> None:
-        """Download the voice if needed and keep it resident."""
+        """Load the exact local Piper artifacts and keep them resident."""
         from piper import PiperVoice
-        from piper.download_voices import download_voice
 
-        self._cache.mkdir(parents=True, exist_ok=True)
         onnx = self._cache / f"{self.model_name}.onnx"
-        if not onnx.is_file():
-            _LOG.info("downloading speaking model %s", self.model_name)
-            download_voice(self.model_name, self._cache)
+        if not onnx.is_file() or not onnx.with_suffix(".onnx.json").is_file():
+            raise FileNotFoundError
         voice = PiperVoice.load(onnx)
         self._voice = voice
         self.sample_rate = voice.config.sample_rate
         self.ready = True
-        _LOG.info("speaking model %s ready", self.model_name)
 
     def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
         """Yield 16-bit mono PCM as soon as Piper produces a chunk."""
@@ -56,12 +50,16 @@ class PiperSpeaking:
             yield chunk.audio_int16_bytes
 
 
-def speaking_from_settings(settings: Settings) -> SpeakingEngine:
-    """The configured voice: Chatterbox when named, otherwise Piper."""
-    if settings.speaking_model == CHATTERBOX_SPEAKING_MODEL:
+def speaking_for_voice(settings: Settings, voice: VoiceId) -> SpeakingEngine:
+    """Construct one supported local engine from the closed catalogue id."""
+    from speech.voices import VoiceId
+
+    if voice is VoiceId.PIPER:
+        return PiperSpeaking(DEFAULT_SPEAKING_MODEL, settings.voice_cache)
+    if voice is VoiceId.CHATTERBOX:
         from speech.chatterbox import ChatterboxSpeaking
 
         return ChatterboxSpeaking(
-            settings.speaking_model, settings.device, settings.huggingface_cache
+            CHATTERBOX_SPEAKING_MODEL, settings.device, settings.huggingface_cache
         )
-    return PiperSpeaking(settings.speaking_model, settings.voice_cache)
+    raise ValueError

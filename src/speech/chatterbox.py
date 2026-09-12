@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import threading
 from typing import TYPE_CHECKING
 
@@ -11,8 +10,6 @@ import numpy as np
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
     from pathlib import Path
-
-_LOG = logging.getLogger(__name__)
 
 CHATTERBOX_SAMPLE_RATE = 24_000
 CHATTERBOX_T3_WEIGHTS = "t3_mtl23ls_v3.safetensors"
@@ -35,7 +32,6 @@ WARMUP_TEXT = "Hallo."
 
 def _checkpoint_dir(cache: Path) -> object:
     """Local Hub snapshot. 0.1.7 from_pretrained takes only device and loads V2."""
-    import os
     from pathlib import Path
 
     from huggingface_hub import snapshot_download
@@ -46,8 +42,7 @@ def _checkpoint_dir(cache: Path) -> object:
             repo_type="model",
             revision=CHATTERBOX_REVISION,
             allow_patterns=CHATTERBOX_ARTIFACTS,
-            local_files_only=os.environ.get("HF_HUB_OFFLINE") == "1",
-            token=os.getenv("HF_TOKEN"),
+            local_files_only=True,
             cache_dir=cache,
         )
     )
@@ -130,14 +125,12 @@ class ChatterboxSpeaking:
         from speech.cuda_libs import prepare_cuda_libraries
 
         prepare_cuda_libraries()
-        _LOG.info("loading speaking model %s on %s", self.model_name, self._device)
         model = _load_v3(self._device, self._cache)
         self._model = model
         self.sample_rate = int(model.sr)
         for _chunk in _stream_pcm(model, WARMUP_TEXT, "de"):
             pass
         self.ready = True
-        _LOG.info("speaking model %s ready", self.model_name)
 
     def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
         """Yield 16-bit mono PCM while Chatterbox is still synthesising."""

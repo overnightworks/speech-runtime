@@ -5,9 +5,9 @@ co-presenter that will call it.
 
 One process holds a German voice and a German listener resident, and offers
 them over HTTP. Nothing in `src/presentator` imports this package. The caller
-owns the address. Piper is the default voice until the operator has judged
-Chatterbox. Set `SPEECH_SPEAKING_MODEL=ResembleAI/chatterbox` for the streaming
-card voice.
+owns the address. Settings · Voice chooses between downloaded Piper and
+Chatterbox; the durable choice is private state, and neither loader downloads
+weights.
 
 ## Models
 
@@ -97,8 +97,11 @@ Weights stay in:
 - `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox), also reported as `speaking.sample_rate`. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
 - `GET /voices` exists only on `speech.sock` in `SPEECH_PRIVATE_DIRECTORY`. It
-  reports the five fixed admin catalogue rows from the shared runtime and local
-  artifact evidence. The public TCP application has no `/voices` route.
+  reports the five fixed admin catalogue rows, typed recovery detail, and local
+  artifact evidence. `POST /voices/{piper|chatterbox}/load` is private too; it
+  synchronously loads an already-downloaded baseline, atomically persists the
+  choice, and retains loaded baseline engines for the process lifetime. The
+  public TCP application has no `/voices` route.
 
 `sample_rate` is the hear rate. Speak is a WAV, so its rate is in the header. A caller that feeds speak output into hear must resample.
 
@@ -111,12 +114,13 @@ All `SPEECH_*`:
 | `SPEECH_HOST` | `127.0.0.1` | Bind address |
 | `SPEECH_PORT` | `8090` | Bind port |
 | `SPEECH_DEVICE` | `cuda` | Device for the hearing model and for Chatterbox (`cuda` or `cpu`). Piper stays on CPU. |
-| `SPEECH_SPEAKING_MODEL` | `de_DE-thorsten-medium` | Piper catalogue name, or `ResembleAI/chatterbox` for Multilingual V3 |
+| `SPEECH_SPEAKING_MODEL` | `de_DE-thorsten-medium` | First-run default only, used when `selected-voice` is absent |
 | `SPEECH_HEARING_MODEL` | `Systran/faster-whisper-large-v3` | Hugging Face id or faster-whisper size name |
 | `SPEECH_DEBUG` | `false` | When true, logs the text of what was spoken or heard. Audio is never logged. |
 | `SPEECH_VOICE_CACHE` | `~/.cache/piper` | Where Piper ONNX files are kept |
 | `SPEECH_HUGGINGFACE_CACHE` | `~/.cache/huggingface` | The shared local Hub cache for Chatterbox loading and status lookup |
 | `SPEECH_PRIVATE_DIRECTORY` | `/run/presentator-speech` | Private directory that owns `speech.sock` |
+| `SPEECH_STATE_DIRECTORY` | `~/.local/state/presentator-speech` | Private directory containing the durable selected voice |
 
 `PRESENTATOR_RUNTIME_UID` is the same positive runtime UID the co-presenter
 uses. Speech creates its private directory at mode 0700 and its socket at 0600;
@@ -134,7 +138,7 @@ uv run presentator-speech
 ```
 
 Stage proof (takes `/tmp/probe-stack.lock`, checks load, one heavy step at a
-time). It selects Chatterbox unless `SPEECH_SPEAKING_MODEL` is already set:
+time). It selects Chatterbox when the durable selection is absent:
 
 ```sh
 uv run python scripts/prove.py

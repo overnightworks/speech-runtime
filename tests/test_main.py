@@ -3,17 +3,22 @@
 import asyncio
 import os
 import signal
+import socket
 import stat
 import threading
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
 
 from speech import __main__
 from speech.__main__ import PrivateSocket
 from speech.config import Settings
-from speech.service import Runtime, create_app
+from speech.selection import VoiceSelectionStore
+from speech.service import Runtime, RuntimeDependencies, create_app, create_control_app
+from speech.voices import VoiceId
 from tests.conftest import FakeHearing, FakeSpeaking
 
 
@@ -27,6 +32,70 @@ class _BlockedSpeaking(FakeSpeaking):
         self._started.set()
         assert self._release.wait(timeout=5)
         self.ready = True
+
+
+def test_closed_uds_client_does_not_abandon_an_accepted_voice_load(tmp_path) -> None:
+    asyncio.run(_closed_uds_client_finishes_load(tmp_path))
+
+
+async def _closed_uds_client_finishes_load(tmp_path) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+
+    class HeldSpeaking(FakeSpeaking):
+        def load(self) -> None:
+            entered.set()
+            assert release.wait(timeout=5)
+            self.ready = True
+            completed.set()
+
+    selection = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+    engine = HeldSpeaking(ready=False)
+    runtime = Runtime(
+        None,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=selection,
+            engine_factory=lambda _voice: engine,
+            artifact_checker=lambda _voice: True,
+        ),
+    )
+    settings = Settings(
+        private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid()
+    )
+    shutdown_started = asyncio.Event()
+
+    class ObservingServer(uvicorn.Server):
+        async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+            shutdown_started.set()
+            await super().shutdown(sockets=sockets)
+
+    server = ObservingServer(uvicorn.Config(create_control_app(settings, runtime)))
+    server.install_signal_handlers = lambda: None
+    with PrivateSocket(tmp_path, runtime_uid=os.geteuid()) as listener:
+        serving = asyncio.create_task(server.serve(sockets=[listener]))
+        await asyncio.to_thread(_close_after_posting_load, tmp_path / "speech.sock")
+        assert await asyncio.to_thread(entered.wait, 5)
+        assert not completed.is_set()
+        server.should_exit = True
+        await shutdown_started.wait()
+        release.set()
+        assert await asyncio.to_thread(completed.wait, 5)
+        await serving
+
+    assert selection.read() is VoiceId.CHATTERBOX
+    assert runtime.capture_speaking() is engine
+
+
+def _close_after_posting_load(path: Path) -> None:
+    request = (
+        b"POST /voices/chatterbox/load HTTP/1.1\r\n"
+        b"Host: speech\r\nContent-Length: 0\r\n\r\n"
+    )
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(str(path))
+        client.sendall(request)
 
 
 class _HealthServer:
@@ -95,7 +164,16 @@ def test_private_socket_preserves_an_existing_socket_path(tmp_path) -> None:
 def test_failed_loader_stops_both_servers_and_cleans_the_owned_socket(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime = Runtime(FakeSpeaking(fail=True), FakeHearing())
+    runtime = Runtime(
+        None,
+        FakeHearing(fail=True),
+        dependencies=RuntimeDependencies(
+            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+            engine_factory=lambda _voice: FakeSpeaking(),
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.PIPER,
+        ),
+    )
 
     class Server:
         """A server that ends only when its orchestrator requests shutdown."""
@@ -131,16 +209,23 @@ def test_failed_loader_stops_both_servers_and_cleans_the_owned_socket(
     assert not (tmp_path / "speech.sock").exists()
 
 
-def test_runtime_skips_hearing_after_a_stop_during_speaking_load() -> None:
+def test_runtime_skips_hearing_after_a_stop_during_speaking_load(tmp_path) -> None:
     started = threading.Event()
     release = threading.Event()
     stop = threading.Event()
 
     hearing = FakeHearing(ready=False)
-    loader = threading.Thread(
-        target=Runtime(_BlockedSpeaking(started, release), hearing).load,
-        args=(stop,),
+    runtime = Runtime(
+        None,
+        hearing,
+        dependencies=RuntimeDependencies(
+            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+            engine_factory=lambda _voice: _BlockedSpeaking(started, release),
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.PIPER,
+        ),
     )
+    loader = threading.Thread(target=runtime.load, args=(stop,))
     loader.start()
     assert started.wait(timeout=5)
     stop.set()
@@ -159,9 +244,15 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
     observed: dict[str, object] = {}
 
     runtime = Runtime(
-        _BlockedSpeaking(started, release),
+        None,
         FakeHearing(ready=False),
         memory_probe=lambda: 42,
+        dependencies=RuntimeDependencies(
+            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+            engine_factory=lambda _voice: _BlockedSpeaking(started, release),
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.PIPER,
+        ),
     )
     servers = iter(
         (
@@ -200,10 +291,10 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
 
     assert outcome == 1
     assert observed["speaking"] == {
-        "model": "fake-voice",
+        "model": "unavailable",
         "ready": False,
         "streams": False,
-        "sample_rate": 22_050,
+        "sample_rate": 0,
     }
     assert observed["hearing"] == {"model": "fake-ears", "ready": False}
     assert observed["card_memory_mb"] == 42

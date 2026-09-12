@@ -3,7 +3,13 @@
 import pytest
 import torch
 
-from speech.chatterbox import _speech_token_chunks, language_id
+from speech.chatterbox import (
+    CHATTERBOX_ARTIFACTS,
+    CHATTERBOX_REVISION,
+    _checkpoint_dir,
+    _speech_token_chunks,
+    language_id,
+)
 
 
 @pytest.mark.parametrize(
@@ -19,6 +25,26 @@ from speech.chatterbox import _speech_token_chunks, language_id
 )
 def test_language_id_is_the_iso_code(language: str, expected: str) -> None:
     assert language_id(language) == expected
+
+
+def test_chatterbox_checkpoint_refuses_network_access(tmp_path, monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    def snapshot_download(**arguments: object) -> str:
+        observed.update(arguments)
+        return str(tmp_path / "snapshot")
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot_download)
+
+    assert _checkpoint_dir(tmp_path) == tmp_path / "snapshot"
+    assert observed == {
+        "repo_id": "ResembleAI/chatterbox",
+        "repo_type": "model",
+        "revision": CHATTERBOX_REVISION,
+        "allow_patterns": CHATTERBOX_ARTIFACTS,
+        "local_files_only": True,
+        "cache_dir": tmp_path,
+    }
 
 
 class _FakeHyperParams:

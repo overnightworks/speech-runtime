@@ -8,7 +8,9 @@ from fastapi.testclient import TestClient
 
 from speech.config import HEAR_SAMPLE_RATE, Settings
 from speech.pcm import wav_header
-from speech.service import Runtime, failed_to_load_message
+from speech.selection import VoiceSelectionStore
+from speech.service import Runtime, RuntimeDependencies, failed_to_load_message
+from speech.voices import VoiceId
 from tests.conftest import FakeHearing, FakeSpeaking, an_app
 
 
@@ -41,15 +43,42 @@ def test_settings_accepts_only_a_positive_shared_runtime_uid(
         Settings()
 
 
-def test_a_failed_load_names_the_model() -> None:
-    runtime = Runtime(FakeSpeaking(fail=True), FakeHearing())
+@pytest.mark.parametrize(
+    ("environment", "value", "reason"),
+    [
+        ("SPEECH_STATE_DIRECTORY", "relative/state", "state directory"),
+        ("SPEECH_SPEAKING_MODEL", "unsupported-baseline", "speaking model"),
+    ],
+)
+def test_settings_refuses_unsafe_voice_selection_configuration(
+    monkeypatch: pytest.MonkeyPatch, environment: str, value: str, reason: str
+) -> None:
+    monkeypatch.setenv(environment, value)
 
-    with pytest.raises(RuntimeError, match="speaking model fake-voice failed to load"):
+    with pytest.raises(ValueError, match=reason) as refused:
+        Settings()
+
+    assert value not in str(refused.value)
+
+
+def test_a_failed_hearing_load_names_the_model(tmp_path) -> None:
+    runtime = Runtime(
+        None,
+        FakeHearing(fail=True),
+        dependencies=RuntimeDependencies(
+            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+            engine_factory=lambda _voice: FakeSpeaking(),
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.PIPER,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="hearing model fake-ears failed to load"):
         runtime.load()
 
     assert (
-        failed_to_load_message("speaking", "fake-voice")
-        == "speaking model fake-voice failed to load"
+        failed_to_load_message("hearing", "fake-ears")
+        == "hearing model fake-ears failed to load"
     )
 
 
