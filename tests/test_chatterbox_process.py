@@ -392,10 +392,51 @@ def test_startup_provider_failure_preserves_piper_without_fatal_exit(
     runtime.set_fatal_callback(fatal.set)
 
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.NOT_ACTIVATED
-    assert runtime.capture_speaking() is piper
+    admission = runtime.capture_speaking()
+    assert admission is not None
+    assert admission.speaking is piper
+    admission.close()
     assert fatal.is_set() is False
     _, _, pid, _ = _observed(tmp_path / "cache")
     _assert_reaped(pid)
+
+
+def test_deselecting_chatterbox_reaps_provider_before_load_returns(
+    tmp_path: Path,
+) -> None:
+    piper = FakeSpeaking()
+    chatterboxes: list[ChatterboxSpeaking] = []
+    root, cache = _closed_provider(tmp_path)
+
+    def factory(voice: VoiceId) -> FakeSpeaking | ChatterboxSpeaking:
+        if voice is VoiceId.PIPER:
+            return piper
+        engine = ChatterboxSpeaking(CHATTERBOX_SPEAKING_MODEL, "cpu", cache, root)
+        chatterboxes.append(engine)
+        return engine
+
+    runtime = Runtime(
+        None,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+            engine_factory=factory,
+            artifact_checker=lambda _voice: True,
+        ),
+    )
+    try:
+        assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
+        _, _, first_pid, _ = _observed(tmp_path / "cache")
+
+        assert runtime.load_voice(VoiceId.PIPER) is VoiceLoadOutcome.ACTIVATED
+        _assert_reaped(first_pid)
+        assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
+        _, _, second_pid, _ = _observed(tmp_path / "cache")
+
+        assert second_pid != first_pid
+        assert len(chatterboxes) == 2
+    finally:
+        runtime.close()
 
 
 @pytest.mark.parametrize("failure", ["request", "idle-exit"])

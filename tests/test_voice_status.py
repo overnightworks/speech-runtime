@@ -5,12 +5,20 @@ import os
 import threading
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from speech import voices
 from speech.config import Settings
+from speech.pcm import pcm_from_wav
 from speech.selection import VoiceSelectionStore
-from speech.service import Runtime, RuntimeDependencies, create_app, create_control_app
+from speech.service import (
+    Runtime,
+    RuntimeDependencies,
+    SpeakingEngine,
+    create_app,
+    create_control_app,
+)
 from speech.voices import (
     VoiceId,
     VoiceLoadOutcome,
@@ -20,6 +28,16 @@ from speech.voices import (
     statuses,
 )
 from tests.conftest import FakeHearing, FakeSpeaking
+from tests.test_speak import _response_body, _speak_response
+
+
+def _captured_engine(runtime: Runtime) -> SpeakingEngine:
+    admission = runtime.capture_speaking()
+    assert admission is not None
+    try:
+        return admission.speaking
+    finally:
+        admission.close()
 
 
 def test_status_requires_both_piper_artifacts_and_keeps_unimplemented_rows_unavailable(
@@ -149,32 +167,203 @@ def test_status_refuses_the_whole_snapshot_when_cache_lookup_fails(
         )
 
 
-def test_loading_switches_the_next_capture_but_keeps_the_prior_capture_alive(
+class _TrackedSpeaking(FakeSpeaking):
+    def __init__(self, *, sample_rate: int = 22_050) -> None:
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.closed = 0
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+def _switching_runtime(
+    tmp_path, old, target, selection: VoiceSelectionStore | None = None
+) -> tuple[Runtime, VoiceSelectionStore]:
+    store = selection or VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+    store.write(VoiceId.CHATTERBOX)
+    runtime = Runtime(
+        old,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=store,
+            engine_factory=lambda _voice: target,
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.CHATTERBOX,
+        ),
+    )
+    return runtime, store
+
+
+def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speech(
     tmp_path,
 ) -> None:
+    committed = threading.Event()
+
+    class ObservedSelection(VoiceSelectionStore):
+        def write(self, voice: VoiceId) -> None:
+            super().write(voice)
+            if voice is VoiceId.PIPER:
+                committed.set()
+
+    old = _TrackedSpeaking(sample_rate=24_000)
+    target = _TrackedSpeaking()
+    runtime, _store = _switching_runtime(
+        tmp_path,
+        old,
+        target,
+        ObservedSelection(tmp_path / "state", owner_uid=os.geteuid()),
+    )
+    response = _speak_response(runtime)
+    outcomes = []
+    switching = threading.Thread(
+        target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
+    )
+    switching.start()
+    assert committed.wait(timeout=5)
+
+    with pytest.raises(HTTPException) as refused:
+        _speak_response(runtime)
+    assert refused.value.status_code == 503
+    assert switching.is_alive()
+
+    rate, pcm = pcm_from_wav(_response_body(response))
+    switching.join(timeout=5)
+    assert not switching.is_alive()
+    assert rate == 24_000
+    assert pcm
+    assert outcomes == [VoiceLoadOutcome.ACTIVATED]
+    assert old.closed == 1
+    assert _captured_engine(runtime) is target
+
+
+def test_shutdown_before_chatterbox_detach_transfers_old_and_pending_cleanup_once(
+    tmp_path,
+) -> None:
+    committed = threading.Event()
+
+    class ObservedSelection(VoiceSelectionStore):
+        def write(self, voice: VoiceId) -> None:
+            super().write(voice)
+            if voice is VoiceId.PIPER:
+                committed.set()
+
+    old = _TrackedSpeaking(sample_rate=24_000)
+    target = _TrackedSpeaking()
+    runtime, store = _switching_runtime(
+        tmp_path,
+        old,
+        target,
+        ObservedSelection(tmp_path / "state", owner_uid=os.geteuid()),
+    )
+    response = _speak_response(runtime)
+    outcomes = []
+    switching = threading.Thread(
+        target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
+    )
+    switching.start()
+    assert committed.wait(timeout=5)
+
+    runtime.begin_shutdown()
+    closing = threading.Thread(target=runtime.close)
+    closing.start()
+    _response_body(response)
+    switching.join(timeout=5)
+    closing.join(timeout=5)
+
+    assert not switching.is_alive()
+    assert not closing.is_alive()
+    assert store.read() is VoiceId.PIPER
+    assert outcomes == [VoiceLoadOutcome.NOT_ACTIVATED]
+    assert runtime.capture_speaking() is None
+    assert old.closed == 1
+    assert target.closed == 1
+
+
+def test_shutdown_during_chatterbox_close_never_publishes_or_loses_an_engine(
+    tmp_path,
+) -> None:
+    close_started = threading.Event()
+    release_close = threading.Event()
+
+    class HeldCloseSpeaking(_TrackedSpeaking):
+        def close(self) -> None:
+            self.closed += 1
+            close_started.set()
+            assert release_close.wait(timeout=5)
+
+    old = HeldCloseSpeaking(sample_rate=24_000)
+    target = _TrackedSpeaking()
+    runtime, store = _switching_runtime(tmp_path, old, target)
+    outcomes = []
+    switching = threading.Thread(
+        target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
+    )
+    switching.start()
+    assert close_started.wait(timeout=5)
+
+    runtime.begin_shutdown()
+    closing = threading.Thread(target=runtime.close)
+    closing.start()
+    release_close.set()
+    switching.join(timeout=5)
+    closing.join(timeout=5)
+
+    assert not switching.is_alive()
+    assert not closing.is_alive()
+    assert store.read() is VoiceId.PIPER
+    assert outcomes == [VoiceLoadOutcome.NOT_ACTIVATED]
+    assert runtime.capture_speaking() is None
+    assert old.closed == 1
+    assert target.closed == 1
+
+
+def _close_failure_after_selection_commit_is_fatal_and_not_a_load_outcome(
+    tmp_path,
+) -> None:
+    class FailingCloseSpeaking(_TrackedSpeaking):
+        def close(self) -> None:
+            self.closed += 1
+            if self.closed == 1:
+                message = "provider close failed"
+                raise RuntimeError(message)
+
+    fatal = threading.Event()
+    old = FailingCloseSpeaking(sample_rate=24_000)
+    target = _TrackedSpeaking()
+    runtime, store = _switching_runtime(tmp_path, old, target)
+    runtime.set_fatal_callback(fatal.set)
+
+    with pytest.raises(RuntimeError, match="provider close failed"):
+        runtime.load_voice(VoiceId.PIPER)
+
+    assert fatal.is_set()
+    assert store.read() is VoiceId.PIPER
+    assert runtime.capture_speaking() is None
+    runtime.close()
+    assert old.closed == 2
+    assert target.closed == 1
+
+
+test_chatterbox_close_failure_after_selection_commit_is_fatal_and_not_a_load_outcome = (
+    _close_failure_after_selection_commit_is_fatal_and_not_a_load_outcome
+)
+
+
+def test_pre_replace_failure_preserves_active_and_stored_chatterbox(tmp_path) -> None:
     settings = Settings(
         voice_cache=tmp_path,
         huggingface_cache=tmp_path,
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
-    engines = {VoiceId.PIPER: FakeSpeaking(), VoiceId.CHATTERBOX: FakeSpeaking()}
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=engines.__getitem__,
-            artifact_checker=lambda voice: voice in engines,
-        ),
-    )
+    old = _TrackedSpeaking(sample_rate=24_000)
+    target = FakeSpeaking(ready=False, fail=True)
+    runtime, store = _switching_runtime(tmp_path, old, target)
 
-    assert runtime.load_voice(VoiceId.PIPER) is VoiceLoadOutcome.ACTIVATED
-    captured = runtime.capture_speaking()
-    assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
+    assert runtime.load_voice(VoiceId.PIPER) is VoiceLoadOutcome.NOT_ACTIVATED
 
-    assert captured is engines[VoiceId.PIPER]
-    assert runtime.capture_speaking() is engines[VoiceId.CHATTERBOX]
-    assert (tmp_path / "state" / "selected-voice").read_text() == "chatterbox"
+    assert _captured_engine(runtime) is old
+    assert store.read() is VoiceId.CHATTERBOX
     assert runtime.snapshot(settings).voices[1].state is VoiceState.ACTIVE
 
 
@@ -200,8 +389,8 @@ def test_startup_selects_the_default_then_restores_a_saved_voice(tmp_path) -> No
     restored = runtime()
     restored.load()
 
-    assert first.capture_speaking() is engines[VoiceId.PIPER]
-    assert restored.capture_speaking() is engines[VoiceId.CHATTERBOX]
+    assert _captured_engine(first) is engines[VoiceId.PIPER]
+    assert _captured_engine(restored) is engines[VoiceId.CHATTERBOX]
 
 
 def test_a_failed_load_preserves_the_active_engine_and_records_recovery(
@@ -223,7 +412,7 @@ def test_a_failed_load_preserves_the_active_engine_and_records_recovery(
 
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.NOT_ACTIVATED
 
-    assert runtime.capture_speaking() is active
+    assert _captured_engine(runtime) is active
     recovery = runtime.snapshot(Settings(PRESENTATOR_RUNTIME_UID=os.geteuid())).recovery
     assert recovery is not None
     assert recovery.kind is VoiceRecoveryKind.LOAD_FAILED
@@ -277,7 +466,7 @@ def test_directory_sync_failure_activates_the_visible_choice_with_a_notice(
     )
     snapshot = runtime.snapshot(Settings(voice_cache=tmp_path))
 
-    assert runtime.capture_speaking() is engine
+    assert _captured_engine(runtime) is engine
     assert snapshot.recovery is not None
     assert snapshot.recovery.kind is VoiceRecoveryKind.DURABILITY_UNCONFIRMED
 
@@ -382,9 +571,9 @@ def test_startup_selection_holds_load_guard_until_its_activation_finishes(
 
     assert response.status_code == 409
     assert not loader.is_alive()
-    assert runtime.capture_speaking() is engines[VoiceId.PIPER]
+    assert _captured_engine(runtime) is engines[VoiceId.PIPER]
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
-    assert runtime.capture_speaking() is engines[VoiceId.CHATTERBOX]
+    assert _captured_engine(runtime) is engines[VoiceId.CHATTERBOX]
     assert runtime.snapshot(Settings(voice_cache=tmp_path)).recovery is None
 
 
@@ -604,4 +793,4 @@ def test_failed_active_reconciliation_excludes_retry_until_close_finishes(
     reconciliation.join(timeout=5)
     assert not reconciliation.is_alive()
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
-    assert runtime.capture_speaking() is replacement
+    assert _captured_engine(runtime) is replacement

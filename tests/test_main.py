@@ -128,7 +128,10 @@ async def _closed_uds_client_finishes_load(tmp_path) -> None:
         await serving
 
     assert selection.read() is VoiceId.CHATTERBOX
-    assert runtime.capture_speaking() is engine
+    admission = runtime.capture_speaking()
+    assert admission is not None
+    assert admission.speaking is engine
+    admission.close()
 
 
 def _close_after_posting_load(path: Path) -> None:

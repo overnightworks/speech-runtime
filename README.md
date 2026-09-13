@@ -100,7 +100,8 @@ Weights stay in:
   reports the five fixed admin catalogue rows, typed recovery detail, and local
   artifact evidence. `POST /voices/{piper|chatterbox}/load` is private too; it
   synchronously loads an already-downloaded baseline, atomically persists the
-  choice, and retains loaded baseline engines for the process lifetime.
+  choice, and waits for admitted speech before switching. Piper stays resident;
+  deselected Chatterbox exits before Load succeeds and is rebuilt when selected again.
   `POST /voices/{piper|chatterbox}/sample/{de|en}` returns one fixed WAV only
   when its named voice is still active and ready; contention returns 409. The
   public TCP application has no `/voices` route.

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.responses import StreamingResponse
 from starlette.status import (
     HTTP_200_OK,
     HTTP_422_UNPROCESSABLE_CONTENT,
@@ -20,9 +21,17 @@ from starlette.status import (
 from speech.chatterbox import CHATTERBOX_SAMPLE_RATE
 from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
 from speech.pcm import BYTES_PER_SAMPLE, is_silence, pcm_from_wav
+from speech.selection import VoiceSelectionStore
+from speech.service import Runtime, RuntimeDependencies, SpeakRequest, create_app
 from speech.speaking import PiperSpeaking, speaking_for_voice
-from speech.voices import VoiceId
-from tests.conftest import SPEAK_SAMPLE_RATE, FakeSpeaking, an_app, sine_pcm
+from speech.voices import VoiceId, VoiceLoadOutcome
+from tests.conftest import (
+    SPEAK_SAMPLE_RATE,
+    FakeHearing,
+    FakeSpeaking,
+    an_app,
+    sine_pcm,
+)
 
 
 def test_speak_streams_wav_that_plays_as_tone() -> None:
@@ -137,6 +146,40 @@ def test_piper_load_requires_local_onnx_and_metadata(tmp_path, monkeypatch) -> N
 # regressions below drive the real ASGI 2.3 `/speak` boundary directly.
 
 _ASGI_TIMEOUT_SECONDS = 5.0
+
+
+class _ResponseBoundaryError(RuntimeError):
+    """A test-controlled response construction, synthesis, or send failure."""
+
+
+def _speak_response(runtime: Runtime) -> StreamingResponse:
+    app = create_app(runtime=runtime)
+    route = next(
+        route for route in app.routes if getattr(route, "path", None) == "/speak"
+    )
+    return route.endpoint(SpeakRequest(text="Hallo", language="de"))
+
+
+def _response_body(response: StreamingResponse) -> bytes:
+    async def deliver() -> bytes:
+        messages: list[dict[str, object]] = []
+        never = asyncio.Event()
+
+        async def receive() -> dict[str, object]:
+            await never.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, object]) -> None:
+            messages.append(message)
+
+        await response(
+            {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}},
+            receive,
+            send,
+        )
+        return _wav_body(messages)
+
+    return asyncio.run(deliver())
 
 
 class _GatedVoice:
@@ -334,3 +377,125 @@ def test_speak_disconnect_during_synthesis_frees_the_voice() -> None:
     rate, pcm = pcm_from_wav(_wav_body(later))
     assert rate == SPEAK_SAMPLE_RATE
     assert len(pcm) > 0
+
+
+def _runtime_for_deselection(
+    tmp_path, speaking: FakeSpeaking
+) -> tuple[Runtime, list[int]]:
+    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+    store.write(VoiceId.CHATTERBOX)
+    closed: list[int] = []
+    speaking.streams = True
+    speaking.close = lambda: closed.append(1)
+    runtime = Runtime(
+        speaking,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=store,
+            engine_factory=lambda _voice: FakeSpeaking(),
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.CHATTERBOX,
+        ),
+    )
+    return runtime, closed
+
+
+def test_speak_response_construction_failure_releases_admission_for_deselection(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, closed = _runtime_for_deselection(tmp_path, FakeSpeaking())
+
+    def fail_response_construction(*_args: object, **_kwargs: object) -> None:
+        raise _ResponseBoundaryError
+
+    monkeypatch.setattr(StreamingResponse, "__init__", fail_response_construction)
+    with pytest.raises(_ResponseBoundaryError):
+        _speak_response(runtime)
+
+    outcomes: list[VoiceLoadOutcome | None] = []
+    switching = threading.Thread(
+        target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
+    )
+    switching.start()
+    switching.join(timeout=_ASGI_TIMEOUT_SECONDS)
+    assert not switching.is_alive()
+    assert outcomes == [VoiceLoadOutcome.ACTIVATED]
+    assert closed == [1]
+
+
+@pytest.mark.parametrize(
+    "close_path",
+    ["normal", "pre-body", "send-failure", "between-chunks", "synthesis-error"],
+)
+def test_speak_close_paths_release_admission_for_deselection(
+    tmp_path, close_path: str
+) -> None:
+    class ClosingPathVoice(FakeSpeaking):
+        def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
+            if close_path == "synthesis-error":
+                raise _ResponseBoundaryError
+            yield from super().pcm_chunks(text, language)
+
+    runtime, closed = _runtime_for_deselection(tmp_path, ClosingPathVoice())
+    response = _speak_response(runtime)
+
+    if close_path == "normal":
+        _response_body(response)
+    elif close_path in {"send-failure", "synthesis-error"}:
+        with pytest.raises(_ResponseBoundaryError):
+            asyncio.run(
+                _interrupt(response, close_path)
+                if close_path == "send-failure"
+                else _deliver(response)
+            )
+    else:
+        asyncio.run(_interrupt(response, close_path))
+
+    outcomes: list[VoiceLoadOutcome | None] = []
+    switching = threading.Thread(
+        target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
+    )
+    switching.start()
+    switching.join(timeout=_ASGI_TIMEOUT_SECONDS)
+    assert not switching.is_alive()
+    assert outcomes == [VoiceLoadOutcome.ACTIVATED]
+    assert closed == [1]
+
+
+async def _interrupt(response: StreamingResponse, close_path: str) -> None:
+    disconnect = asyncio.Event()
+
+    async def receive() -> dict[str, object]:
+        if close_path == "pre-body":
+            return {"type": "http.disconnect"}
+        await disconnect.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, object]) -> None:
+        if close_path == "send-failure":
+            raise _ResponseBoundaryError
+        if close_path == "between-chunks" and message["type"] == "http.response.body":
+            disconnect.set()
+
+    await response(
+        {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}},
+        receive,
+        send,
+    )
+
+
+async def _deliver(response: StreamingResponse) -> None:
+    never = asyncio.Event()
+
+    async def receive() -> dict[str, object]:
+        await never.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(_message: dict[str, object]) -> None:
+        return None
+
+    await response(
+        {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}},
+        receive,
+        send,
+    )

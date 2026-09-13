@@ -11,9 +11,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from starlette.concurrency import iterate_in_threadpool
 from starlette.status import (
     HTTP_503_SERVICE_UNAVAILABLE,
     WS_1009_MESSAGE_TOO_BIG,
@@ -52,11 +50,10 @@ from speech.voices import (
     installed_voice_ids,
     statuses,
 )
+from speech.wav_response import ClosingWavResponse
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
-
-    from starlette.types import Receive, Scope, Send
 
     from speech.config import Settings
 
@@ -146,12 +143,15 @@ class Runtime:
         )
         self._pending: VoiceId | None = None
         self._pending_engine: SpeakingEngine | None = None
+        self._closing_engine: SpeakingEngine | None = None
+        self._admitted = 0
         self._stopping = False
         self._recovery: VoiceRecovery | None = None
         self._engines: dict[VoiceId, SpeakingEngine] = {}
         if speaking is not None and dependencies.default_voice is not None:
             self._engines[dependencies.default_voice] = speaking
         self._state_lock = threading.Lock()
+        self._state_changed = threading.Condition(self._state_lock)
         self._transition_guard = threading.Lock()
         self._synthesis_gate = threading.Lock()
         self._fatal_callback: Callable[[], None] = lambda: None
@@ -237,13 +237,14 @@ class Runtime:
         finally:
             self._transition_guard.release()
 
-    def capture_speaking(self) -> SpeakingEngine | None:
+    def capture_speaking(self) -> _VoiceAdmission | None:
         """Capture one stable engine for an entire streaming response."""
         self._reconcile_failed_active()
         with self._state_lock:
-            if self.loading or self._stopping:
+            speaking = self.speaking
+            if self.loading or self._stopping or speaking is None or not speaking.ready:
                 return None
-            return self.speaking
+            return self._admit_locked(speaking)
 
     def preacquire_sample(self, voice: VoiceId) -> _SampleSynthesis | None:
         """Reserve one verified active voice without delaying an ongoing talk."""
@@ -258,24 +259,34 @@ class Runtime:
                 or not speaking.ready
             ):
                 return None
-            sample_rate = speaking.sample_rate
+            admission = self._admit_locked(speaking)
         if not self._synthesis_gate.acquire(blocking=False):
+            admission.close()
             raise _SynthesisBusyError from None
-        return _SampleSynthesis(
-            speaking=speaking,
-            sample_rate=sample_rate,
-            lease=_SynthesisLease(self._synthesis_gate),
-        )
+        lease = _Lease(self._synthesis_gate.release)
+        return _SampleSynthesis(admission, lease)
 
-    def acquire_synthesis(self) -> _SynthesisLease:
+    def _admit_locked(self, speaking: SpeakingEngine) -> _VoiceAdmission:
+        self._admitted += 1
+        lifetime = _Lease(self._release_admission)
+        return _VoiceAdmission(speaking, speaking.sample_rate, lifetime)
+
+    def _release_admission(self) -> None:
+        with self._state_changed:
+            self._admitted -= 1
+            if self._admitted == 0:
+                self._state_changed.notify_all()
+
+    def acquire_synthesis(self) -> _Lease:
         """Wait for the one request-synthesis owner before generating PCM."""
         self._synthesis_gate.acquire()
-        return _SynthesisLease(self._synthesis_gate)
+        return _Lease(self._synthesis_gate.release)
 
     def begin_shutdown(self) -> None:
         """Refuse new work before the server starts its own shutdown."""
-        with self._state_lock:
+        with self._state_changed:
             self._stopping = True
+            self._state_changed.notify_all()
 
     def set_fatal_callback(self, callback: Callable[[], None]) -> None:
         """Route an owned speaking-engine failure to the service orchestrator."""
@@ -289,8 +300,15 @@ class Runtime:
 
     def close(self) -> None:
         """Close every retained or pending engine outside the state lock."""
-        with self._state_lock:
+        with self._state_changed:
+            self._stopping = True
+            self._state_changed.notify_all()
+            while self._closing_engine is not None:
+                self._state_changed.wait()
             engines = [self._pending_engine, self.speaking, *self._engines.values()]
+            self._pending_engine = None
+            self.speaking = None
+            self._engines.clear()
         failed = False
         for engine in _unique_engines(engines):
             try:
@@ -333,80 +351,117 @@ class Runtime:
             self._pending = voice
         engine: SpeakingEngine | None = None
         newly_constructed = False
+        registered = False
+        committed = False
         try:
-            if (
-                self._selection is None
-                or self._engine_factory is None
-                or self._artifact_checker is None
-            ):
-                return self._not_activated(voice)
-            self._selection.preflight()
-            if not self._artifact_checker(voice):
-                return self._not_activated(voice)
-            engine = self._engines.get(voice)
-            if engine is None:
-                engine = self._engine_factory(voice)
-                newly_constructed = True
-                set_fatal_callback = getattr(engine, "set_fatal_callback", None)
-                if callable(set_fatal_callback):
-                    set_fatal_callback(self._fatal_callback)
-                if not self._register_pending_engine(engine):
+            try:
+                if not self._voice_dependencies_ready(voice):
+                    return self._not_activated(voice)
+                with self._state_lock:
+                    engine = self._engines.get(voice)
+                if engine is None:
+                    engine = self._engine_factory(voice)
+                    newly_constructed = True
+                    setter = getattr(engine, "set_fatal_callback", None)
+                    if callable(setter):
+                        setter(self._fatal_callback)
+                registered = self._register_pending_engine(engine)
+                if not registered:
                     return VoiceLoadOutcome.NOT_ACTIVATED
-                engine.load()
-            elif not engine.ready:
-                engine.load()
-            with self._state_lock:
-                stopping = self._stopping
-            if stopping:
-                return VoiceLoadOutcome.NOT_ACTIVATED
-            self._selection.write(voice)
-        except DurabilityUnconfirmedError:
-            with self._state_lock:
-                stopping = self._stopping
-                if not stopping:
-                    if newly_constructed:
-                        self._engines[voice] = engine
-                        self._pending_engine = None
-                    self.speaking = engine
-                    self._selected = voice
-                    self._recovery = VoiceRecovery(
-                        kind=VoiceRecoveryKind.DURABILITY_UNCONFIRMED, voice=voice
-                    )
-            if stopping:
-                return VoiceLoadOutcome.NOT_ACTIVATED
-            return VoiceLoadOutcome.ACTIVATED_DURABILITY_UNCONFIRMED
-        except Exception:
-            _LOG.exception("voice %s failed to load", voice.value)
-            return self._not_activated(voice)
-        else:
-            with self._state_lock:
-                stopping = self._stopping
-                if not stopping:
-                    if newly_constructed:
-                        self._engines[voice] = engine
-                        self._pending_engine = None
-                    self.speaking = engine
-                    self._selected = voice
-                    self._recovery = None
-            if stopping:
-                return VoiceLoadOutcome.NOT_ACTIVATED
-            return VoiceLoadOutcome.ACTIVATED
+                if newly_constructed or not engine.ready:
+                    engine.load()
+                with self._state_lock:
+                    if self._stopping:
+                        return VoiceLoadOutcome.NOT_ACTIVATED
+                self._selection.write(voice)
+                committed = True
+                recovery = None
+            except DurabilityUnconfirmedError:
+                committed = True
+                recovery = VoiceRecovery(
+                    kind=VoiceRecoveryKind.DURABILITY_UNCONFIRMED, voice=voice
+                )
+            except Exception:
+                _LOG.exception("voice %s failed to load", voice.value)
+                return self._not_activated(voice)
+            return self._replace_voice(voice, engine, recovery)
         finally:
             should_close = False
             with self._state_lock:
                 self.loading = False
                 self._pending = None
-                if self._pending_engine is engine:
+                if not committed and self._pending_engine is engine:
                     self._pending_engine = None
-                should_close = (
-                    newly_constructed and engine not in self._engines.values()
-                )
+                    should_close = newly_constructed
+                elif not registered:
+                    should_close = newly_constructed
             if should_close and engine is not None:
                 try:
                     engine.close()
                 except Exception:
                     _LOG.exception("uncommitted speaking engine cleanup failed")
                     self._fatal_callback()
+
+    def _voice_dependencies_ready(self, voice: VoiceId) -> bool:
+        if (
+            not self._selection
+            or not self._engine_factory
+            or not self._artifact_checker
+        ):
+            return False
+        self._selection.preflight()
+        return self._artifact_checker(voice)
+
+    def _replace_voice(
+        self, voice: VoiceId, engine: SpeakingEngine, recovery: VoiceRecovery | None
+    ) -> VoiceLoadOutcome:
+        closing: SpeakingEngine | None = None
+        with self._state_changed:
+            while self._admitted and not self._stopping:
+                self._state_changed.wait()
+            if self._stopping:
+                return VoiceLoadOutcome.NOT_ACTIVATED
+            if (
+                self._selected is VoiceId.CHATTERBOX
+                and self.speaking is not None
+                and self.speaking is not engine
+            ):
+                closing = self.speaking
+                self.speaking = None
+                if self._engines.get(VoiceId.CHATTERBOX) is closing:
+                    del self._engines[VoiceId.CHATTERBOX]
+                self._closing_engine = closing
+            else:
+                self._publish_voice(voice, engine, recovery)
+        if closing is not None:
+            try:
+                closing.close()
+            except Exception:
+                with self._state_changed:
+                    self._closing_engine = None
+                    self._engines[VoiceId.CHATTERBOX] = closing
+                    self._state_changed.notify_all()
+                self._fatal_callback()
+                raise
+            with self._state_changed:
+                self._closing_engine = None
+                self._state_changed.notify_all()
+                if self._stopping:
+                    return VoiceLoadOutcome.NOT_ACTIVATED
+                self._publish_voice(voice, engine, recovery)
+        if recovery is None:
+            return VoiceLoadOutcome.ACTIVATED
+        return VoiceLoadOutcome.ACTIVATED_DURABILITY_UNCONFIRMED
+
+    def _publish_voice(
+        self, voice: VoiceId, engine: SpeakingEngine, recovery: VoiceRecovery | None
+    ) -> None:
+        self.speaking = engine
+        self._selected = voice
+        self._engines[voice] = engine
+        if self._pending_engine is engine:
+            self._pending_engine = None
+        self._recovery = recovery
 
     def _register_pending_engine(self, engine: SpeakingEngine) -> bool:
         with self._state_lock:
@@ -447,11 +502,19 @@ class Runtime:
                 self._recovery = VoiceRecovery(
                     kind=VoiceRecoveryKind.LOAD_FAILED, voice=failed_voice
                 )
+                self._closing_engine = failed
             try:
                 failed.close()
             except Exception:
+                with self._state_lock:
+                    if failed_voice is not None:
+                        self._engines[failed_voice] = failed
                 _LOG.exception("failed speaking engine cleanup failed")
                 self._fatal_callback()
+            finally:
+                with self._state_changed:
+                    self._closing_engine = None
+                    self._state_changed.notify_all()
         finally:
             self._transition_guard.release()
 
@@ -512,30 +575,38 @@ class _SynthesisBusyError(RuntimeError):
     """The active voice is already generating a request."""
 
 
-class _SynthesisLease:
-    """One close-idempotent reservation of Runtime's synthesis gate."""
+class _Lease:
+    """One close-idempotent release callback."""
 
-    def __init__(self, gate: threading.Lock) -> None:
-        self._gate = gate
+    def __init__(self, release: Callable[[], None]) -> None:
+        self._release = release
         self._closed = False
         self._guard = threading.Lock()
 
     def close(self) -> None:
-        """Release the reserved synthesis slot once."""
         with self._guard:
             if self._closed:
                 return
             self._closed = True
-            self._gate.release()
+            self._release()
+
+
+@dataclass(frozen=True, slots=True)
+class _VoiceAdmission:
+    """One close-idempotent lifetime for a captured voice and native rate."""
+
+    speaking: SpeakingEngine
+    sample_rate: int
+    lifetime: _Lease
+
+    def close(self) -> None:
+        self.lifetime.close()
 
 
 @dataclass(frozen=True, slots=True)
 class _SampleSynthesis:
-    """The active engine, native rate, and gate reservation a sample owns."""
-
-    speaking: SpeakingEngine
-    sample_rate: int
-    lease: _SynthesisLease
+    admission: _VoiceAdmission
+    lease: _Lease
 
 
 def _load_or_raise(which: str, model: str, load: Callable[[], None]) -> None:
@@ -573,42 +644,19 @@ def _wav_chunks(
 
 
 def _public_wav_chunks(
-    runtime: Runtime, speaking: SpeakingEngine, text: str, language: str
+    runtime: Runtime, admission: _VoiceAdmission, text: str, language: str
 ) -> Iterator[bytes]:
     """Acquire Runtime's gate only when a returned public stream first runs."""
     lease = runtime.acquire_synthesis()
     try:
-        yield from _wav_chunks(speaking, text, language)
+        yield from _wav_chunks(
+            admission.speaking,
+            text,
+            language,
+            sample_rate=admission.sample_rate,
+        )
     finally:
         lease.close()
-
-
-class _ClosingWavResponse(StreamingResponse):
-    """A WAV stream that closes its synchronous generator once ASGI delivery ends.
-
-    Starlette's ASGI 2.3 `__call__` waits for an in-flight thread-pool `next()`
-    to return before delivering a client-disconnect cancellation, so by the
-    time this `finally` runs, `chunks` is never mid-execution: closing it here
-    releases synthesis (and the voice lock it holds) without relying on the
-    cyclic garbage collector.
-    """
-
-    def __init__(
-        self, chunks: Iterator[bytes], lease: _SynthesisLease | None = None
-    ) -> None:
-        """Wrap the sync generator for threaded iteration and remember it to close."""
-        self._chunks = chunks
-        self._lease = lease
-        super().__init__(iterate_in_threadpool(chunks), media_type="audio/wav")
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Stream as usual, then close the owned generator no matter the outcome."""
-        try:
-            await super().__call__(scope, receive, send)
-        finally:
-            self._chunks.close()
-            if self._lease is not None:
-                self._lease.close()
 
 
 def create_app(
@@ -643,7 +691,7 @@ def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
         return {"outcome": outcome}
 
     @app.post("/voices/{voice}/sample/{language}")
-    def sample(voice: VoiceId, language: SampleLanguage) -> StreamingResponse:
+    def sample(voice: VoiceId, language: SampleLanguage) -> ClosingWavResponse:
         try:
             admitted = runtime.preacquire_sample(voice)
         except _SynthesisBusyError:
@@ -651,17 +699,12 @@ def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
         if admitted is None:
             raise HTTPException(status_code=404, detail="active voice is unavailable")
         chunks = _wav_chunks(
-            admitted.speaking,
+            admitted.admission.speaking,
             _SAMPLE_TEXT[language],
             language.value,
-            sample_rate=admitted.sample_rate,
+            sample_rate=admitted.admission.sample_rate,
         )
-        try:
-            return _ClosingWavResponse(chunks, admitted.lease)
-        except Exception:
-            chunks.close()
-            admitted.lease.close()
-            raise
+        return ClosingWavResponse(chunks, admitted.admission, admitted.lease)
 
     return app
 
@@ -672,16 +715,16 @@ def _mount_routes(app: FastAPI, runtime: Runtime) -> None:
         return runtime.health()
 
     @app.post("/speak")
-    def speak(body: SpeakRequest) -> StreamingResponse:
-        speaking = runtime.capture_speaking()
-        if speaking is None or not speaking.ready:
+    def speak(body: SpeakRequest) -> ClosingWavResponse:
+        admitted = runtime.capture_speaking()
+        if admitted is None:
             raise HTTPException(
                 status_code=HTTP_503_SERVICE_UNAVAILABLE,
                 detail="speaking model is not ready",
             )
         _log_text(debug=runtime.debug, kind="speak", text=body.text)
-        return _ClosingWavResponse(
-            _public_wav_chunks(runtime, speaking, body.text, body.language)
+        return ClosingWavResponse(
+            _public_wav_chunks(runtime, admitted, body.text, body.language), admitted
         )
 
     @app.websocket("/hear")

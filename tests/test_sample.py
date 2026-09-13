@@ -9,11 +9,18 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.responses import StreamingResponse
 
 from speech.config import Settings
 from speech.pcm import pcm_from_wav
 from speech.selection import VoiceSelectionStore
-from speech.service import Runtime, RuntimeDependencies, create_app, create_control_app
+from speech.service import (
+    Runtime,
+    RuntimeDependencies,
+    SampleLanguage,
+    create_app,
+    create_control_app,
+)
 from speech.voices import VoiceId, VoiceLoadOutcome
 from tests.conftest import FakeHearing, FakeSpeaking
 from tests.test_speak import _ASGI_TIMEOUT_SECONDS
@@ -25,6 +32,10 @@ class _ClientSendError(RuntimeError):
 
 class _SynthesisError(RuntimeError):
     """The fake provider fails while the sample response owns synthesis."""
+
+
+class _ResponseConstructionError(RuntimeError):
+    """The test-controlled response constructor failed."""
 
 
 @pytest.mark.parametrize(
@@ -249,13 +260,18 @@ def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(tmp_path) -
     first.sample_rate = 22_050
     second = FakeSpeaking()
     second.sample_rate = 24_000
+    committed = threading.Event()
+
+    class ObservedSelection(VoiceSelectionStore):
+        def write(self, voice: VoiceId) -> None:
+            super().write(voice)
+            committed.set()
+
     runtime = Runtime(
         first,
         FakeHearing(),
         dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(
-                tmp_path / "selection", owner_uid=os.geteuid()
-            ),
+            selection=ObservedSelection(tmp_path / "selection", owner_uid=os.geteuid()),
             engine_factory=lambda _voice: second,
             artifact_checker=lambda _voice: True,
         ),
@@ -277,10 +293,23 @@ def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(tmp_path) -
     request = threading.Thread(target=sample)
     request.start()
     assert first.entered.wait(timeout=_ASGI_TIMEOUT_SECONDS)
-    assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
+    outcome: list[VoiceLoadOutcome | None] = []
+    finished = threading.Event()
+
+    def switch() -> None:
+        outcome.append(runtime.load_voice(VoiceId.CHATTERBOX))
+        finished.set()
+
+    switching = threading.Thread(target=switch)
+    switching.start()
+    assert committed.wait(timeout=_ASGI_TIMEOUT_SECONDS)
+    assert not finished.wait(timeout=0.1)
     first.release.set()
     request.join(timeout=_ASGI_TIMEOUT_SECONDS)
+    switching.join(timeout=_ASGI_TIMEOUT_SECONDS)
     assert not request.is_alive()
+    assert not switching.is_alive()
+    assert outcome == [VoiceLoadOutcome.ACTIVATED]
     assert result
 
     rate, pcm = pcm_from_wav(result[0])
@@ -288,6 +317,56 @@ def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(tmp_path) -
     assert pcm
     assert first.heard_text == "Hallo, ich bin die Stimme deiner Präsentation."
     assert second.heard_text == ""
+
+
+def test_sample_response_construction_failure_releases_admission_for_deselection(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+    store.write(VoiceId.CHATTERBOX)
+    old = FakeSpeaking()
+    old.streams = True
+    closed: list[int] = []
+    old.close = lambda: closed.append(1)
+    target = FakeSpeaking()
+    runtime = Runtime(
+        old,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=store,
+            engine_factory=lambda _voice: target,
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.CHATTERBOX,
+        ),
+    )
+    app = create_control_app(Settings(voice_cache=tmp_path), runtime)
+    route = next(
+        route
+        for route in app.routes
+        if getattr(route, "path", None) == "/voices/{voice}/sample/{language}"
+    )
+
+    def fail_response_construction(*_args: object, **_kwargs: object) -> None:
+        raise _ResponseConstructionError
+
+    monkeypatch.setattr(StreamingResponse, "__init__", fail_response_construction)
+    with pytest.raises(_ResponseConstructionError):
+        route.endpoint(VoiceId.CHATTERBOX, SampleLanguage.GERMAN)
+
+    outcomes: list[VoiceLoadOutcome | None] = []
+    switching = threading.Thread(
+        target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
+    )
+    switching.start()
+    switching.join(timeout=_ASGI_TIMEOUT_SECONDS)
+    assert not switching.is_alive()
+    assert outcomes == [VoiceLoadOutcome.ACTIVATED]
+    assert closed == [1]
+
+    monkeypatch.undo()
+    client = TestClient(create_control_app(Settings(voice_cache=tmp_path), runtime))
+    response = client.post("/voices/piper/sample/de")
+    assert response.status_code == 200
 
 
 def test_sample_send_failure_before_pcm_releases_the_admitted_voice(tmp_path) -> None:
