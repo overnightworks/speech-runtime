@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "presentator-voxcpm-provider"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy==1.26.4",
+    "presentator-speech-provider-contract",
+    "voxcpm==2.0.3",
+]
+
+[project.scripts]
+presentator-voxcpm-worker = "presentator_voxcpm.__main__:main"
+
+[tool.uv.sources]
+presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
+
+[dependency-groups]
+dev = ["pytest==9.1.1", "ruff==0.16.2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/presentator_voxcpm"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["COM812", "CPY001", "D103", "INP001", "PLC0415", "S101", "TC003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
+"src/presentator_voxcpm/__main__.py" = ["PLC0415"]
+"src/presentator_voxcpm/model.py" = ["PLC0415", "TC003"]

@@ -20,7 +20,11 @@ def main() -> int:
         install_parent_death_signal(arguments.expected_parent_pid)
     except RuntimeError:
         return 1
-    from presentator_speech_provider_contract import ProviderFunctions, serve_provider
+    from presentator_speech_provider_contract import (
+        QWEN_SAMPLE_RATE,
+        ProviderFunctions,
+        serve_provider,
+    )
 
     from presentator_qwen.model import load_model, pcm_chunks
 
@@ -28,6 +32,7 @@ def main() -> int:
         device=arguments.device,
         cache=arguments.cache,
         protocol_stdout=protocol_stdout,
+        sample_rate=QWEN_SAMPLE_RATE,
         functions=ProviderFunctions(
             load_model,
             partial(pcm_chunks, speaker=arguments.speaker),

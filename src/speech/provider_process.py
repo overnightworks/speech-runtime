@@ -20,6 +20,7 @@ from presentator_speech_provider_contract import (
     FrameDecoder,
     FrameKind,
     ProtocolError,
+    ready_sample_rate,
     write_frame,
 )
 
@@ -42,6 +43,7 @@ class ProviderId(StrEnum):
 
     CHATTERBOX = "chatterbox"
     QWEN = "qwen"
+    VOXCPM = "voxcpm"
 
 
 class _OwnerExit(Enum):
@@ -209,7 +211,11 @@ class ProviderProcess:
             frame = self._read_available_frame(child, decoder)
         except (EOFError, OSError, ProtocolError):
             return _OwnerExit.PROVIDER_FAILURE
-        if frame.kind is not FrameKind.READY or frame.request_id != 0:
+        if (
+            frame.kind is not FrameKind.READY
+            or frame.request_id != 0
+            or ready_sample_rate(frame.payload) != self.sample_rate
+        ):
             return _OwnerExit.PROVIDER_FAILURE
         with self._state_lock:
             self.ready = True

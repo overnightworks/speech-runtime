@@ -6,7 +6,7 @@ co-presenter that will call it.
 One process holds a German voice and a German listener resident, and offers
 them over HTTP. Nothing in `src/presentator` imports this package. The caller
 owns the address. Settings · Voice chooses between downloaded Piper,
-Chatterbox, and Qwen3-TTS 0.6B; the durable choice is private state. An admin
+Chatterbox, Qwen3-TTS 0.6B, and VoxCPM2; the durable choice is private state. An admin
 may explicitly download the pinned Qwen snapshot through the private control
 socket; it retains partials, never selects the voice, and reports local
 artifact truth.
@@ -18,6 +18,7 @@ artifact truth.
 | Speaking (default) | [`rhasspy/piper-voices`](https://huggingface.co/rhasspy/piper-voices) voice `de_DE-thorsten-medium` | Voice recordings CC0; ONNX weights under the piper-voices MIT repo. The `piper-tts` runtime is `GPL-3.0-or-later`. The HTTP boundary keeps it out of `src/presentator` while the speech program itself carries the GPL obligations. | German is documented and not in question. #70 measured this voice on this 3090 at 0.23 s to first audio on CPU. `thorsten-high` on the same sentence took 1.21 s through this service, over the one-second first-audio target, so medium is the default. The voice does not compete with the listener for the card. |
 | Speaking (optional) | [`ResembleAI/chatterbox`](https://huggingface.co/ResembleAI/chatterbox) Multilingual V3, snapshot `5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18` | MIT (`chatterbox-tts` 0.1.7) | Real German, streams PCM while it synthesises, 24 kHz. Installed `from_pretrained` takes only `device` and loads V2; this service loads `t3_mtl23ls_v3.safetensors` from the local Hub cache, pinned to the snapshot it was measured against. `resemble-perth` 1.0.1's `PerthImplicitWatermarker` needs `pkg_resources`, which setuptools stopped shipping at 82; this project pins `setuptools==81.0.0` so Chatterbox's own construction of the real watermarker succeeds instead of silently degrading to `perth`'s no-op. The streamed path calls `s3gen` directly rather than the model's own `generate()`, so it never reaches the line that applies the watermark to the waveform — unmarked audio either way, now for a stated reason rather than a substituted no-op. |
 | Speaking (optional) | [`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice), snapshot `85e237c12c027371202489a0ec509ded67b5e4b5` | Apache-2.0 (`qwen-tts` 0.1.1) | German and English through one configured built-in preset, initially Ryan. It returns a complete 24 kHz waveform, so `speaking.streams` is false. The isolated provider accepts the repository's `cuda` setting as `cuda:0`, uses bfloat16 and package-default attention, and reads only the pinned local snapshot. Runtime quality and latency remain unmeasured. |
+| Speaking (optional) | [`openbmb/VoxCPM2`](https://huggingface.co/openbmb/VoxCPM2), snapshot `32279effe8c19989596f05d353d1447f51d9e915` | Apache-2.0 (`voxcpm` 2.0.3) | German and English text-only streaming at 48 kHz through its isolated provider. It reads only the pinned local snapshot, uses no prompt, reference audio, cloning, or voice-design controls, and has no measured quality, latency, residency, or deployment result. |
 | Hearing | [`Systran/faster-whisper-large-v3`](https://huggingface.co/Systran/faster-whisper-large-v3) | MIT (CTranslate2 conversion of [`openai/whisper-large-v3`](https://huggingface.co/openai/whisper-large-v3), also MIT) | Already cached on this machine. German is a documented language. Partials are chunked re-decode of a growing buffer, not a native streaming architecture. |
 
 Checked and not chosen:
@@ -93,22 +94,23 @@ Weights stay in:
 - Piper voices: `~/.cache/piper/`
 - Chatterbox: `~/.cache/huggingface/hub/models--ResembleAI--chatterbox` (pinned snapshot `5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18`, `CHATTERBOX_REVISION` in the shared provider contract)
 - Qwen: `~/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice` (pinned snapshot `85e237c12c027371202489a0ec509ded67b5e4b5`)
+- VoxCPM2: `~/.cache/huggingface/hub/models--openbmb--VoxCPM2` (pinned snapshot `32279effe8c19989596f05d353d1447f51d9e915`)
 - Whisper: `~/.cache/huggingface/hub/models--Systran--faster-whisper-large-v3`
 
 ## Contract
 
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
-- `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox and Qwen), also reported as `speaking.sample_rate`. Runtime serialises request synthesis across every engine. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
+- `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox and Qwen, and 48 000 Hz for VoxCPM2), also reported as `speaking.sample_rate`. Runtime serialises request synthesis across every engine. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
 - `GET /voices` exists only on `speech.sock` in `SPEECH_PRIVATE_DIRECTORY`. It
   reports the five fixed admin catalogue rows, typed recovery detail, and local
   artifact evidence. `POST /voices/qwen3-tts-0.6b/download` starts the pinned,
   tokenless Qwen transfer and returns promptly; it never selects a voice.
-  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b}/load` is private too; it
+  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b|voxcpm2}/load` is private too; it
   synchronously loads an already-downloaded baseline, atomically persists the
   choice, and waits for admitted speech before switching. Piper stays resident;
   deselected provider processes exit before Load succeeds and are rebuilt when selected again.
-  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b}/sample/{de|en}` returns one fixed WAV only
+  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b|voxcpm2}/sample/{de|en}` returns one fixed WAV only
   when its named voice is still active and ready; contention returns 409. The
   public TCP application has no `/voices` route.
 
@@ -122,7 +124,7 @@ All `SPEECH_*`:
 | --- | --- | --- |
 | `SPEECH_HOST` | `127.0.0.1` | Bind address |
 | `SPEECH_PORT` | `8090` | Bind port |
-| `SPEECH_DEVICE` | `cuda` | Device for hearing and isolated providers. Chatterbox accepts `cuda` or `cpu`; Qwen accepts only `cuda` and maps it to `cuda:0`. Piper stays on CPU. |
+| `SPEECH_DEVICE` | `cuda` | Device for hearing and isolated providers. Chatterbox and VoxCPM2 accept `cuda` or `cpu`; Qwen accepts only `cuda` and maps it to `cuda:0`. Piper stays on CPU. |
 | `SPEECH_SPEAKING_MODEL` | `de_DE-thorsten-medium` | First-run default only, used when `selected-voice` is absent |
 | `SPEECH_HEARING_MODEL` | `Systran/faster-whisper-large-v3` | Hugging Face id or faster-whisper size name |
 | `SPEECH_DEBUG` | `false` | When true, logs the text of what was spoken or heard. Audio is never logged. |
@@ -163,6 +165,6 @@ uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
 uv run pytest -q
 ```
-Chatterbox and Qwen each run in an independently locked provider virtual
-environment. The speech service talks to both through one private binary
+Chatterbox, Qwen, and VoxCPM each run in an independently locked provider virtual
+environment. The speech service talks to them through one private binary
 protocol and worker loop; neither provider SDK enters the service process.

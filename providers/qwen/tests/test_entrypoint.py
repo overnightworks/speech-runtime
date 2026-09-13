@@ -41,6 +41,7 @@ def test_entrypoint_loads_without_synthesis_before_ready(monkeypatch) -> None:
         sys.modules,
         "presentator_speech_provider_contract",
         SimpleNamespace(
+            QWEN_SAMPLE_RATE=24_000,
             ProviderFunctions=lambda load, synthesize: SimpleNamespace(
                 load=load,
                 synthesize=synthesize,
@@ -59,3 +60,4 @@ def test_entrypoint_loads_without_synthesis_before_ready(monkeypatch) -> None:
     assert observed["device"] == "cuda"
     assert observed["cache"] == "/closed/cache"
     assert observed["protocol_stdout"] == 9
+    assert observed["sample_rate"] == 24_000

@@ -8,6 +8,8 @@ from presentator_speech_provider_contract import (
     CHATTERBOX_SAMPLE_RATE,
     QWEN_MODEL_ID,
     QWEN_SAMPLE_RATE,
+    VOXCPM_MODEL_ID,
+    VOXCPM_SAMPLE_RATE,
 )
 
 from speech.config import CHATTERBOX_SPEAKING_MODEL, DEFAULT_SPEAKING_MODEL
@@ -103,6 +105,23 @@ def speaking_for_voice(settings: Settings, voice: VoiceId) -> SpeakingEngine:
                     str(settings.huggingface_cache),
                     "--speaker",
                     settings.qwen_speaker.value,
+                ),
+            ),
+        )
+    if voice is VoiceId.VOXCPM:
+        return ProviderProcess(
+            ProviderLaunch(
+                model_name=VOXCPM_MODEL_ID,
+                sample_rate=VOXCPM_SAMPLE_RATE,
+                streams=True,
+                executable=provider_entrypoint(
+                    settings.provider_root, ProviderId.VOXCPM
+                ),
+                arguments=(
+                    "--device",
+                    settings.device,
+                    "--cache",
+                    str(settings.huggingface_cache),
                 ),
             ),
         )

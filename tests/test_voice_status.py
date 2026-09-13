@@ -1,14 +1,26 @@
 """The private voice endpoint reports evidence, never package support."""
 
+import asyncio
+import builtins
+import importlib
+import json
 import logging
 import os
+import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from presentator_speech_provider_contract import (
+    VOXCPM_ARTIFACTS,
+    VOXCPM_MODEL_ID,
+    VOXCPM_REVISION,
+    VOXCPM_SAMPLE_RATE,
+)
 
 from speech import voices
 from speech.config import Settings
@@ -31,7 +43,15 @@ from speech.voices import (
     statuses,
 )
 from tests.conftest import FakeHearing, FakeSpeaking
-from tests.test_speak import _response_body, _speak_response
+from tests.test_provider_process import _closed_provider
+from tests.test_speak import (
+    _ASGI_TIMEOUT_SECONDS,
+    _response_body,
+    _speak_once,
+    _speak_response,
+    _speak_scope,
+    _wav_body,
+)
 
 
 def _captured_engine(runtime: Runtime) -> SpeakingEngine:
@@ -147,6 +167,20 @@ def _complete_qwen_snapshot(cache: Path) -> Path:
     return snapshot
 
 
+def _complete_voxcpm_snapshot(cache: Path) -> Path:
+    snapshot = (
+        cache
+        / f"models--{VOXCPM_MODEL_ID.replace('/', '--')}"
+        / "snapshots"
+        / VOXCPM_REVISION
+    )
+    for artifact in VOXCPM_ARTIFACTS:
+        path = snapshot / artifact
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    return snapshot
+
+
 def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_preset(
     tmp_path,
 ) -> None:
@@ -189,6 +223,232 @@ def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_pres
     assert engine.sample_rate == 24_000
     assert engine.streams is False
     assert engine.retain_when_inactive is False
+
+
+def test_voxcpm_requires_the_exact_snapshot_and_worker_and_uses_48_khz(
+    tmp_path: Path,
+) -> None:
+    provider_root = tmp_path / "providers"
+    cache = tmp_path / "hub"
+    snapshot = _complete_voxcpm_snapshot(cache)
+    settings = Settings(
+        provider_root=provider_root,
+        huggingface_cache=cache,
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+    )
+
+    missing_worker = statuses(settings, _RuntimeFacts().state())
+    worker = provider_root / "voxcpm/.venv/bin/presentator-voxcpm-worker"
+    worker.parent.mkdir(parents=True)
+    worker.write_text("#!/bin/false\n", encoding="utf-8")
+    worker.chmod(0o700)
+    (snapshot / "model.safetensors").unlink()
+    missing_artifact = statuses(settings, _RuntimeFacts().state())
+    (snapshot / "model.safetensors").touch()
+    downloaded = statuses(settings, _RuntimeFacts().state())
+
+    assert missing_worker[3].state is VoiceState.UNAVAILABLE
+    assert missing_artifact[3].state is VoiceState.UNAVAILABLE
+    assert downloaded[3].state is VoiceState.DOWNLOADED
+    assert downloaded[3].language == "German and English — text-only"
+
+    engine = speaking_for_voice(settings, VoiceId.VOXCPM)
+    assert engine.model_name == "openbmb/VoxCPM2"
+    assert engine.sample_rate == 48_000
+    assert engine.streams is True
+    assert engine.retain_when_inactive is False
+
+
+def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider_root = tmp_path / "providers"
+    cache = tmp_path / "hub"
+    _complete_voxcpm_snapshot(cache)
+    worker = provider_root / "voxcpm/.venv/bin/presentator-voxcpm-worker"
+    worker.parent.mkdir(parents=True)
+    worker.write_text("#!/bin/false\n", encoding="utf-8")
+    worker.chmod(0o700)
+    settings = Settings(
+        provider_root=provider_root,
+        huggingface_cache=cache,
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+    )
+    host = importlib.import_module("speech")
+    marker = object()
+    previous_attributes = {
+        name: getattr(host, name, marker) for name in ("voices", "speaking")
+    }
+    previous_modules = {
+        name: sys.modules.pop(name)
+        for name in ("speech.voices", "speech.speaking")
+        if name in sys.modules
+    }
+    original_import = builtins.__import__
+
+    def guard_provider_import(
+        name: str,
+        global_namespace: dict[str, object] | None = None,
+        local_namespace: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
+        if name == "presentator_voxcpm" or name.startswith("presentator_voxcpm."):
+            raise AssertionError
+        if name == "voxcpm" or name.startswith("voxcpm."):
+            raise AssertionError
+        return original_import(name, global_namespace, local_namespace, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guard_provider_import)
+    try:
+        fresh_voices = importlib.import_module("speech.voices")
+        fresh_speaking = importlib.import_module("speech.speaking")
+        rows = fresh_voices.statuses(
+            settings,
+            fresh_voices.VoiceRuntimeState(
+                selected=None, ready=False, loading=False, pending=None, failed=None
+            ),
+        )
+        voxcpm = next(row for row in rows if row.id is fresh_voices.VoiceId.VOXCPM)
+        engine = fresh_speaking.speaking_for_voice(
+            settings, fresh_voices.VoiceId.VOXCPM
+        )
+        assert voxcpm.state is fresh_voices.VoiceState.DOWNLOADED
+        assert engine.model_name == VOXCPM_MODEL_ID
+        assert engine.sample_rate == VOXCPM_SAMPLE_RATE
+    finally:
+        for name in ("speech.voices", "speech.speaking"):
+            sys.modules.pop(name, None)
+        sys.modules.update(previous_modules)
+        for name, value in previous_attributes.items():
+            if value is marker:
+                delattr(host, name)
+            else:
+                setattr(host, name, value)
+
+
+async def _disconnect_after_child_receives_request(
+    app: FastAPI, request_ids: Path, expected_request_count: int
+) -> list[dict[str, object]]:
+    messages: list[dict[str, object]] = []
+    sent_body = False
+    body_chunks = 0
+    disconnect = asyncio.Event()
+    delivered = asyncio.Event()
+    pcm_sent = asyncio.Event()
+    never = asyncio.Event()
+
+    async def receive() -> dict[str, object]:
+        nonlocal sent_body
+        if not sent_body:
+            sent_body = True
+            return {
+                "type": "http.request",
+                "body": json.dumps({"text": "wait-cancel", "language": "de"}).encode(),
+                "more_body": False,
+            }
+        await disconnect.wait()
+        delivered.set()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, object]) -> None:
+        nonlocal body_chunks
+        messages.append(message)
+        if message["type"] == "http.response.body" and message.get("more_body"):
+            body_chunks += 1
+            if body_chunks == 1:
+                pcm_sent.set()
+                await never.wait()
+
+    call = asyncio.create_task(app(_speak_scope(), receive, send))
+    await asyncio.to_thread(
+        _wait_for_request_count, request_ids, expected_request_count
+    )
+    await asyncio.wait_for(pcm_sent.wait(), timeout=_ASGI_TIMEOUT_SECONDS)
+    disconnect.set()
+    await asyncio.wait_for(delivered.wait(), timeout=_ASGI_TIMEOUT_SECONDS)
+    await asyncio.wait_for(call, timeout=_ASGI_TIMEOUT_SECONDS)
+    return messages
+
+
+def _wait_for_request_count(request_ids: Path, expected_request_count: int) -> None:
+    deadline = time.monotonic() + _ASGI_TIMEOUT_SECONDS
+    while (
+        not request_ids.exists()
+        or len(request_ids.read_text().splitlines()) < expected_request_count
+    ) and time.monotonic() < deadline:
+        threading.Event().wait(0.01)
+    assert request_ids.exists()
+    assert len(request_ids.read_text().splitlines()) == expected_request_count
+
+
+def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
+    tmp_path: Path,
+) -> None:
+    provider_root, cache = _closed_provider(tmp_path, provider_name="voxcpm")
+    _complete_voxcpm_snapshot(cache)
+    settings = Settings(
+        provider_root=provider_root,
+        huggingface_cache=cache,
+        device="cpu",
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+    )
+    selection = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+
+    def runtime() -> Runtime:
+        return Runtime(
+            None,
+            FakeHearing(),
+            dependencies=RuntimeDependencies(
+                selection=selection,
+                engine_factory=lambda voice: speaking_for_voice(settings, voice),
+                artifact_checker=lambda voice: voice is VoiceId.VOXCPM,
+            ),
+        )
+
+    initial = runtime()
+    restored: Runtime | None = None
+    try:
+        control = TestClient(create_control_app(settings, initial))
+        rows = control.get("/voices").json()["voices"]
+        voxcpm = next(row for row in rows if row["id"] == VoiceId.VOXCPM)
+        assert voxcpm == {
+            "id": VoiceId.VOXCPM,
+            "name": "VoxCPM2",
+            "language": "German and English — text-only",
+            "state": VoiceState.DOWNLOADED,
+        }
+        assert control.post("/voices/voxcpm2/load").json() == {
+            "outcome": VoiceLoadOutcome.ACTIVATED
+        }
+        for language in ("de", "en"):
+            response = control.post(f"/voices/voxcpm2/sample/{language}")
+            rate, pcm = pcm_from_wav(response.content)
+            assert response.status_code == 200
+            assert rate == VOXCPM_SAMPLE_RATE
+            assert pcm == b"\x00\x01"
+        assert selection.read() is VoiceId.VOXCPM
+        initial.close()
+
+        restored = runtime()
+        restored.load()
+        public = create_app(runtime=restored)
+        request_ids = cache / "request-ids"
+        disconnected = asyncio.run(
+            _disconnect_after_child_receives_request(public, request_ids, 3)
+        )
+        assert any(message["type"] == "http.response.start" for message in disconnected)
+        assert (cache / "cancel-observed").read_text().splitlines() == ["1"]
+
+        later = asyncio.run(_speak_once(public))
+        rate, pcm = pcm_from_wav(_wav_body(later))
+        assert rate == VOXCPM_SAMPLE_RATE
+        assert pcm == b"\x00\x01"
+        assert request_ids.read_text().splitlines() == ["1", "2", "1", "2"]
+    finally:
+        initial.close()
+        if restored is not None:
+            restored.close()
 
 
 @dataclass(frozen=True, slots=True)

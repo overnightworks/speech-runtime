@@ -61,6 +61,7 @@ def _run_worker(
         device="cpu",
         cache="/closed/cache",
         protocol_stdout=write_fd,
+        sample_rate=24_000,
         functions=ProviderFunctions(
             recording_loader,
             synthesizer,
@@ -127,6 +128,7 @@ def test_run_joins_a_cooperative_reader_that_is_still_returning(
                 device="cpu",
                 cache="/closed/cache",
                 protocol_stdout=write_fd,
+                sample_rate=24_000,
                 functions=ProviderFunctions(lambda *_args: object(), lambda *_args: ()),
             )
         )
@@ -217,6 +219,63 @@ def test_cancellation_after_an_inflight_step_and_late_cancel_do_not_cross_ids() 
     ]
 
 
+def test_cancel_closes_the_active_iterator_before_the_next_request() -> None:
+    commands: queue.Queue[Frame | BaseException] = queue.Queue()
+    output = BytesIO()
+    first_chunk = threading.Event()
+    release_first_chunk = threading.Event()
+    closed = threading.Event()
+
+    class HeldIterator:
+        def __init__(self) -> None:
+            self._emitted = False
+
+        def __iter__(self) -> HeldIterator:
+            return self
+
+        def __next__(self) -> bytes:
+            if self._emitted:
+                raise StopIteration
+            self._emitted = True
+            first_chunk.set()
+            assert release_first_chunk.wait(timeout=5)
+            return b"\x00\x01"
+
+        def close(self) -> None:
+            closed.set()
+
+    def synthesize(_model: object, text: str, _language: str) -> Iterator[bytes]:
+        if text == "first":
+            return HeldIterator()
+        assert closed.is_set()
+        return iter((b"\x00\x01",))
+
+    commands.put(Frame(FrameKind.SYNTHESIZE, 1, b"\x01first"))
+    serving = threading.Thread(
+        target=worker.serve_commands, args=(commands, output, synthesize, object())
+    )
+    serving.start()
+    try:
+        assert first_chunk.wait(timeout=5)
+        commands.put(Frame(FrameKind.CANCEL, 1, b""))
+        release_first_chunk.set()
+        assert closed.wait(timeout=5)
+        commands.put(Frame(FrameKind.SYNTHESIZE, 2, b"\x01second"))
+        _wait_for_frames(output, 3)
+    finally:
+        commands.put(EOFError())
+        serving.join(timeout=5)
+
+    assert not serving.is_alive()
+    assert closed.is_set()
+    assert _frames(output.getvalue()) == [
+        Frame(FrameKind.CANCELLED, 1, b""),
+        Frame(FrameKind.PCM, 2, b"\x00\x01"),
+        Frame(FrameKind.COMPLETE, 2, b""),
+        Frame(FrameKind.FAILED, 0, b"\x01"),
+    ]
+
+
 @pytest.mark.parametrize(
     ("commands", "failure_id"),
     [
@@ -270,6 +329,141 @@ def test_model_and_pcm_validation_failure_emit_only_active_failure() -> None:
         assert b"raw model detail" not in output.getvalue()
 
 
+@pytest.mark.parametrize(
+    ("failure", "terminal"),
+    [
+        ("normal", FrameKind.COMPLETE),
+        ("synthesis", FrameKind.FAILED),
+        ("frame", FrameKind.FAILED),
+    ],
+)
+def test_every_request_exit_closes_its_iterator_before_terminal_output(
+    monkeypatch: pytest.MonkeyPatch, failure: str, terminal: FrameKind
+) -> None:
+    events: list[FrameKind | str] = []
+
+    class ClosableIterator:
+        def __iter__(self) -> ClosableIterator:
+            return self
+
+        def __next__(self) -> bytes:
+            if failure == "synthesis":
+                raise RuntimeError
+            if failure == "frame":
+                return b"\x00"
+            raise StopIteration
+
+        def close(self) -> None:
+            events.append("closed")
+
+    original_write_frame = worker.write_frame
+
+    def record_frame(stream: object, frame: Frame) -> None:
+        events.append(frame.kind)
+        original_write_frame(stream, frame)
+
+    monkeypatch.setattr(worker, "write_frame", record_frame)
+    commands: queue.Queue[Frame | BaseException] = queue.Queue()
+    output = BytesIO()
+    commands.put(Frame(FrameKind.SYNTHESIZE, 9, b"\x01Hallo"))
+    if failure == "normal":
+        outcomes: list[int] = []
+        serving = threading.Thread(
+            target=lambda: outcomes.append(
+                worker.serve_commands(
+                    commands, output, lambda *_args: ClosableIterator(), object()
+                )
+            )
+        )
+        serving.start()
+        try:
+            _wait_for_frames(output, 1)
+        finally:
+            commands.put(EOFError())
+            serving.join(timeout=5)
+        assert not serving.is_alive()
+        assert outcomes == [1]
+    else:
+        assert (
+            worker.serve_commands(
+                commands, output, lambda *_args: ClosableIterator(), object()
+            )
+            == 1
+        )
+    assert events.index("closed") < events.index(terminal)
+    if failure != "normal":
+        assert _frames(output.getvalue()) == [Frame(FrameKind.FAILED, 9, b"\x01")]
+
+
+def test_active_protocol_failure_closes_the_iterator_before_sanitized_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[FrameKind | str] = []
+
+    class ClosableIterator:
+        def __init__(self) -> None:
+            self._emitted = False
+
+        def __iter__(self) -> ClosableIterator:
+            return self
+
+        def __next__(self) -> bytes:
+            if self._emitted:
+                raise StopIteration
+            self._emitted = True
+            return b"\x00\x01"
+
+        def close(self) -> None:
+            events.append("closed")
+
+    original_write_frame = worker.write_frame
+
+    def record_frame(stream: object, frame: Frame) -> None:
+        events.append(frame.kind)
+        original_write_frame(stream, frame)
+
+    monkeypatch.setattr(worker, "write_frame", record_frame)
+    commands: queue.Queue[Frame | BaseException] = queue.Queue()
+    output = BytesIO()
+    commands.put(Frame(FrameKind.SYNTHESIZE, 9, b"\x01Hallo"))
+    commands.put(Frame(FrameKind.PCM, 9, b"\x00\x01"))
+
+    assert (
+        worker.serve_commands(
+            commands, output, lambda *_args: ClosableIterator(), object()
+        )
+        == 1
+    )
+    assert events == ["closed", FrameKind.FAILED]
+    assert _frames(output.getvalue()) == [Frame(FrameKind.FAILED, 9, b"\x01")]
+
+
+def test_iterator_cleanup_failure_emits_only_the_active_failure() -> None:
+    class FailingCloseIterator:
+        def __iter__(self) -> FailingCloseIterator:
+            return self
+
+        def __next__(self) -> bytes:
+            raise StopIteration
+
+        def close(self) -> None:
+            message = "cleanup detail"
+            raise RuntimeError(message)
+
+    commands: queue.Queue[Frame | BaseException] = queue.Queue()
+    output = BytesIO()
+    commands.put(Frame(FrameKind.SYNTHESIZE, 9, b"\x01Hallo"))
+
+    assert (
+        worker.serve_commands(
+            commands, output, lambda *_args: FailingCloseIterator(), object()
+        )
+        == 1
+    )
+    assert _frames(output.getvalue()) == [Frame(FrameKind.FAILED, 9, b"\x01")]
+    assert b"cleanup detail" not in output.getvalue()
+
+
 def _run_bootstrap(write_fd: int) -> None:
     os.dup2(write_fd, 1)
     os.close(write_fd)
@@ -313,6 +507,7 @@ def _run_bootstrap(write_fd: int) -> None:
                 return 0
 
             return SimpleNamespace(
+                CHATTERBOX_SAMPLE_RATE=24_000,
                 ProviderFunctions=lambda *functions: functions,
                 serve_provider=fake_serve_provider,
             )

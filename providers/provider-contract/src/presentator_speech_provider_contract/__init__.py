@@ -40,6 +40,20 @@ QWEN_ARTIFACTS = (
     "tokenizer_config.json",
     "vocab.json",
 )
+VOXCPM_MODEL_ID = "openbmb/VoxCPM2"
+VOXCPM_REVISION = "32279effe8c19989596f05d353d1447f51d9e915"
+VOXCPM_ARTIFACTS = (
+    ".gitattributes",
+    "README.md",
+    "audiovae.pth",
+    "config.json",
+    "model.safetensors",
+    "special_tokens_map.json",
+    "tokenization_voxcpm2.py",
+    "tokenizer.json",
+    "tokenizer_config.json",
+)
+VOXCPM_SAMPLE_RATE = 48_000
 
 
 class QwenSpeaker(StrEnum):
@@ -64,6 +78,7 @@ MIN_SYNTHESIS_BYTES = 2
 MAX_SYNTHESIS_BYTES = 16_385
 _HEADER = struct.Struct("!IBQ")
 _LENGTH = struct.Struct("!I")
+_READY = struct.Struct("!HI")
 
 
 class FrameKind(IntEnum):
@@ -180,7 +195,7 @@ def _validate(frame: Frame) -> None:
         raise ProtocolError
     payload = frame.payload
     if frame.kind is FrameKind.READY:
-        valid = frame.request_id == 0 and payload == b"\x00\x01\x00\x00]\xc0"
+        valid = frame.request_id == 0 and _ready_sample_rate(payload) is not None
     elif frame.kind is FrameKind.SYNTHESIZE:
         valid = frame.request_id != 0 and _valid_synthesis(payload)
     elif frame.kind in {FrameKind.CANCEL, FrameKind.COMPLETE, FrameKind.CANCELLED}:
@@ -223,6 +238,7 @@ def serve_provider(
     device: str,
     cache: str,
     protocol_stdout: int,
+    sample_rate: int,
     functions: ProviderFunctions,
 ) -> int:
     """Load once, optionally prepare, then process serialized commands."""
@@ -231,7 +247,7 @@ def serve_provider(
         model = functions.load(device, Path(cache))
         if functions.prepare is not None:
             functions.prepare(model)
-        write_frame(stream, Frame(FrameKind.READY, 0, b"\x00\x01\x00\x00]\xc0"))
+        write_frame(stream, Frame(FrameKind.READY, 0, ready_payload(sample_rate)))
     except Exception:
         _failed(stream, 0)
         stream.close()
@@ -288,9 +304,11 @@ def serve_commands(
         request_id = command.request_id
         language = {1: "de", 2: "en"}[command.payload[0]]
         text = command.payload[1:].decode("utf-8")
+        iterator: Iterable[bytes] | None = None
         try:
             cancelled = False
-            for pcm in synthesize(model, text, language):
+            iterator = iter(synthesize(model, text, language))
+            for pcm in iterator:
                 cancelled = _consume_cancellation(
                     commands, request_id, previous_terminal
                 )
@@ -302,11 +320,14 @@ def serve_commands(
                     commands, request_id, previous_terminal
                 )
             terminal = FrameKind.CANCELLED if cancelled else FrameKind.COMPLETE
-            write_frame(stream, Frame(terminal, request_id, b""))
-            previous_terminal = request_id
         except Exception:
-            _failed(stream, request_id)
-            return 1
+            return _fail_request(stream, request_id, iterator)
+        try:
+            _close_iterator(iterator)
+        except Exception:
+            return _fail_request(stream, request_id, None)
+        write_frame(stream, Frame(terminal, request_id, b""))
+        previous_terminal = request_id
 
 
 def _consume_cancellation(
@@ -329,6 +350,46 @@ def _consume_cancellation(
         if command.request_id != request_id:
             raise ProtocolError
         cancelled = True
+
+
+def ready_payload(sample_rate: int) -> bytes:
+    """Encode the version-one worker declaration for one native PCM rate."""
+    if sample_rate <= 0 or sample_rate >= 1 << 32:
+        raise ValueError
+    return _READY.pack(1, sample_rate)
+
+
+def _ready_sample_rate(payload: bytes) -> int | None:
+    if len(payload) != _READY.size:
+        return None
+    version, sample_rate = _READY.unpack(payload)
+    return sample_rate if version == 1 and sample_rate > 0 else None
+
+
+def ready_sample_rate(payload: bytes) -> int:
+    """Return a validated version-one provider rate."""
+    sample_rate = _ready_sample_rate(payload)
+    if sample_rate is None:
+        raise ProtocolError
+    return sample_rate
+
+
+def _close_iterator(iterator: Iterable[bytes] | None) -> None:
+    close = getattr(iterator, "close", None)
+    if callable(close):
+        close()
+
+
+def _fail_request(
+    stream: BinaryIO, request_id: int, iterator: Iterable[bytes] | None
+) -> int:
+    try:
+        _close_iterator(iterator)
+    except Exception:
+        _failed(stream, request_id)
+        return 1
+    _failed(stream, request_id)
+    return 1
 
 
 def _failed(stream: BinaryIO, request_id: int) -> None:

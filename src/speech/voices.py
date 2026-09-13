@@ -13,6 +13,9 @@ from presentator_speech_provider_contract import (
     QWEN_ARTIFACTS,
     QWEN_MODEL_ID,
     QWEN_REVISION,
+    VOXCPM_ARTIFACTS,
+    VOXCPM_MODEL_ID,
+    VOXCPM_REVISION,
 )
 
 from speech.config import CHATTERBOX_SPEAKING_MODEL, DEFAULT_SPEAKING_MODEL
@@ -117,6 +120,7 @@ def statuses(settings: Settings, runtime: VoiceRuntimeState) -> tuple[VoiceStatu
         for voice, provider in (
             (VoiceId.CHATTERBOX, ProviderId.CHATTERBOX),
             (VoiceId.QWEN, ProviderId.QWEN),
+            (VoiceId.VOXCPM, ProviderId.VOXCPM),
         )
         if provider_entrypoint_is_usable(settings.provider_root, provider)
     )
@@ -145,7 +149,7 @@ def _catalogue(settings: Settings) -> tuple[tuple[VoiceId, str, str], ...]:
             "Qwen3-TTS 0.6B",
             f"German and English — {settings.qwen_speaker.value} preset",
         ),
-        (VoiceId.VOXCPM, "VoxCPM2", "Not yet available"),
+        (VoiceId.VOXCPM, "VoxCPM2", "German and English — text-only"),
         (VoiceId.MAGPIE, "NVIDIA Magpie", "Not yet available"),
     )
 
@@ -159,6 +163,8 @@ def installed_voice_ids(settings: Settings) -> frozenset[VoiceId]:
         installed.add(VoiceId.CHATTERBOX)
     if _qwen_is_present(settings.huggingface_cache):
         installed.add(VoiceId.QWEN)
+    if _voxcpm_is_present(settings.huggingface_cache):
+        installed.add(VoiceId.VOXCPM)
     return frozenset(installed)
 
 
@@ -203,6 +209,21 @@ def _qwen_is_present(cache: Path) -> bool:
     )
 
 
+def _voxcpm_is_present(cache: Path) -> bool:
+    return all(
+        isinstance(
+            try_to_load_from_cache(
+                VOXCPM_MODEL_ID,
+                filename,
+                cache_dir=cache,
+                revision=VOXCPM_REVISION,
+            ),
+            str,
+        )
+        for filename in VOXCPM_ARTIFACTS
+    )
+
+
 def _state(
     voice_id: VoiceId,
     *,
@@ -210,7 +231,7 @@ def _state(
     installed: frozenset[VoiceId],
     usable_providers: frozenset[VoiceId],
 ) -> VoiceState:
-    if voice_id in {VoiceId.VOXCPM, VoiceId.MAGPIE}:
+    if voice_id is VoiceId.MAGPIE:
         return VoiceState.UNAVAILABLE
     active = voice_id is runtime.selected and runtime.ready
     if voice_id is runtime.failed or active:
@@ -219,12 +240,12 @@ def _state(
         return VoiceState.LOADING
     if voice_id is VoiceId.QWEN:
         return _qwen_state(voice_id, runtime, installed, usable_providers)
-    is_provider = voice_id in {VoiceId.CHATTERBOX, VoiceId.QWEN}
+    is_provider = voice_id in {VoiceId.CHATTERBOX, VoiceId.QWEN, VoiceId.VOXCPM}
     provider_usable = not is_provider or voice_id in usable_providers
     if voice_id not in installed:
         return (
             VoiceState.UNAVAILABLE
-            if voice_id is VoiceId.QWEN
+            if voice_id in {VoiceId.QWEN, VoiceId.VOXCPM}
             else VoiceState.NOT_DOWNLOADED
         )
     return VoiceState.DOWNLOADED if provider_usable else VoiceState.UNAVAILABLE

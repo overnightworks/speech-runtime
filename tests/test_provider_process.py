@@ -19,11 +19,14 @@ from presentator_speech_provider_contract import (
     MAX_FRAME_LENGTH,
     QWEN_MODEL_ID,
     QWEN_SAMPLE_RATE,
+    VOXCPM_MODEL_ID,
+    VOXCPM_SAMPLE_RATE,
     Frame,
     FrameDecoder,
     FrameKind,
     ProtocolError,
     read_frame,
+    ready_payload,
     write_frame,
 )
 
@@ -80,7 +83,8 @@ if behavior == "startup-oversized":
 if behavior == "startup-failed":
     write_frame(stream, Frame(FrameKind.FAILED, 0, b"\x01"))
     raise SystemExit(1)
-write_frame(stream, Frame(FrameKind.READY, 0, b"\x00\x01\x00\x00]\xc0"))
+rate = 48000 if {provider!r} == "voxcpm" else 24000
+write_frame(stream, Frame(FrameKind.READY, 0, bytes((0, 1)) + rate.to_bytes(4, "big")))
 if behavior == "idle-exit":
     while not (cache / "exit-now").exists():
         time.sleep(0.01)
@@ -118,7 +122,8 @@ while True:
         raise SystemExit(1)
     if text == "wait-cancel":
         cancel = read_frame(__import__("sys").stdin.buffer)
-        (cache / "cancel-observed").touch()
+        with (cache / "cancel-observed").open("a", encoding="utf-8") as observed:
+            observed.write(f"{{cancel.request_id}}\n")
         write_frame(stream, Frame(FrameKind.CANCELLED, cancel.request_id, b""))
         last_terminal = request_id
         continue
@@ -167,11 +172,11 @@ def _provider_process(
     arguments = ["--device", "cpu", "--cache", str(cache)]
     if provider_name == "qwen":
         arguments.extend(("--speaker", "Ryan"))
-    model_name, sample_rate, streams = (
-        (QWEN_MODEL_ID, QWEN_SAMPLE_RATE, False)
-        if provider_name == "qwen"
-        else (CHATTERBOX_SPEAKING_MODEL, CHATTERBOX_SAMPLE_RATE, True)
-    )
+    model_name, sample_rate, streams = {
+        "chatterbox": (CHATTERBOX_SPEAKING_MODEL, CHATTERBOX_SAMPLE_RATE, True),
+        "qwen": (QWEN_MODEL_ID, QWEN_SAMPLE_RATE, False),
+        "voxcpm": (VOXCPM_MODEL_ID, VOXCPM_SAMPLE_RATE, True),
+    }[provider_name]
     return ProviderProcess(
         ProviderLaunch(
             model_name=model_name,
@@ -218,6 +223,27 @@ def test_protocol_round_trips_partial_reads_and_consecutive_frames() -> None:
         Frame(FrameKind.PCM, 1, b"\x00\x01"),
         Frame(FrameKind.COMPLETE, 1, b""),
     ]
+
+
+@pytest.mark.parametrize("sample_rate", [24_000, 48_000])
+def test_version_one_ready_encodes_the_declared_native_rate(sample_rate: int) -> None:
+    frame = Frame(FrameKind.READY, 0, ready_payload(sample_rate))
+
+    encoded = BytesIO()
+    write_frame(encoded, frame)
+
+    assert read_frame(BytesIO(encoded.getvalue())) == frame
+    assert ready_payload(24_000) == b"\x00\x01\x00\x00]\xc0"
+
+
+def test_parent_rejects_a_worker_that_advertises_another_rate(tmp_path: Path) -> None:
+    root, cache = _closed_provider(tmp_path, provider_name="voxcpm")
+    engine = _provider_process(root, cache)
+
+    with pytest.raises(RuntimeError, match="speech provider failed"):
+        engine.load()
+
+    engine.close()
 
 
 @pytest.mark.parametrize(

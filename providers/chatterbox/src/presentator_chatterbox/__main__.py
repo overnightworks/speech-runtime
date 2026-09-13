@@ -17,7 +17,11 @@ def main() -> int:
         install_parent_death_signal(arguments.expected_parent_pid)
     except RuntimeError:
         return 1
-    from presentator_speech_provider_contract import ProviderFunctions, serve_provider
+    from presentator_speech_provider_contract import (
+        CHATTERBOX_SAMPLE_RATE,
+        ProviderFunctions,
+        serve_provider,
+    )
 
     from presentator_chatterbox.model import load_model, pcm_chunks
 
@@ -25,6 +29,7 @@ def main() -> int:
         device=arguments.device,
         cache=arguments.cache,
         protocol_stdout=protocol_stdout,
+        sample_rate=CHATTERBOX_SAMPLE_RATE,
         functions=ProviderFunctions(load_model, pcm_chunks, _prepare),
     )
 
