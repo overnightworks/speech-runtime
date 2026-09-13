@@ -15,8 +15,9 @@ from typing import TYPE_CHECKING
 import uvicorn
 
 from speech.config import Settings, load_settings
+from speech.control import create_control_app
 from speech.cuda_libs import prepare_cuda_libraries
-from speech.service import Runtime, create_app, create_control_app
+from speech.service import Runtime, create_app
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -111,7 +112,7 @@ async def serve(settings: Settings) -> int:
     with PrivateSocket(settings.private_directory, runtime_uid=runtime_uid) as uds:
         public_task = asyncio.create_task(public.serve())
         private_task = asyncio.create_task(private.serve(sockets=[uds]))
-        runtime.loading = True
+        runtime.begin_loading()
         loader = asyncio.create_task(asyncio.to_thread(runtime.load, loading_stop))
         stopped = asyncio.create_task(stopping.wait())
         fatal_task = asyncio.create_task(fatal.wait())

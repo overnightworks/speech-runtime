@@ -12,14 +12,13 @@ from fastapi.testclient import TestClient
 from starlette.responses import StreamingResponse
 
 from speech.config import Settings
+from speech.control import SampleLanguage, create_control_app
 from speech.pcm import pcm_from_wav
 from speech.selection import VoiceSelectionStore
 from speech.service import (
     Runtime,
     RuntimeDependencies,
-    SampleLanguage,
     create_app,
-    create_control_app,
 )
 from speech.voices import VoiceId, VoiceLoadOutcome
 from tests.conftest import FakeHearing, FakeSpeaking

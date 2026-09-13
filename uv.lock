@@ -354,6 +354,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "faster-whisper" },
+    { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "nvidia-cublas-cu12" },
     { name = "nvidia-cudnn-cu12" },
@@ -375,6 +376,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "faster-whisper", specifier = "==1.2.1" },
+    { name = "huggingface-hub", specifier = "==1.30.0" },
     { name = "numpy", specifier = "==1.26.4" },
     { name = "nvidia-cublas-cu12", specifier = "==12.4.5.8" },
     { name = "nvidia-cudnn-cu12", specifier = "==9.1.0.70" },

@@ -6,8 +6,10 @@ co-presenter that will call it.
 One process holds a German voice and a German listener resident, and offers
 them over HTTP. Nothing in `src/presentator` imports this package. The caller
 owns the address. Settings · Voice chooses between downloaded Piper,
-Chatterbox, and Qwen3-TTS 0.6B; the durable choice is private state, and no
-loader downloads weights.
+Chatterbox, and Qwen3-TTS 0.6B; the durable choice is private state. An admin
+may explicitly download the pinned Qwen snapshot through the private control
+socket; it retains partials, never selects the voice, and reports local
+artifact truth.
 
 ## Models
 
@@ -100,7 +102,9 @@ Weights stay in:
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
 - `GET /voices` exists only on `speech.sock` in `SPEECH_PRIVATE_DIRECTORY`. It
   reports the five fixed admin catalogue rows, typed recovery detail, and local
-  artifact evidence. `POST /voices/{piper|chatterbox|qwen3-tts-0.6b}/load` is private too; it
+  artifact evidence. `POST /voices/qwen3-tts-0.6b/download` starts the pinned,
+  tokenless Qwen transfer and returns promptly; it never selects a voice.
+  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b}/load` is private too; it
   synchronously loads an already-downloaded baseline, atomically persists the
   choice, and waits for admitted speech before switching. Piper stays resident;
   deselected provider processes exit before Load succeeds and are rebuilt when selected again.

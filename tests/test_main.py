@@ -20,9 +20,10 @@ from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
 from speech import __main__
 from speech.__main__ import PrivateSocket
 from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from speech.control import create_control_app
 from speech.provider_process import ProviderLaunch, ProviderProcess
 from speech.selection import VoiceSelectionStore
-from speech.service import Runtime, RuntimeDependencies, create_app, create_control_app
+from speech.service import Runtime, RuntimeDependencies, create_app
 from speech.voices import VoiceId
 from tests.conftest import FakeHearing, FakeSpeaking
 

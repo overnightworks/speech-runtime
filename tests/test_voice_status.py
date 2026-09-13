@@ -3,6 +3,8 @@
 import logging
 import os
 import threading
+from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -10,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from speech import voices
 from speech.config import Settings
+from speech.control import create_control_app
 from speech.pcm import pcm_from_wav
 from speech.selection import VoiceSelectionStore
 from speech.service import (
@@ -17,7 +20,6 @@ from speech.service import (
     RuntimeDependencies,
     SpeakingEngine,
     create_app,
-    create_control_app,
 )
 from speech.speaking import speaking_for_voice
 from speech.voices import (
@@ -116,11 +118,7 @@ def test_chatterbox_weights_need_the_exact_executable_but_active_survives_its_re
     assert active[1].state is VoiceState.ACTIVE
 
 
-def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_preset(
-    tmp_path,
-) -> None:
-    provider_root = tmp_path / "providers"
-    cache = tmp_path / "hub"
+def _complete_qwen_snapshot(cache: Path) -> Path:
     snapshot = (
         cache
         / "models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice"
@@ -146,21 +144,30 @@ def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_pres
         path = snapshot / artifact
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
+    return snapshot
+
+
+def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_preset(
+    tmp_path,
+) -> None:
+    provider_root = tmp_path / "providers"
+    cache = tmp_path / "hub"
+    snapshot = _complete_qwen_snapshot(cache)
     settings = Settings(
         provider_root=provider_root,
         huggingface_cache=cache,
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
 
-    missing_worker = statuses(settings, _inactive_runtime_state())
+    missing_worker = statuses(settings, _RuntimeFacts().state())
     worker = provider_root / "qwen/.venv/bin/presentator-qwen-worker"
     worker.parent.mkdir(parents=True)
     worker.write_text("#!/bin/false\n", encoding="utf-8")
     worker.chmod(0o700)
     (snapshot / "vocab.json").unlink()
-    missing_artifact = statuses(settings, _inactive_runtime_state())
+    missing_artifact = statuses(settings, _RuntimeFacts().state())
     (snapshot / "vocab.json").touch()
-    downloaded = statuses(settings, _inactive_runtime_state())
+    downloaded = statuses(settings, _RuntimeFacts().state())
     sohee = statuses(
         Settings(
             provider_root=provider_root,
@@ -168,11 +175,11 @@ def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_pres
             qwen_speaker="Sohee",
             PRESENTATOR_RUNTIME_UID=os.geteuid(),
         ),
-        _inactive_runtime_state(),
+        _RuntimeFacts().state(),
     )
 
     assert missing_worker[2].state is VoiceState.UNAVAILABLE
-    assert missing_artifact[2].state is VoiceState.UNAVAILABLE
+    assert missing_artifact[2].state is VoiceState.NOT_DOWNLOADED
     assert downloaded[2].state is VoiceState.DOWNLOADED
     assert downloaded[2].language == "German and English — Ryan preset"
     assert sohee[2].language == "German and English — Sohee preset"
@@ -184,14 +191,142 @@ def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_pres
     assert engine.retain_when_inactive is False
 
 
-def _inactive_runtime_state() -> VoiceRuntimeState:
-    return VoiceRuntimeState(
-        selected=None,
-        ready=False,
-        loading=False,
-        pending=None,
-        failed=None,
+@dataclass(frozen=True, slots=True)
+class _RuntimeFacts:
+    selected: VoiceId | None = None
+    ready: bool = False
+    loading: bool = False
+    pending: VoiceId | None = None
+    failed: VoiceId | None = None
+    downloading: bool = False
+    download_failed: bool = False
+
+    def state(self) -> VoiceRuntimeState:
+        return VoiceRuntimeState(
+            selected=self.selected,
+            ready=self.ready,
+            loading=self.loading,
+            pending=self.pending,
+            failed=self.failed,
+            qwen_downloading=self.downloading,
+            qwen_download_failed=self.download_failed,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _StatusScenario:
+    voice: VoiceId
+    runtime: VoiceRuntimeState
+    installed: tuple[VoiceId, ...]
+    usable: tuple[VoiceId, ...]
+    expected: VoiceState
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        _StatusScenario(
+            VoiceId.QWEN,
+            _RuntimeFacts(failed=VoiceId.QWEN).state(),
+            (VoiceId.QWEN,),
+            (VoiceId.QWEN,),
+            VoiceState.FAILED,
+        ),
+        _StatusScenario(
+            VoiceId.QWEN,
+            _RuntimeFacts(selected=VoiceId.QWEN, ready=True).state(),
+            (VoiceId.QWEN,),
+            (VoiceId.QWEN,),
+            VoiceState.ACTIVE,
+        ),
+        _StatusScenario(
+            VoiceId.QWEN,
+            _RuntimeFacts(
+                selected=VoiceId.PIPER,
+                ready=True,
+                loading=True,
+                pending=VoiceId.QWEN,
+            ).state(),
+            (VoiceId.QWEN,),
+            (VoiceId.QWEN,),
+            VoiceState.LOADING,
+        ),
+        _StatusScenario(
+            VoiceId.QWEN,
+            _RuntimeFacts().state(),
+            (),
+            (),
+            VoiceState.UNAVAILABLE,
+        ),
+        _StatusScenario(
+            VoiceId.QWEN,
+            _RuntimeFacts(downloading=True).state(),
+            (),
+            (VoiceId.QWEN,),
+            VoiceState.DOWNLOADING,
+        ),
+        _StatusScenario(
+            VoiceId.QWEN,
+            _RuntimeFacts().state(),
+            (VoiceId.QWEN,),
+            (VoiceId.QWEN,),
+            VoiceState.DOWNLOADED,
+        ),
+        _StatusScenario(
+            VoiceId.QWEN,
+            _RuntimeFacts(download_failed=True).state(),
+            (),
+            (VoiceId.QWEN,),
+            VoiceState.DOWNLOAD_FAILED,
+        ),
+        _StatusScenario(
+            VoiceId.QWEN,
+            _RuntimeFacts().state(),
+            (),
+            (VoiceId.QWEN,),
+            VoiceState.NOT_DOWNLOADED,
+        ),
+        _StatusScenario(
+            VoiceId.CHATTERBOX,
+            _RuntimeFacts(
+                selected=VoiceId.PIPER,
+                ready=True,
+                loading=True,
+                pending=VoiceId.CHATTERBOX,
+            ).state(),
+            (VoiceId.CHATTERBOX,),
+            (VoiceId.CHATTERBOX,),
+            VoiceState.LOADING,
+        ),
+    ],
+)
+def test_catalogue_preserves_runtime_precedence_before_download_evidence(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: _StatusScenario,
+) -> None:
+    installed_voices = {VoiceId.PIPER, *scenario.installed}
+    monkeypatch.setattr(
+        voices, "installed_voice_ids", lambda _settings: installed_voices
     )
+    monkeypatch.setattr(
+        voices,
+        "provider_entrypoint_is_usable",
+        lambda _root, _provider: scenario.voice in scenario.usable,
+    )
+
+    catalogue = statuses(
+        Settings(
+            voice_cache=tmp_path,
+            huggingface_cache=tmp_path,
+            provider_root=tmp_path,
+            PRESENTATOR_RUNTIME_UID=os.geteuid(),
+        ),
+        scenario.runtime,
+    )
+
+    row = next(row for row in catalogue if row.id is scenario.voice)
+    assert row.state is scenario.expected
 
 
 def test_private_endpoint_reports_loading_and_active_from_the_shared_runtime(

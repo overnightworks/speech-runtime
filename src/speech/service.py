@@ -7,7 +7,6 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -35,6 +34,7 @@ from speech.hearing import (
     hearing_from_settings,
 )
 from speech.pcm import wav_header
+from speech.qwen_download import _QwenDownload, download_qwen
 from speech.selection import (
     DurabilityUnconfirmedError,
     SelectionError,
@@ -42,6 +42,7 @@ from speech.selection import (
 )
 from speech.speaking import speaking_for_voice
 from speech.voices import (
+    VoiceDownloadOutcome,
     VoiceId,
     VoiceLoadOutcome,
     VoiceRecovery,
@@ -49,6 +50,7 @@ from speech.voices import (
     VoiceRuntimeState,
     VoiceSnapshot,
     installed_voice_ids,
+    qwen_worker_is_usable,
     statuses,
 )
 from speech.wav_response import ClosingWavResponse
@@ -70,19 +72,6 @@ class SpeakRequest(BaseModel):
 
     text: SpeakText
     language: str
-
-
-class SampleLanguage(StrEnum):
-    """The two fixed phrases the private sample endpoint can synthesize."""
-
-    GERMAN = "de"
-    ENGLISH = "en"
-
-
-_SAMPLE_TEXT: dict[SampleLanguage, str] = {
-    SampleLanguage.GERMAN: "Hallo, ich bin die Stimme deiner Präsentation.",
-    SampleLanguage.ENGLISH: "Hello, I am the voice of your presentation.",
-}
 
 
 class SpeakingEngine(Protocol):
@@ -139,6 +128,16 @@ class Runtime:
         self._selection = dependencies.selection
         self._engine_factory = dependencies.engine_factory
         self._artifact_checker = dependencies.artifact_checker
+        self._state_lock = threading.Lock()
+        self._qwen_download = _QwenDownload(
+            dependencies.qwen_download,
+            dependencies.qwen_worker_is_usable,
+            lambda: (
+                self._artifact_checker is not None
+                and self._artifact_checker(VoiceId.QWEN)
+            ),
+            self._state_lock,
+        )
         self._default_voice = dependencies.default_voice
         self._selected = dependencies.default_voice if speaking is not None else None
         self._ready_speaking = speaking if speaking and speaking.ready else None
@@ -151,7 +150,6 @@ class Runtime:
         self._engines: dict[VoiceId, SpeakingEngine] = {}
         if speaking is not None and dependencies.default_voice is not None:
             self._engines[dependencies.default_voice] = speaking
-        self._state_lock = threading.Lock()
         self._state_changed = threading.Condition(self._state_lock)
         self._transition_guard = threading.Lock()
         self._synthesis_gate = threading.Lock()
@@ -171,20 +169,28 @@ class Runtime:
                 ),
                 engine_factory=lambda voice: speaking_for_voice(settings, voice),
                 artifact_checker=lambda voice: voice in installed_voice_ids(settings),
+                qwen_download=lambda: download_qwen(settings),
+                qwen_worker_is_usable=lambda: qwen_worker_is_usable(settings),
                 default_voice=default_voice,
             ),
         )
 
     def load(self, stopping: threading.Event | None = None) -> None:
         """Load both models, leaving process ownership to the orchestrator."""
-        self.loading = True
+        self.begin_loading()
         try:
             self._load_saved_selection()
             if stopping is not None and stopping.is_set():
                 return
             _load_or_raise("hearing", self.hearing.model_name, self.hearing.load)
         finally:
-            self.loading = False
+            with self._state_lock:
+                self.loading = False
+
+    def begin_loading(self) -> None:
+        """Publish startup before its background task can be scheduled."""
+        with self._state_lock:
+            self.loading = True
 
     def health(self) -> dict[str, object]:
         """The contract body for GET /health."""
@@ -208,6 +214,7 @@ class Runtime:
             recovery = self._recovery
             loading = self.loading
             pending = self._pending
+            qwen_downloading, qwen_download_failed = self._qwen_download.state()
         failed = (
             recovery.voice
             if recovery and recovery.kind is VoiceRecoveryKind.LOAD_FAILED
@@ -222,6 +229,8 @@ class Runtime:
                     loading=loading,
                     pending=pending,
                     failed=failed,
+                    qwen_downloading=qwen_downloading,
+                    qwen_download_failed=qwen_download_failed,
                 ),
             ),
             recovery=recovery,
@@ -229,12 +238,26 @@ class Runtime:
 
     def load_voice(self, voice: VoiceId) -> VoiceLoadOutcome | None:
         """Synchronously load, atomically select, and retain one downloaded baseline."""
+        if voice is VoiceId.QWEN and not self._qwen_download.acquire():
+            return None
+        qwen_locked = voice is VoiceId.QWEN
         if not self._transition_guard.acquire(blocking=False):
+            if qwen_locked:
+                self._qwen_download.release()
             return None
         try:
             return self._activate_voice(voice)
         finally:
             self._transition_guard.release()
+            if qwen_locked:
+                self._qwen_download.release()
+
+    def start_qwen_download(self) -> VoiceDownloadOutcome | None:
+        """Acknowledge one nonblocking Qwen download when it can start."""
+        return self._qwen_download.start(self._may_start_qwen_download)
+
+    def _may_start_qwen_download(self) -> bool:
+        return not self._stopping and not self.loading
 
     def capture_speaking(self) -> _VoiceAdmission | None:
         """Capture one stable engine for an entire streaming response."""
@@ -245,7 +268,7 @@ class Runtime:
                 return None
             return self._admit_locked(speaking)
 
-    def preacquire_sample(self, voice: VoiceId) -> _SampleSynthesis | None:
+    def preacquire_sample(self, voice: VoiceId) -> VoiceSample | None:
         """Reserve one verified active voice without delaying an ongoing talk."""
         self._reconcile_failed_active()
         with self._state_lock:
@@ -261,9 +284,9 @@ class Runtime:
             admission = self._admit_locked(speaking)
         if not self._synthesis_gate.acquire(blocking=False):
             admission.close()
-            raise _SynthesisBusyError from None
+            raise SynthesisBusyError from None
         lease = _Lease(self._synthesis_gate.release)
-        return _SampleSynthesis(admission, lease)
+        return VoiceSample(admission, lease)
 
     def _admit_locked(self, speaking: SpeakingEngine) -> _VoiceAdmission:
         self._admitted += 1
@@ -341,7 +364,15 @@ class Runtime:
                         kind=VoiceRecoveryKind.INVALID_SELECTION
                     )
                 return
-            self._activate_voice(selected)
+            if selected is VoiceId.QWEN:
+                if not self._qwen_download.acquire():
+                    return
+                try:
+                    self._activate_voice(selected)
+                finally:
+                    self._qwen_download.release()
+            else:
+                self._activate_voice(selected)
 
     def _activate_voice(self, voice: VoiceId) -> VoiceLoadOutcome:
         with self._state_lock:
@@ -558,6 +589,8 @@ class RuntimeDependencies:
     selection: VoiceSelectionStore | None = None
     engine_factory: Callable[[VoiceId], SpeakingEngine] | None = None
     artifact_checker: Callable[[VoiceId], bool] | None = None
+    qwen_download: Callable[[], None] | None = None
+    qwen_worker_is_usable: Callable[[], bool] | None = None
     default_voice: VoiceId | None = VoiceId.PIPER
 
 
@@ -573,13 +606,11 @@ def _unique_engines(
     return unique
 
 
-class _SynthesisBusyError(RuntimeError):
+class SynthesisBusyError(RuntimeError):
     """The active voice is already generating a request."""
 
 
 class _Lease:
-    """One close-idempotent release callback."""
-
     def __init__(self, release: Callable[[], None]) -> None:
         self._release = release
         self._closed = False
@@ -595,8 +626,6 @@ class _Lease:
 
 @dataclass(frozen=True, slots=True)
 class _VoiceAdmission:
-    """One close-idempotent lifetime for a captured voice and native rate."""
-
     speaking: SpeakingEngine
     sample_rate: int
     lifetime: _Lease
@@ -606,9 +635,21 @@ class _VoiceAdmission:
 
 
 @dataclass(frozen=True, slots=True)
-class _SampleSynthesis:
+class VoiceSample:
+    """One close-idempotent public sample lifetime."""
+
     admission: _VoiceAdmission
     lease: _Lease
+
+    def wav_chunks(self, text: str, language: str) -> Iterator[bytes]:
+        """Yield one WAV from the captured voice."""
+        engine = self.admission.speaking
+        return _wav_chunks(engine, text, language, self.admission.sample_rate)
+
+    def close(self) -> None:
+        """Release its admission and synthesis lease."""
+        self.admission.close()
+        self.lease.close()
 
 
 def _load_or_raise(which: str, model: str, load: Callable[[], None]) -> None:
@@ -629,7 +670,6 @@ def _wav_chunks(
     speaking: SpeakingEngine,
     text: str,
     language: str,
-    *,
     sample_rate: int | None = None,
 ) -> Iterator[bytes]:
     first = True
@@ -652,10 +692,7 @@ def _public_wav_chunks(
     lease = runtime.acquire_synthesis()
     try:
         yield from _wav_chunks(
-            admission.speaking,
-            text,
-            language,
-            sample_rate=admission.sample_rate,
+            admission.speaking, text, language, admission.sample_rate
         )
     finally:
         lease.close()
@@ -672,42 +709,6 @@ def create_app(
     app = FastAPI(title="presentator-speech")
     app.state.runtime = runtime
     _mount_routes(app, runtime)
-    return app
-
-
-def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
-    """Build the private status and Load control surface over the shared runtime."""
-    app = FastAPI(title="presentator-speech-control", docs_url=None, redoc_url=None)
-
-    @app.get("/voices")
-    def voices() -> VoiceSnapshot:
-        return runtime.snapshot(settings)
-
-    @app.post("/voices/{voice}/load")
-    def load(voice: VoiceId) -> dict[str, VoiceLoadOutcome]:
-        outcome = runtime.load_voice(voice)
-        if outcome is None:
-            raise HTTPException(
-                status_code=409, detail="voice transition is in progress"
-            )
-        return {"outcome": outcome}
-
-    @app.post("/voices/{voice}/sample/{language}")
-    def sample(voice: VoiceId, language: SampleLanguage) -> ClosingWavResponse:
-        try:
-            admitted = runtime.preacquire_sample(voice)
-        except _SynthesisBusyError:
-            raise HTTPException(status_code=409, detail="speech is busy") from None
-        if admitted is None:
-            raise HTTPException(status_code=404, detail="active voice is unavailable")
-        chunks = _wav_chunks(
-            admitted.admission.speaking,
-            _SAMPLE_TEXT[language],
-            language.value,
-            sample_rate=admitted.admission.sample_rate,
-        )
-        return ClosingWavResponse(chunks, admitted.admission, admitted.lease)
-
     return app
 
 

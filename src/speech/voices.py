@@ -42,6 +42,8 @@ class VoiceState(StrEnum):
     FAILED = "failed"
     DOWNLOADED = "downloaded"
     NOT_DOWNLOADED = "not_downloaded"
+    DOWNLOADING = "downloading"
+    DOWNLOAD_FAILED = "download_failed"
     UNAVAILABLE = "unavailable"
 
 
@@ -87,6 +89,13 @@ class VoiceLoadOutcome(StrEnum):
     NOT_ACTIVATED = "not_activated"
 
 
+class VoiceDownloadOutcome(StrEnum):
+    """The bounded result of starting the one Qwen download."""
+
+    STARTED = "started"
+    ALREADY_COMPLETE = "already_complete"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class VoiceRuntimeState:
     """The runtime facts that determine the closed catalogue's row states."""
@@ -96,6 +105,8 @@ class VoiceRuntimeState:
     loading: bool
     pending: VoiceId | None
     failed: VoiceId | None
+    qwen_downloading: bool = False
+    qwen_download_failed: bool = False
 
 
 def statuses(settings: Settings, runtime: VoiceRuntimeState) -> tuple[VoiceStatus, ...]:
@@ -151,6 +162,11 @@ def installed_voice_ids(settings: Settings) -> frozenset[VoiceId]:
     return frozenset(installed)
 
 
+def qwen_worker_is_usable(settings: Settings) -> bool:
+    """Read whether the configured Qwen worker can serve a later Load."""
+    return provider_entrypoint_is_usable(settings.provider_root, ProviderId.QWEN)
+
+
 def _piper_is_present(cache: Path, model: str) -> bool:
     return all(
         (cache / f"{model}{suffix}").is_file() for suffix in (".onnx", ".onnx.json")
@@ -196,12 +212,13 @@ def _state(
 ) -> VoiceState:
     if voice_id in {VoiceId.VOXCPM, VoiceId.MAGPIE}:
         return VoiceState.UNAVAILABLE
-    if voice_id is runtime.failed:
-        return VoiceState.FAILED
-    if voice_id is runtime.selected and runtime.ready:
-        return VoiceState.ACTIVE
+    active = voice_id is runtime.selected and runtime.ready
+    if voice_id is runtime.failed or active:
+        return VoiceState.FAILED if voice_id is runtime.failed else VoiceState.ACTIVE
     if runtime.loading and voice_id is (runtime.pending or runtime.selected):
         return VoiceState.LOADING
+    if voice_id is VoiceId.QWEN:
+        return _qwen_state(voice_id, runtime, installed, usable_providers)
     is_provider = voice_id in {VoiceId.CHATTERBOX, VoiceId.QWEN}
     provider_usable = not is_provider or voice_id in usable_providers
     if voice_id not in installed:
@@ -211,3 +228,22 @@ def _state(
             else VoiceState.NOT_DOWNLOADED
         )
     return VoiceState.DOWNLOADED if provider_usable else VoiceState.UNAVAILABLE
+
+
+def _qwen_state(
+    voice_id: VoiceId,
+    runtime: VoiceRuntimeState,
+    installed: frozenset[VoiceId],
+    usable_providers: frozenset[VoiceId],
+) -> VoiceState:
+    if voice_id not in usable_providers:
+        return VoiceState.UNAVAILABLE
+    if runtime.qwen_downloading:
+        return VoiceState.DOWNLOADING
+    if voice_id in installed:
+        return VoiceState.DOWNLOADED
+    return (
+        VoiceState.DOWNLOAD_FAILED
+        if runtime.qwen_download_failed
+        else VoiceState.NOT_DOWNLOADED
+    )

@@ -10,6 +10,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi==0.141.1",
     "faster-whisper==1.2.1",
+    "huggingface-hub==1.30.0",
     "numpy==1.26.4",
     "nvidia-cublas-cu12==12.4.5.8",
     "nvidia-cudnn-cu12==9.1.0.70",
@@ -78,6 +79,7 @@ convention = "google"
 "src/speech/card.py" = ["S404", "S603"]
 # A failed load can be any library error; the process still names the model and stops.
 "src/speech/service.py" = ["BLE001", "C901", "PLR0911", "PLR0912", "PLR0915"]
+"src/speech/qwen_download.py" = ["BLE001"] # A provider callback may raise any library error.
 # Piper and faster-whisper stay unloaded until the process holds them.
 "src/speech/speaking.py" = ["PLC0415"]
 "src/speech/provider_process.py" = [
