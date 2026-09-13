@@ -8,7 +8,6 @@ version = "0.0.0"
 description = "Local speaking and hearing for agent-presentator, one process on the card."
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "chatterbox-tts==0.1.7",
     "fastapi==0.141.1",
     "faster-whisper==1.2.1",
     "numpy==1.26.4",
@@ -16,9 +15,8 @@ dependencies = [
     "nvidia-cudnn-cu12==9.1.0.70",
     "piper-tts==1.8.0",
     "pydantic-settings==2.15.0",
-    # resemble-perth imports pkg_resources, which setuptools 82+ no longer ships.
-    "setuptools==81.0.0",
     "uvicorn==0.52.4",
+    "presentator-chatterbox-contract",
 ]
 
 [project.scripts]
@@ -34,6 +32,9 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/speech"]
+
+[tool.uv.sources]
+presentator-chatterbox-contract = { path = "providers/chatterbox-contract", editable = true }
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
@@ -76,8 +77,11 @@ convention = "google"
 # nvidia-smi is resolved on PATH; the arguments are a constant.
 "src/speech/card.py" = ["S404", "S603"]
 # A failed load can be any library error; the process still names the model and stops.
-"src/speech/service.py" = ["BLE001"]
-# Piper, Chatterbox, and faster-whisper stay unloaded until the process holds them.
+"src/speech/service.py" = ["BLE001", "C901", "PLR0911", "PLR0912", "PLR0915"]
+# Piper and faster-whisper stay unloaded until the process holds them.
 "src/speech/speaking.py" = ["PLC0415"]
-"src/speech/chatterbox.py" = ["PLC0415"]
+"src/speech/chatterbox.py" = [
+    "S404", "S603", "PLR0911", "BLE001", "B904", "EM101", "SIM105",
+    "TC003", "TRY003", "TRY301",
+]
 "src/speech/hearing.py" = ["PLC0415"]

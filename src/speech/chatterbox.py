@@ -1,311 +1,423 @@
-"""The resident Chatterbox Multilingual V3 voice, streaming PCM as it synthesises."""
+"""Parent adapter for the isolated Chatterbox provider."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import os
+import queue
+import selectors
+import signal
+import stat
+import subprocess
+import threading
+import time
+from collections.abc import Callable, Generator
+from enum import Enum
+from pathlib import Path
 
-import numpy as np
-
-if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator
-    from pathlib import Path
-
-CHATTERBOX_SAMPLE_RATE = 24_000
-CHATTERBOX_T3_WEIGHTS = "t3_mtl23ls_v3.safetensors"
-# Pinned to the snapshot this service was measured against; a moving "main"
-# could swap in weights nobody here has timed or listened to.
-CHATTERBOX_REVISION = "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18"
-CHATTERBOX_ARTIFACTS = (
-    "ve.pt",
-    CHATTERBOX_T3_WEIGHTS,
-    "s3gen.pt",
-    "grapheme_mtl_merged_expanded_v1.json",
-    "conds.pt",
-    "Cangjie5_TC.json",
+from presentator_chatterbox_contract import (
+    CHATTERBOX_SAMPLE_RATE,
+    Frame,
+    FrameDecoder,
+    FrameKind,
+    ProtocolError,
+    write_frame,
 )
-# 25 speech tokens per second of 24 kHz audio; 12 tokens is about half a second.
-STREAM_TOKEN_CHUNK = 12
-MAX_NEW_TOKENS = 1000
-WARMUP_TEXT = "Hallo."
+
+TERMINATE_GRACE_SECONDS = 5
+CANCEL_DRAIN_SECONDS = 5
+_COMMAND_WAIT_SECONDS = 0.25
+_READ_SIZE = 64 * 1024
+_NVIDIA_LIBRARY_DIRECTORIES = (
+    "cublas:cuda_cupti:cuda_nvrtc:cuda_runtime:cudnn:cufft:curand:"
+    "cusolver:cusparse:cusparselt:nccl:nvjitlink:nvtx"
+)
 
 
-def _checkpoint_dir(cache: Path) -> object:
-    """Local Hub snapshot. 0.1.7 from_pretrained takes only device and loads V2."""
-    from pathlib import Path
-
-    from huggingface_hub import snapshot_download
-
-    return Path(
-        snapshot_download(
-            repo_id="ResembleAI/chatterbox",
-            repo_type="model",
-            revision=CHATTERBOX_REVISION,
-            allow_patterns=CHATTERBOX_ARTIFACTS,
-            local_files_only=True,
-            cache_dir=cache,
-        )
-    )
+class ChatterboxProtocolError(RuntimeError):
+    """The provider broke its private, sanitized wire contract."""
 
 
-def _load_v3(device: str, cache: Path) -> object:
-    """Load Multilingual V3 weights the installed package has no t3_model flag for."""
-    import torch
-    from chatterbox.models.s3gen import S3Gen
-    from chatterbox.models.t3 import T3
-    from chatterbox.models.t3.modules.t3_config import T3Config
-    from chatterbox.models.tokenizers import MTLTokenizer
-    from chatterbox.models.voice_encoder import VoiceEncoder
-    from chatterbox.mtl_tts import ChatterboxMultilingualTTS, Conditionals
-    from safetensors.torch import load_file as load_safetensors
-
-    ckpt_dir = _checkpoint_dir(cache)
-    map_location = torch.device("cpu") if device in {"cpu", "mps"} else None
-    voice_encoder = VoiceEncoder()
-    voice_encoder.load_state_dict(
-        torch.load(ckpt_dir / "ve.pt", map_location=map_location, weights_only=True)
-    )
-    voice_encoder.to(device).eval()
-    t3 = T3(T3Config.multilingual())
-    t3_state = load_safetensors(ckpt_dir / CHATTERBOX_T3_WEIGHTS)
-    if "model" in t3_state:
-        t3_state = t3_state["model"][0]
-    t3.load_state_dict(t3_state)
-    t3.to(device).eval()
-    s3gen = S3Gen()
-    s3gen.load_state_dict(
-        torch.load(ckpt_dir / "s3gen.pt", map_location=map_location, weights_only=True)
-    )
-    s3gen.to(device).eval()
-    tokenizer = MTLTokenizer(str(ckpt_dir / "grapheme_mtl_merged_expanded_v1.json"))
-    conds = None
-    builtin_voice = ckpt_dir / "conds.pt"
-    if builtin_voice.exists():
-        conds = Conditionals.load(builtin_voice, map_location=map_location).to(device)
-    return ChatterboxMultilingualTTS(
-        t3,
-        s3gen,
-        voice_encoder,
-        tokenizer,
-        device,
-        conds=conds,
-    )
-
-
-def language_id(language: str) -> str:
-    """ISO 639-1 code Chatterbox expects (`de`, `en`)."""
-    token = language.strip().lower().replace("_", "-")
-    if not token:
-        return "de"
-    return token.split("-", 1)[0]
-
-
-def _float_to_pcm(wav: np.ndarray) -> bytes:
-    clipped = np.clip(np.asarray(wav, dtype=np.float64) * 32767.0, -32768, 32767)
-    return clipped.astype(np.int16).tobytes()
+class _OwnerExit(Enum):
+    ORDINARY_CLOSE = "ordinary_close"
+    PROVIDER_FAILURE = "provider_failure"
 
 
 class ChatterboxSpeaking:
-    """One Chatterbox Multilingual V3 model, loaded once and held on the card."""
+    """One retained provider process, owned by a dedicated creator thread."""
 
     streams = True
     sample_rate = CHATTERBOX_SAMPLE_RATE
 
-    def __init__(self, model_name: str, device: str, cache: Path) -> None:
-        """Remember the Hub id and the device the weights will occupy."""
+    def __init__(
+        self,
+        model_name: str,
+        device: str,
+        cache: Path,
+        provider_root: Path | None,
+        *,
+        fatal_callback: Callable[[], None] | None = None,
+    ) -> None:
+        """Store immutable launch data; construction never creates a process."""
         self.model_name = model_name
-        self.ready = False
         self._device = device
         self._cache = cache
-        self._model = None
+        self._provider_root = provider_root
+        self._fatal_callback = fatal_callback or (lambda: None)
+        self.ready = False
+        self._state_lock = threading.Lock()
+        self._commands: queue.Queue[_OwnerExit] = queue.Queue(maxsize=1)
+        self._ready = threading.Event()
+        self._stopped = threading.Event()
+        self._request_finished = threading.Event()
+        self._request_finished.set()
+        self._owner: threading.Thread | None = None
+        self._process: subprocess.Popen[bytes] | None = None
+        self._response_decoder: FrameDecoder | None = None
+        self._failed = False
+        self._closing = False
+        self._cleanup_failed = False
+        self._next_request_id = 1
 
     def load(self) -> None:
-        """Load V3 weights onto the configured device from the local Hub cache."""
-        from speech.cuda_libs import prepare_cuda_libraries
-
-        prepare_cuda_libraries()
-        model = _load_v3(self._device, self._cache)
-        self._model = model
-        self.sample_rate = int(model.sr)
-        for _chunk in _stream_pcm(model, WARMUP_TEXT, "de"):
-            pass
-        self.ready = True
+        """Start the stable creator and wait for its single READY handshake."""
+        with self._state_lock:
+            if self._failed or self._closing:
+                raise RuntimeError("chatterbox provider failed")
+            if self.ready:
+                return
+            if self._owner is None:
+                self._owner = threading.Thread(
+                    target=self._run_owner,
+                    name="chatterbox-provider-owner",
+                )
+                self._owner.start()
+        self._ready.wait()
+        with self._state_lock:
+            ready = self.ready
+        if not ready:
+            raise RuntimeError("chatterbox provider failed")
 
     def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
-        """Yield 16-bit mono PCM while Chatterbox is still synthesising."""
-        if self._model is None:
-            message = "speaking model is not loaded"
-            raise RuntimeError(message)
-        yield from _stream_pcm(self._model, text, language_id(language))
+        """Stream one request and cancel/drain it if the response closes early."""
+        normalized = language.strip().lower().replace("_", "-")
+        language_code = {"de": 1, "en": 2}.get((normalized or "de").split("-", 1)[0])
+        if language_code is None:
+            raise ValueError("unsupported Chatterbox language")
+        payload = bytes([language_code]) + text.encode("utf-8")
+        process = self._live_process()
+        completed = False
+        request_id = 0
+        try:
+            request_id = self._allocate_request_id()
+            self._write(process, Frame(FrameKind.SYNTHESIZE, request_id, payload))
+            while True:
+                frame = self._read(process)
+                self._validate_response(frame, request_id, cancelling=False)
+                if frame.kind is FrameKind.PCM:
+                    yield frame.payload
+                    continue
+                if frame.kind is FrameKind.FAILED:
+                    self._mark_failed()
+                    raise RuntimeError("chatterbox synthesis failed")
+                completed = True
+                return
+        finally:
+            try:
+                if request_id and not completed:
+                    self._cancel_and_drain(process, request_id)
+            finally:
+                self._request_finished.set()
 
+    def close(self) -> None:
+        """Ask the owner to terminate and reap; this operation is idempotent."""
+        with self._state_lock:
+            self._closing = True
+            owner = self._owner
+        if owner is None:
+            return
+        self._request_finished.wait(CANCEL_DRAIN_SECONDS + _COMMAND_WAIT_SECONDS)
+        self._request_owner_stop(_OwnerExit.ORDINARY_CLOSE)
+        if not self._stopped.wait((2 * TERMINATE_GRACE_SECONDS) + 2):
+            self._fatal_callback()
+            raise RuntimeError("chatterbox provider cleanup failed")
+        owner.join(timeout=1)
+        if owner.is_alive() or self._cleanup_failed:
+            self._fatal_callback()
+            raise RuntimeError("chatterbox provider cleanup failed")
 
-def _stream_pcm(model: object, text: str, language: str) -> Iterator[bytes]:
-    import torch
-    from chatterbox.models.s3tokenizer import S3_TOKEN_RATE, drop_invalid_tokens
+    def set_fatal_callback(self, callback: Callable[[], None]) -> None:
+        """Give the runtime its process-lifecycle failure notification seam."""
+        with self._state_lock:
+            self._fatal_callback = callback
 
-    samples_per_token = int(model.sr) // int(S3_TOKEN_RATE)
-    emitted = 0
-    accumulated: torch.Tensor | None = None
-    for token_chunk in _speech_token_chunks(model, text, language):
-        if accumulated is None:
-            accumulated = token_chunk
-        else:
-            accumulated = torch.cat([accumulated, token_chunk])
-        clean = drop_invalid_tokens(accumulated).to(model.device)
-        if clean.numel() == 0:
-            continue
-        # Keep the last token's audio back until EOS so the cropped tail never ships.
-        wav = _vocode(model, clean)
-        ready_until = max(0, len(wav) - samples_per_token)
-        new = wav[emitted:ready_until]
-        emitted = ready_until
-        if new.size:
-            yield _float_to_pcm(new)
-    if accumulated is None:
-        return
-    clean = drop_invalid_tokens(accumulated).to(model.device)
-    if clean.numel() == 0:
-        return
-    n_tokens = int(clean.shape[-1])
-    st_len = max(1, n_tokens - 1)
-    wav = _vocode(model, clean)[: st_len * samples_per_token]
-    new = wav[emitted:]
-    if new.size:
-        yield _float_to_pcm(new)
-
-
-def _vocode(model: object, speech_tokens: object) -> np.ndarray:
-    # Calls s3gen directly rather than the model's own generate(), so the
-    # watermark that generate() applies afterward never runs on this audio.
-    import torch
-
-    with torch.inference_mode():
-        wav, _hidden = model.s3gen.inference(
-            speech_tokens=speech_tokens,
-            ref_dict=model.conds.gen,
-        )
-    return wav.squeeze(0).detach().cpu().numpy()
-
-
-def _ensure_patched_t3(t3: object) -> None:
-    if getattr(t3, "compiled", False) and hasattr(t3, "patched_model"):
-        return
-    from chatterbox.models.t3.inference.t3_hf_backend import T3HuggingfaceBackend
-
-    t3.patched_model = T3HuggingfaceBackend(
-        config=t3.cfg,
-        llama=t3.tfmr,
-        speech_enc=t3.speech_emb,
-        speech_head=t3.speech_head,
-    )
-    t3.compiled = True
-
-
-def _text_tokens(model: object, text: str, language: str) -> object:
-    import torch
-    from chatterbox.mtl_tts import punc_norm
-    from torch.nn import functional
-
-    t3 = model.t3
-    tokens = model.tokenizer.text_to_tokens(
-        punc_norm(text),
-        language_id=language,
-    ).to(model.device)
-    tokens = torch.cat([tokens, tokens], dim=0)
-    tokens = functional.pad(tokens, (1, 0), value=t3.hp.start_text_token)
-    return functional.pad(tokens, (0, 1), value=t3.hp.stop_text_token)
-
-
-def _next_speech_token(
-    output: object,
-    generated_ids: object,
-    processors: tuple[object, object, object],
-) -> object:
-    import torch
-
-    repetition_penalty, min_p_warper, top_p_warper = processors
-    logits_step = output.logits[:, -1, :]
-    cond = logits_step[0:1, :]
-    uncond = logits_step[1:2, :]
-    logits = cond + 0.5 * (cond - uncond)
-    ids_for_proc = generated_ids[:1, ...]
-    logits = repetition_penalty(ids_for_proc, logits)
-    logits = logits / 0.8
-    logits = min_p_warper(ids_for_proc, logits)
-    logits = top_p_warper(ids_for_proc, logits)
-    return torch.multinomial(torch.softmax(logits, dim=-1), num_samples=1)
-
-
-def _speech_token_chunks(
-    model: object,
-    text: str,
-    language: str,
-) -> Iterator[object]:
-    # The pinned wheel's T3.inference() and generate() run to completion before
-    # returning a token, and generate() has no way to select the v3 checkpoint
-    # this loader wires up; this reimplements the decode loop token by token so
-    # a caller can stream speech tokens as they are produced.
-    import torch
-    from transformers.generation.logits_process import (
-        MinPLogitsWarper,
-        RepetitionPenaltyLogitsProcessor,
-        TopPLogitsWarper,
-    )
-
-    t3 = model.t3
-    text_tokens = _text_tokens(model, text, language)
-    initial = t3.hp.start_speech_token * torch.ones_like(text_tokens[:, :1])
-    embeds, _len_cond = t3.prepare_input_embeds(
-        t3_cond=model.conds.t3,
-        text_tokens=text_tokens,
-        speech_tokens=initial,
-        cfg_weight=0.5,
-    )
-    _ensure_patched_t3(t3)
-    bos_token = torch.tensor(
-        [[t3.hp.start_speech_token]],
-        dtype=torch.long,
-        device=embeds.device,
-    )
-    bos_embed = t3.speech_emb(bos_token) + t3.speech_pos_emb.get_fixed_embedding(0)
-    bos_embed = torch.cat([bos_embed, bos_embed])
-    generated_ids = bos_token.clone()
-    processors = (
-        RepetitionPenaltyLogitsProcessor(penalty=1.2),
-        MinPLogitsWarper(min_p=0.05),
-        TopPLogitsWarper(top_p=1.0),
-    )
-    with torch.inference_mode():
-        output = t3.patched_model(
-            inputs_embeds=torch.cat([embeds, bos_embed], dim=1),
-            past_key_values=None,
-            use_cache=True,
-            output_attentions=False,
-            output_hidden_states=True,
-            return_dict=True,
-        )
-        past = output.past_key_values
-        buffer: list[object] = []
-        for step in range(MAX_NEW_TOKENS):
-            next_token = _next_speech_token(output, generated_ids, processors)
-            generated_ids = torch.cat([generated_ids, next_token], dim=1)
-            if next_token.view(-1) == t3.hp.stop_speech_token:
-                if buffer:
-                    yield torch.cat(buffer, dim=1).squeeze(0)
-                    buffer = []
-                break
-            buffer.append(next_token)
-            if len(buffer) >= STREAM_TOKEN_CHUNK:
-                yield torch.cat(buffer, dim=1).squeeze(0)
-                buffer = []
-            next_embed = t3.speech_emb(next_token)
-            next_embed = next_embed + t3.speech_pos_emb.get_fixed_embedding(step + 1)
-            output = t3.patched_model(
-                inputs_embeds=torch.cat([next_embed, next_embed]),
-                past_key_values=past,
-                output_attentions=False,
-                output_hidden_states=True,
-                return_dict=True,
+    def _run_owner(self) -> None:
+        child: subprocess.Popen[bytes] | None = None
+        lifecycle_failed = False
+        try:
+            child = self._spawn()
+            decoder = FrameDecoder()
+            if child.stdout is None:
+                raise ChatterboxProtocolError
+            os.set_blocking(child.stdout.fileno(), False)
+            with self._state_lock:
+                self._process = child
+                self._response_decoder = decoder
+                closing = self._closing
+            outcome = (
+                _OwnerExit.ORDINARY_CLOSE
+                if closing
+                else self._serve_owner(child, decoder)
             )
-            past = output.past_key_values
-        if buffer:
-            yield torch.cat(buffer, dim=1).squeeze(0)
+            if outcome is _OwnerExit.PROVIDER_FAILURE:
+                self._set_failed()
+        except Exception:
+            lifecycle_failed = True
+            self._set_failed()
+        finally:
+            self._ready.set()
+            try:
+                self._terminate_and_reap(child)
+            except Exception:
+                lifecycle_failed = True
+                self._cleanup_failed = True
+            with self._state_lock:
+                self._process = None
+                self._response_decoder = None
+                self.ready = False
+            self._stopped.set()
+            if child is not None and lifecycle_failed:
+                self._fatal_callback()
+
+    def _serve_owner(
+        self, child: subprocess.Popen[bytes], decoder: FrameDecoder
+    ) -> _OwnerExit:
+        try:
+            frame = self._read_available_frame(child, decoder)
+        except (EOFError, OSError, ProtocolError):
+            return _OwnerExit.PROVIDER_FAILURE
+        if frame.kind is not FrameKind.READY or frame.request_id != 0:
+            return _OwnerExit.PROVIDER_FAILURE
+        with self._state_lock:
+            self.ready = True
+        self._ready.set()
+        while True:
+            try:
+                command = self._commands.get(timeout=_COMMAND_WAIT_SECONDS)
+            except queue.Empty:
+                if child.poll() is not None:
+                    return _OwnerExit.PROVIDER_FAILURE
+                continue
+            return command
+
+    def _spawn(self) -> subprocess.Popen[bytes]:
+        entrypoint = chatterbox_entrypoint(self._provider_root)
+        if not _is_executable_file(entrypoint):
+            raise RuntimeError("chatterbox provider unavailable")
+        provider_directory = entrypoint.parents[2]
+        return subprocess.Popen(
+            [
+                str(entrypoint),
+                "--expected-parent-pid",
+                str(os.getpid()),
+                "--device",
+                self._device,
+                "--cache",
+                str(self._cache),
+            ],
+            shell=False,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            cwd=provider_directory,
+            env=_provider_environment(provider_directory),
+            bufsize=0,
+            close_fds=True,
+            start_new_session=True,
+        )
+
+    def _live_process(self) -> subprocess.Popen[bytes]:
+        with self._state_lock:
+            process = self._process
+            if process is None or not self.ready or self._closing or self._failed:
+                raise RuntimeError("chatterbox provider is not ready")
+            self._request_finished.clear()
+            return process
+
+    def _allocate_request_id(self) -> int:
+        with self._state_lock:
+            request_id = self._next_request_id
+            if request_id >= 1 << 64:
+                self._failed = True
+                self.ready = False
+                self._request_owner_stop(_OwnerExit.PROVIDER_FAILURE)
+                raise RuntimeError("chatterbox request ids exhausted")
+            self._next_request_id += 1
+            return request_id
+
+    def _write(self, process: subprocess.Popen[bytes], frame: Frame) -> None:
+        try:
+            write_frame(process.stdin, frame)
+        except (BrokenPipeError, OSError, ProtocolError, ValueError) as error:
+            self._mark_failed()
+            raise ChatterboxProtocolError from error
+
+    def _read(self, process: subprocess.Popen[bytes]) -> Frame:
+        with self._state_lock:
+            decoder = self._response_decoder
+        if decoder is None:
+            self._mark_failed()
+            raise ChatterboxProtocolError
+        try:
+            return self._read_available_frame(process, decoder)
+        except (EOFError, OSError, ProtocolError, ValueError) as error:
+            self._mark_failed()
+            raise ChatterboxProtocolError from error
+
+    def _read_available_frame(
+        self,
+        process: subprocess.Popen[bytes],
+        decoder: FrameDecoder,
+        *,
+        deadline: float | None = None,
+    ) -> Frame:
+        if process.stdout is None:
+            raise EOFError
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                frame = decoder.next_frame()
+                if frame is not None:
+                    return frame
+                if self._closing and deadline is None:
+                    raise EOFError
+                wait = _COMMAND_WAIT_SECONDS
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError
+                    wait = min(wait, remaining)
+                if not selector.select(wait):
+                    if process.poll() is not None:
+                        raise EOFError
+                    continue
+                chunk = os.read(process.stdout.fileno(), _READ_SIZE)
+                if not chunk:
+                    decoder.finish()
+                    raise EOFError
+                decoder.feed(chunk)
+
+    def _validate_response(
+        self, frame: Frame, request_id: int, *, cancelling: bool
+    ) -> None:
+        allowed = {FrameKind.PCM, FrameKind.COMPLETE, FrameKind.FAILED}
+        if cancelling:
+            allowed.add(FrameKind.CANCELLED)
+        if frame.request_id != request_id or frame.kind not in allowed:
+            self._mark_failed()
+            raise ChatterboxProtocolError
+
+    def _cancel_and_drain(
+        self, process: subprocess.Popen[bytes], request_id: int
+    ) -> None:
+        try:
+            self._write(process, Frame(FrameKind.CANCEL, request_id, b""))
+            deadline = time.monotonic() + CANCEL_DRAIN_SECONDS
+            with self._state_lock:
+                decoder = self._response_decoder
+            if decoder is None:
+                raise ChatterboxProtocolError
+            while True:
+                frame = self._read_available_frame(process, decoder, deadline=deadline)
+                self._validate_response(frame, request_id, cancelling=True)
+                if frame.kind in {FrameKind.COMPLETE, FrameKind.CANCELLED}:
+                    return
+                if frame.kind is FrameKind.FAILED:
+                    raise ChatterboxProtocolError
+        except (
+            ChatterboxProtocolError,
+            OSError,
+            ProtocolError,
+            TimeoutError,
+            ValueError,
+            EOFError,
+        ):
+            self._mark_failed()
+
+    def _mark_failed(self) -> None:
+        self._set_failed()
+        self._request_owner_stop(_OwnerExit.PROVIDER_FAILURE)
+
+    def _set_failed(self) -> None:
+        with self._state_lock:
+            self._failed = True
+            self.ready = False
+
+    def _request_owner_stop(self, command: _OwnerExit) -> None:
+        try:
+            self._commands.put_nowait(command)
+        except queue.Full:
+            pass
+
+    def _terminate_and_reap(self, child: subprocess.Popen[bytes] | None) -> None:
+        if child is None:
+            return
+        if child.poll() is None:
+            os.killpg(child.pid, signal.SIGTERM)
+            try:
+                child.wait(timeout=TERMINATE_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                if child.poll() is None:
+                    os.killpg(child.pid, signal.SIGKILL)
+                child.wait(timeout=TERMINATE_GRACE_SECONDS)
+        else:
+            child.wait()
+        for stream in (child.stdin, child.stdout):
+            if stream is not None:
+                stream.close()
+
+
+def chatterbox_entrypoint(provider_root: Path | None) -> Path | None:
+    """Return the one closed worker path without searching another location."""
+    if provider_root is None:
+        return None
+    return (
+        provider_root / "chatterbox" / ".venv" / "bin" / "presentator-chatterbox-worker"
+    )
+
+
+def chatterbox_entrypoint_is_usable(provider_root: Path | None) -> bool:
+    """Report whether the configured closed worker is a regular executable."""
+    return _is_executable_file(chatterbox_entrypoint(provider_root))
+
+
+def _is_executable_file(entrypoint: Path | None) -> bool:
+    if entrypoint is None:
+        return False
+    try:
+        mode = entrypoint.stat().st_mode
+    except OSError:
+        return False
+    return stat.S_ISREG(mode) and os.access(entrypoint, os.X_OK)
+
+
+def _provider_environment(provider_directory: Path) -> dict[str, str]:
+    environment = {
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "TOKENIZERS_PARALLELISM": "false",
+        "PYTHONUNBUFFERED": "1",
+    }
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible_devices is not None:
+        environment["CUDA_VISIBLE_DEVICES"] = visible_devices
+    site_packages = (
+        provider_directory / ".venv" / "lib" / "python3.12" / "site-packages"
+    )
+    libraries = (
+        site_packages / "nvidia" / package / "lib"
+        for package in _NVIDIA_LIBRARY_DIRECTORIES.split(":")
+    )
+    existing = [str(directory) for directory in libraries if directory.is_dir()]
+    if existing:
+        environment["LD_LIBRARY_PATH"] = os.pathsep.join(existing)
+    return environment

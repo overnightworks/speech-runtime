@@ -1,0 +1,1 @@
+"""Isolated Chatterbox provider package."""

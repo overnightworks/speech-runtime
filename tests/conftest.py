@@ -56,6 +56,9 @@ class FakeSpeaking:
         yield pcm[:mid]
         yield pcm[mid:]
 
+    def close(self) -> None:
+        """The in-memory fake owns no external resources."""
+
 
 class FakeHearing:
     model_name = "fake-ears"

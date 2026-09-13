@@ -101,6 +101,9 @@ class SpeakingEngine(Protocol):
     def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
         """16-bit mono PCM as soon as the model produces it."""
 
+    def close(self) -> None:
+        """Release owned resources once; retained pure engines may do nothing."""
+
 
 class HearingEngine(Protocol):
     """A resident transcriber."""
@@ -142,6 +145,8 @@ class Runtime:
             dependencies.default_voice if speaking is not None else None
         )
         self._pending: VoiceId | None = None
+        self._pending_engine: SpeakingEngine | None = None
+        self._stopping = False
         self._recovery: VoiceRecovery | None = None
         self._engines: dict[VoiceId, SpeakingEngine] = {}
         if speaking is not None and dependencies.default_voice is not None:
@@ -149,6 +154,7 @@ class Runtime:
         self._state_lock = threading.Lock()
         self._transition_guard = threading.Lock()
         self._synthesis_gate = threading.Lock()
+        self._fatal_callback: Callable[[], None] = lambda: None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Runtime:
@@ -181,6 +187,7 @@ class Runtime:
 
     def health(self) -> dict[str, object]:
         """The contract body for GET /health."""
+        self._reconcile_failed_active()
         return {
             "speaking": {
                 **self._speaking_health(),
@@ -195,6 +202,7 @@ class Runtime:
 
     def snapshot(self, settings: Settings) -> VoiceSnapshot:
         """Read all public row state while holding one short state lock."""
+        self._reconcile_failed_active()
         with self._state_lock:
             speaking = self.speaking
             selected = self._selected
@@ -231,17 +239,20 @@ class Runtime:
 
     def capture_speaking(self) -> SpeakingEngine | None:
         """Capture one stable engine for an entire streaming response."""
+        self._reconcile_failed_active()
         with self._state_lock:
-            if self.loading:
+            if self.loading or self._stopping:
                 return None
             return self.speaking
 
     def preacquire_sample(self, voice: VoiceId) -> _SampleSynthesis | None:
         """Reserve one verified active voice without delaying an ongoing talk."""
+        self._reconcile_failed_active()
         with self._state_lock:
             speaking = self.speaking
             if (
                 self.loading
+                or self._stopping
                 or self._selected is not voice
                 or speaking is None
                 or not speaking.ready
@@ -260,6 +271,37 @@ class Runtime:
         """Wait for the one request-synthesis owner before generating PCM."""
         self._synthesis_gate.acquire()
         return _SynthesisLease(self._synthesis_gate)
+
+    def begin_shutdown(self) -> None:
+        """Refuse new work before the server starts its own shutdown."""
+        with self._state_lock:
+            self._stopping = True
+
+    def set_fatal_callback(self, callback: Callable[[], None]) -> None:
+        """Route an owned speaking-engine failure to the service orchestrator."""
+        with self._state_lock:
+            self._fatal_callback = callback
+            engines = [self._pending_engine, self.speaking, *self._engines.values()]
+        for engine in _unique_engines(engines):
+            setter = getattr(engine, "set_fatal_callback", None)
+            if callable(setter):
+                setter(callback)
+
+    def close(self) -> None:
+        """Close every retained or pending engine outside the state lock."""
+        with self._state_lock:
+            engines = [self._pending_engine, self.speaking, *self._engines.values()]
+        failed = False
+        for engine in _unique_engines(engines):
+            try:
+                engine.close()
+            except Exception:
+                failed = True
+                _LOG.exception("speaking engine cleanup failed")
+        if failed:
+            self._fatal_callback()
+            message = "speaking engine cleanup failed"
+            raise RuntimeError(message)
 
     def _load_saved_selection(self) -> None:
         selection = self._selection
@@ -285,8 +327,12 @@ class Runtime:
 
     def _activate_voice(self, voice: VoiceId) -> VoiceLoadOutcome:
         with self._state_lock:
+            if self._stopping:
+                return VoiceLoadOutcome.NOT_ACTIVATED
             self.loading = True
             self._pending = voice
+        engine: SpeakingEngine | None = None
+        newly_constructed = False
         try:
             if (
                 self._selection is None
@@ -300,32 +346,77 @@ class Runtime:
             engine = self._engines.get(voice)
             if engine is None:
                 engine = self._engine_factory(voice)
+                newly_constructed = True
+                set_fatal_callback = getattr(engine, "set_fatal_callback", None)
+                if callable(set_fatal_callback):
+                    set_fatal_callback(self._fatal_callback)
+                if not self._register_pending_engine(engine):
+                    return VoiceLoadOutcome.NOT_ACTIVATED
                 engine.load()
-                self._engines[voice] = engine
             elif not engine.ready:
                 engine.load()
+            with self._state_lock:
+                stopping = self._stopping
+            if stopping:
+                return VoiceLoadOutcome.NOT_ACTIVATED
             self._selection.write(voice)
         except DurabilityUnconfirmedError:
             with self._state_lock:
-                self.speaking = engine
-                self._selected = voice
-                self._recovery = VoiceRecovery(
-                    kind=VoiceRecoveryKind.DURABILITY_UNCONFIRMED, voice=voice
-                )
+                stopping = self._stopping
+                if not stopping:
+                    if newly_constructed:
+                        self._engines[voice] = engine
+                        self._pending_engine = None
+                    self.speaking = engine
+                    self._selected = voice
+                    self._recovery = VoiceRecovery(
+                        kind=VoiceRecoveryKind.DURABILITY_UNCONFIRMED, voice=voice
+                    )
+            if stopping:
+                return VoiceLoadOutcome.NOT_ACTIVATED
             return VoiceLoadOutcome.ACTIVATED_DURABILITY_UNCONFIRMED
         except Exception:
             _LOG.exception("voice %s failed to load", voice.value)
             return self._not_activated(voice)
         else:
             with self._state_lock:
-                self.speaking = engine
-                self._selected = voice
-                self._recovery = None
+                stopping = self._stopping
+                if not stopping:
+                    if newly_constructed:
+                        self._engines[voice] = engine
+                        self._pending_engine = None
+                    self.speaking = engine
+                    self._selected = voice
+                    self._recovery = None
+            if stopping:
+                return VoiceLoadOutcome.NOT_ACTIVATED
             return VoiceLoadOutcome.ACTIVATED
         finally:
+            should_close = False
             with self._state_lock:
                 self.loading = False
                 self._pending = None
+                if self._pending_engine is engine:
+                    self._pending_engine = None
+                should_close = (
+                    newly_constructed and engine not in self._engines.values()
+                )
+            if should_close and engine is not None:
+                try:
+                    engine.close()
+                except Exception:
+                    _LOG.exception("uncommitted speaking engine cleanup failed")
+                    self._fatal_callback()
+
+    def _register_pending_engine(self, engine: SpeakingEngine) -> bool:
+        with self._state_lock:
+            if self._stopping:
+                return False
+            if self._pending_engine is not None:
+                message = "voice activation already owns a pending engine"
+                raise RuntimeError(message)
+            self._pending_engine = engine
+            return True
 
     def _not_activated(self, voice: VoiceId) -> VoiceLoadOutcome:
         with self._state_lock:
@@ -333,6 +424,36 @@ class Runtime:
                 kind=VoiceRecoveryKind.LOAD_FAILED, voice=voice
             )
         return VoiceLoadOutcome.NOT_ACTIVATED
+
+    def _reconcile_failed_active(self) -> None:
+        if not self._transition_guard.acquire(blocking=False):
+            return
+        failed: SpeakingEngine | None = None
+        try:
+            with self._state_lock:
+                active = self.speaking
+                if active is None or active.ready or not active.streams:
+                    return
+                if self.loading or self._stopping:
+                    return
+                failed = active
+                failed_voice = self._selected
+                self.speaking = None
+                if (
+                    failed_voice is not None
+                    and self._engines.get(failed_voice) is active
+                ):
+                    del self._engines[failed_voice]
+                self._recovery = VoiceRecovery(
+                    kind=VoiceRecoveryKind.LOAD_FAILED, voice=failed_voice
+                )
+            try:
+                failed.close()
+            except Exception:
+                _LOG.exception("failed speaking engine cleanup failed")
+                self._fatal_callback()
+        finally:
+            self._transition_guard.release()
 
     def _speaking_health(self) -> dict[str, object]:
         with self._state_lock:
@@ -373,6 +494,18 @@ class RuntimeDependencies:
     engine_factory: Callable[[VoiceId], SpeakingEngine] | None = None
     artifact_checker: Callable[[VoiceId], bool] | None = None
     default_voice: VoiceId | None = VoiceId.PIPER
+
+
+def _unique_engines(
+    engines: list[SpeakingEngine | None],
+) -> list[SpeakingEngine]:
+    unique: list[SpeakingEngine] = []
+    identities: set[int] = set()
+    for engine in engines:
+        if engine is not None and id(engine) not in identities:
+            identities.add(id(engine))
+            unique.append(engine)
+    return unique
 
 
 class _SynthesisBusyError(RuntimeError):

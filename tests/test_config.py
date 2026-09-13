@@ -66,6 +66,7 @@ def test_settings_accepts_only_a_positive_shared_runtime_uid(
     ("environment", "value", "reason"),
     [
         ("SPEECH_STATE_DIRECTORY", "relative/state", "state directory"),
+        ("SPEECH_PROVIDER_ROOT", "relative/providers", "provider root"),
         ("SPEECH_SPEAKING_MODEL", "unsupported-baseline", "speaking model"),
     ],
 )
@@ -78,6 +79,13 @@ def test_settings_refuses_unsafe_voice_selection_configuration(
         Settings()
 
     assert value not in str(refused.value)
+
+
+def test_provider_root_is_optional_for_the_default_piper_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SPEECH_PROVIDER_ROOT", raising=False)
+    assert Settings().provider_root is None
 
 
 def test_a_failed_hearing_load_names_the_model(tmp_path) -> None:

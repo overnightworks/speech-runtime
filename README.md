@@ -88,7 +88,7 @@ CTranslate2 does not bundle CUDA. This project installs `nvidia-cublas-cu12` and
 Weights stay in:
 
 - Piper voices: `~/.cache/piper/`
-- Chatterbox: `~/.cache/huggingface/hub/models--ResembleAI--chatterbox` (pinned snapshot `5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18`, `CHATTERBOX_REVISION` in `src/speech/chatterbox.py`)
+- Chatterbox: `~/.cache/huggingface/hub/models--ResembleAI--chatterbox` (pinned snapshot `5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18`, `CHATTERBOX_REVISION` in the shared provider contract)
 - Whisper: `~/.cache/huggingface/hub/models--Systran--faster-whisper-large-v3`
 
 ## Contract
@@ -155,3 +155,6 @@ uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
 uv run pytest -q
 ```
+Chatterbox runs in its own provider virtual environment. The speech service
+talks to it only through its private binary protocol; its model libraries do
+not enter the service process.

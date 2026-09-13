@@ -5,8 +5,11 @@ import os
 import signal
 import socket
 import stat
+import subprocess
+import sys
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -15,7 +18,8 @@ from fastapi.testclient import TestClient
 
 from speech import __main__
 from speech.__main__ import PrivateSocket
-from speech.config import Settings
+from speech.chatterbox import ChatterboxSpeaking
+from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
 from speech.selection import VoiceSelectionStore
 from speech.service import Runtime, RuntimeDependencies, create_app, create_control_app
 from speech.voices import VoiceId
@@ -32,6 +36,45 @@ class _BlockedSpeaking(FakeSpeaking):
         self._started.set()
         assert self._release.wait(timeout=5)
         self.ready = True
+
+
+@dataclass(slots=True)
+class _CloseOrderingScenario:
+    spawned: threading.Event
+    stopping: list[asyncio.Event]
+    closed: threading.Event
+    cache: Path
+    observations: list[bool]
+
+
+class _CloseOrderingServer:
+    def __init__(
+        self, *, triggers_stop: bool, scenario: _CloseOrderingScenario
+    ) -> None:
+        self.triggers_stop = triggers_stop
+        self.scenario = scenario
+        self.stopped = asyncio.Event()
+
+    @property
+    def should_exit(self) -> bool:
+        return self.stopped.is_set()
+
+    @should_exit.setter
+    def should_exit(self, value: bool) -> None:
+        if value:
+            self.stopped.set()
+
+    async def serve(self, *, sockets=None) -> None:
+        del sockets
+        if self.triggers_stop:
+            assert await asyncio.to_thread(self.scenario.spawned.wait, 5)
+            self.scenario.stopping[0].set()
+        await self.stopped.wait()
+        closed_first = await asyncio.to_thread(self.scenario.closed.wait, 1)
+        self.scenario.observations.append(closed_first)
+        if not closed_first:
+            self.scenario.cache.mkdir(parents=True, exist_ok=True)
+            (self.scenario.cache / "allow-ready").touch()
 
 
 def test_closed_uds_client_does_not_abandon_an_accepted_voice_load(tmp_path) -> None:
@@ -206,6 +249,161 @@ def test_failed_loader_stops_both_servers_and_cleans_the_owned_socket(
     outcome = asyncio.run(__main__.serve(Settings(private_directory=tmp_path)))
 
     assert outcome == 1
+    assert not (tmp_path / "speech.sock").exists()
+
+
+def test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "providers"
+    entrypoint = root / "chatterbox/.venv/bin/presentator-chatterbox-worker"
+    entrypoint.parent.mkdir(parents=True)
+    entrypoint.write_text(
+        f"""#!{sys.executable}
+import os
+import time
+from pathlib import Path
+protocol = os.fdopen(os.dup(1), "wb", buffering=0)
+null = os.open(os.devnull, os.O_WRONLY)
+os.dup2(null, 1)
+os.close(null)
+cache = Path(__import__("sys").argv[-1])
+while not (cache / "allow-ready").exists():
+    time.sleep(0.01)
+from presentator_chatterbox_contract import Frame, FrameKind, write_frame
+write_frame(protocol, Frame(FrameKind.READY, 0, b"\\x00\\x01\\x00\\x00]\\xc0"))
+while True:
+    time.sleep(1)
+""",
+        encoding="utf-8",
+    )
+    entrypoint.chmod(0o700)
+    spawned = threading.Event()
+    closed = threading.Event()
+    cache = tmp_path / "cache"
+
+    class ObservedChatterbox(ChatterboxSpeaking):
+        def close(self) -> None:
+            try:
+                super().close()
+            finally:
+                closed.set()
+
+    engine = ObservedChatterbox(CHATTERBOX_SPEAKING_MODEL, "cpu", cache, root)
+    runtime = Runtime(
+        None,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+            engine_factory=lambda _voice: engine,
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.CHATTERBOX,
+        ),
+    )
+    real_popen = subprocess.Popen
+
+    def observed_popen(*args: object, **kwargs: object) -> subprocess.Popen:
+        process = real_popen(*args, **kwargs)
+        spawned.set()
+        return process
+
+    stopping: list[asyncio.Event] = []
+    close_before_await: list[bool] = []
+    scenario = _CloseOrderingScenario(
+        spawned=spawned,
+        stopping=stopping,
+        closed=closed,
+        cache=cache,
+        observations=close_before_await,
+    )
+    servers = iter(
+        _CloseOrderingServer(
+            triggers_stop=triggers_stop,
+            scenario=scenario,
+        )
+        for triggers_stop in (True, False)
+    )
+
+    def install(stop: asyncio.Event, _loading_stop: threading.Event) -> None:
+        stopping.append(stop)
+
+    monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
+    monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
+    monkeypatch.setattr(__main__, "_server", lambda _app, _settings: next(servers))
+    monkeypatch.setattr(__main__, "_install_signal_handlers", install)
+    monkeypatch.setattr("speech.chatterbox.subprocess.Popen", observed_popen)
+
+    outcome = asyncio.run(
+        __main__.serve(
+            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
+        )
+    )
+
+    assert outcome == 0
+    assert close_before_await == [True, True]
+    assert not (tmp_path / "speech.sock").exists()
+
+
+def test_owned_speaking_failure_stops_both_servers_and_returns_failure(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FatalSpeaking(FakeSpeaking):
+        def __init__(self) -> None:
+            super().__init__()
+            self.callback: Callable[[], None] = lambda: None
+
+        def set_fatal_callback(self, callback: Callable[[], None]) -> None:
+            self.callback = callback
+
+    speaking = FatalSpeaking()
+    runtime = Runtime(
+        speaking,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+            engine_factory=lambda _voice: speaking,
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.PIPER,
+        ),
+    )
+
+    class Server:
+        def __init__(self, *, triggers_failure: bool) -> None:
+            self.triggers_failure = triggers_failure
+            self.stopped = asyncio.Event()
+
+        @property
+        def should_exit(self) -> bool:
+            return self.stopped.is_set()
+
+        @should_exit.setter
+        def should_exit(self, value: bool) -> None:
+            if value:
+                self.stopped.set()
+
+        async def serve(self, *, sockets=None) -> None:
+            del sockets
+            if self.triggers_failure:
+                speaking.callback()
+            await self.stopped.wait()
+
+    built = (Server(triggers_failure=True), Server(triggers_failure=False))
+    servers = iter(built)
+    monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
+    monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
+    monkeypatch.setattr(__main__, "_server", lambda _app, _settings: next(servers))
+    monkeypatch.setattr(
+        __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
+    )
+
+    outcome = asyncio.run(
+        __main__.serve(
+            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
+        )
+    )
+
+    assert outcome == 1
+    assert all(server.should_exit for server in built)
     assert not (tmp_path / "speech.sock").exists()
 
 

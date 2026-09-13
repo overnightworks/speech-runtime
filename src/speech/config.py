@@ -11,6 +11,7 @@ CHATTERBOX_SPEAKING_MODEL = "ResembleAI/chatterbox"
 DEFAULT_HEARING_MODEL = "Systran/faster-whisper-large-v3"
 HEAR_SAMPLE_RATE = 16_000
 _STATE_DIRECTORY_ERROR = "state directory must be absolute"
+_PROVIDER_ROOT_ERROR = "provider root must be absolute"
 _SPEAKING_MODEL_ERROR = "speaking model must be a supported baseline"
 
 
@@ -29,6 +30,7 @@ class Settings(BaseSettings):
     huggingface_cache: Path = Field(
         default_factory=lambda: Path(huggingface_hub_constants.HF_HUB_CACHE)
     )
+    provider_root: Path | None = None
     private_directory: Path = Path("/run/presentator-speech")
     state_directory: Path = Field(
         default_factory=lambda: Path.home() / ".local/state/presentator-speech"
@@ -44,6 +46,13 @@ class Settings(BaseSettings):
     def _state_directory_is_absolute(cls, directory: Path) -> Path:
         if not directory.is_absolute():
             raise ValueError(_STATE_DIRECTORY_ERROR)
+        return directory
+
+    @field_validator("provider_root")
+    @classmethod
+    def _provider_root_is_absolute(cls, directory: Path | None) -> Path | None:
+        if directory is not None and not directory.is_absolute():
+            raise ValueError(_PROVIDER_ROOT_ERROR)
         return directory
 
     @field_validator("speaking_model")

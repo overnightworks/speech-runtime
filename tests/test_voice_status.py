@@ -53,6 +53,50 @@ def test_status_requires_both_piper_artifacts_and_keeps_unimplemented_rows_unava
     assert all(voice.state is VoiceState.UNAVAILABLE for voice in complete[-3:])
 
 
+def test_chatterbox_weights_need_the_exact_executable_but_active_survives_its_removal(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(voices, "try_to_load_from_cache", lambda *_args, **_kwargs: "x")
+    provider_root = tmp_path / "providers"
+    settings = Settings(
+        provider_root=provider_root,
+        huggingface_cache=tmp_path,
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+    )
+    entrypoint = provider_root / "chatterbox/.venv/bin/presentator-chatterbox-worker"
+    entrypoint.parent.mkdir(parents=True)
+
+    absent = statuses(
+        settings,
+        VoiceRuntimeState(
+            selected=None, ready=False, loading=False, pending=None, failed=None
+        ),
+    )
+    entrypoint.write_text("#!/bin/false\n", encoding="utf-8")
+    entrypoint.chmod(0o700)
+    downloaded = statuses(
+        settings,
+        VoiceRuntimeState(
+            selected=None, ready=False, loading=False, pending=None, failed=None
+        ),
+    )
+    entrypoint.unlink()
+    active = statuses(
+        settings,
+        VoiceRuntimeState(
+            selected=VoiceId.CHATTERBOX,
+            ready=True,
+            loading=False,
+            pending=None,
+            failed=None,
+        ),
+    )
+
+    assert absent[1].state is VoiceState.UNAVAILABLE
+    assert downloaded[1].state is VoiceState.DOWNLOADED
+    assert active[1].state is VoiceState.ACTIVE
+
+
 def test_private_endpoint_reports_loading_and_active_from_the_shared_runtime(
     tmp_path,
 ) -> None:
@@ -425,3 +469,139 @@ def test_recoverable_startup_keeps_hearing_live_and_refuses_speaking(
     )
     assert hearing.ready is True
     assert private.get("/voices").json()["recovery"] is not None
+
+
+def test_shutdown_winning_before_pending_registration_never_loads_or_publishes(
+    tmp_path,
+) -> None:
+    """A side-effect-free factory result is closed if shutdown wins its handoff."""
+    constructed = threading.Event()
+    release = threading.Event()
+
+    class DeferredSpeaking(FakeSpeaking):
+        def __init__(self) -> None:
+            super().__init__(ready=False)
+            self.loaded = False
+            self.closed = 0
+
+        def load(self) -> None:
+            self.loaded = True
+
+        def close(self) -> None:
+            self.closed += 1
+
+    engine = DeferredSpeaking()
+
+    def factory(_voice: VoiceId) -> DeferredSpeaking:
+        constructed.set()
+        assert release.wait(timeout=5)
+        return engine
+
+    runtime = Runtime(
+        None,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+            engine_factory=factory,
+            artifact_checker=lambda _voice: True,
+        ),
+    )
+    activation = threading.Thread(target=runtime.load_voice, args=(VoiceId.CHATTERBOX,))
+    activation.start()
+    assert constructed.wait(timeout=5)
+
+    runtime.begin_shutdown()
+    runtime.close()
+    release.set()
+    activation.join(timeout=5)
+
+    assert not activation.is_alive()
+    assert engine.loaded is False
+    assert engine.closed == 1
+    assert runtime.capture_speaking() is None
+
+
+@pytest.mark.parametrize("surface", ["health", "snapshot", "capture", "sample"])
+def test_every_speaking_surface_reconciles_a_dead_active_without_fallback(
+    tmp_path, surface: str
+) -> None:
+    class ClosableSpeaking(FakeSpeaking):
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed = 0
+
+        def close(self) -> None:
+            self.closed += 1
+
+    engine = ClosableSpeaking()
+    engine.streams = True
+    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+    runtime = Runtime(
+        None,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=store,
+            engine_factory=lambda _voice: engine,
+            artifact_checker=lambda _voice: True,
+        ),
+    )
+    assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
+    engine.ready = False
+    settings = Settings(voice_cache=tmp_path, huggingface_cache=tmp_path)
+
+    if surface == "health":
+        runtime.health()
+    elif surface == "snapshot":
+        runtime.snapshot(settings)
+    elif surface == "capture":
+        runtime.capture_speaking()
+    else:
+        runtime.preacquire_sample(VoiceId.CHATTERBOX)
+
+    snapshot = runtime.snapshot(settings)
+    assert runtime.capture_speaking() is None
+    assert store.read() is VoiceId.CHATTERBOX
+    assert snapshot.recovery is not None
+    assert snapshot.recovery.kind is VoiceRecoveryKind.LOAD_FAILED
+    assert snapshot.recovery.voice is VoiceId.CHATTERBOX
+    assert engine.closed == 1
+
+
+def test_failed_active_reconciliation_excludes_retry_until_close_finishes(
+    tmp_path,
+) -> None:
+    close_started = threading.Event()
+    release_close = threading.Event()
+
+    class HeldCloseSpeaking(FakeSpeaking):
+        def close(self) -> None:
+            close_started.set()
+            assert release_close.wait(timeout=5)
+
+    failed = HeldCloseSpeaking()
+    failed.streams = True
+    replacement = FakeSpeaking()
+    created = iter((failed, replacement))
+    runtime = Runtime(
+        None,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+            engine_factory=lambda _voice: next(created),
+            artifact_checker=lambda _voice: True,
+        ),
+    )
+    assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
+    failed.ready = False
+    reconciliation = threading.Thread(
+        target=runtime.snapshot, args=(Settings(voice_cache=tmp_path),)
+    )
+    reconciliation.start()
+    assert close_started.wait(timeout=5)
+
+    assert runtime.load_voice(VoiceId.CHATTERBOX) is None
+    release_close.set()
+    reconciliation.join(timeout=5)
+    assert not reconciliation.is_alive()
+    assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
+    assert runtime.capture_speaking() is replacement

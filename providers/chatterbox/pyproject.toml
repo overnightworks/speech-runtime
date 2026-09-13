@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "presentator-chatterbox-provider"
+version = "0.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["chatterbox-tts==0.1.7", "numpy==1.26.4", "presentator-chatterbox-contract", "setuptools==81.0.0"]
+
+[project.scripts]
+presentator-chatterbox-worker = "presentator_chatterbox.__main__:main"
+
+[tool.uv.sources]
+presentator-chatterbox-contract = { path = "../chatterbox-contract", editable = true }
+
+[dependency-groups]
+dev = ["pytest==9.1.1", "ruff==0.16.2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/presentator_chatterbox"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "BLE001", "COM812", "CPY001", "D103", "INP001", "PLC0415", "S101",
+    "SIM105", "TC003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
+"src/presentator_chatterbox/__main__.py" = ["PLC0415"]
+"src/presentator_chatterbox/model.py" = ["PLC0415", "TC003"]
+"src/presentator_chatterbox/worker.py" = ["BLE001", "PLC0415", "SIM105", "TC003"]

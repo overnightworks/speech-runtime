@@ -99,7 +99,10 @@ async def serve(settings: Settings) -> int:
     """Run both servers until a signal or fatal lifecycle outcome."""
     runtime_uid = _require_runtime_uid(settings)
     prepare_cuda_libraries()
+    loop = asyncio.get_running_loop()
+    fatal = asyncio.Event()
     runtime = Runtime.from_settings(settings)
+    runtime.set_fatal_callback(lambda: loop.call_soon_threadsafe(fatal.set))
     public = _server(create_app(settings, runtime), settings)
     private = _server(create_control_app(settings, runtime), settings)
     stopping = asyncio.Event()
@@ -111,33 +114,45 @@ async def serve(settings: Settings) -> int:
         runtime.loading = True
         loader = asyncio.create_task(asyncio.to_thread(runtime.load, loading_stop))
         stopped = asyncio.create_task(stopping.wait())
+        fatal_task = asyncio.create_task(fatal.wait())
+        result = 1
         try:
             done, _pending = await asyncio.wait(
-                {loader, public_task, private_task, stopped},
+                {loader, public_task, private_task, stopped, fatal_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if stopped in done:
-                return 0
-            if loader in done:
+            if fatal_task in done:
+                result = 1
+            elif stopped in done:
+                result = 0
+            elif loader in done:
                 if loader.exception() is not None:
                     logging.getLogger(__name__).error(
                         "speech model loading failed", exc_info=loader.exception()
                     )
-                    return 1
-                done, _pending = await asyncio.wait(
-                    {public_task, private_task, stopped},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                return 0 if stopped in done else 1
-            return 1
+                    result = 1
+                else:
+                    done, _pending = await asyncio.wait(
+                        {public_task, private_task, stopped, fatal_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    result = 0 if stopped in done else 1
         finally:
+            runtime.begin_shutdown()
             loading_stop.set()
             public.should_exit = True
             private.should_exit = True
             stopped.cancel()
+            fatal_task.cancel()
+            try:
+                await asyncio.to_thread(runtime.close)
+            except RuntimeError:
+                logging.getLogger(__name__).exception("speech model cleanup failed")
+                result = 1
             await asyncio.gather(
                 public_task, private_task, loader, return_exceptions=True
             )
+        return result
 
 
 def _server(app: object, settings: Settings) -> uvicorn.Server:

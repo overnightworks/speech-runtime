@@ -49,6 +49,9 @@ class PiperSpeaking:
         for chunk in self._voice.synthesize(text):
             yield chunk.audio_int16_bytes
 
+    def close(self) -> None:
+        """Piper stays retained for the process and needs no explicit cleanup."""
+
 
 def speaking_for_voice(settings: Settings, voice: VoiceId) -> SpeakingEngine:
     """Construct one supported local engine from the closed catalogue id."""
@@ -60,6 +63,9 @@ def speaking_for_voice(settings: Settings, voice: VoiceId) -> SpeakingEngine:
         from speech.chatterbox import ChatterboxSpeaking
 
         return ChatterboxSpeaking(
-            CHATTERBOX_SPEAKING_MODEL, settings.device, settings.huggingface_cache
+            CHATTERBOX_SPEAKING_MODEL,
+            settings.device,
+            settings.huggingface_cache,
+            settings.provider_root,
         )
     raise ValueError

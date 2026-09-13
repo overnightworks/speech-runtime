@@ -17,7 +17,6 @@ from starlette.status import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
-from speech import chatterbox, cuda_libs
 from speech.chatterbox import CHATTERBOX_SAMPLE_RATE
 from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
 from speech.pcm import BYTES_PER_SAMPLE, is_silence, pcm_from_wav
@@ -104,35 +103,6 @@ def test_chatterbox_voice_id_constructs_the_streaming_voice() -> None:
     assert engine.model_name == CHATTERBOX_SPEAKING_MODEL
     assert engine.streams is True
     assert engine.sample_rate == CHATTERBOX_SAMPLE_RATE
-
-
-def test_chatterbox_load_uses_the_configured_huggingface_cache(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    observed: list[tuple[str, object]] = []
-
-    class LoadedModel:
-        sr = CHATTERBOX_SAMPLE_RATE
-
-    def load_from_cache(device: str, cache: object) -> LoadedModel:
-        observed.append((device, cache))
-        return LoadedModel()
-
-    monkeypatch.setattr(cuda_libs, "prepare_cuda_libraries", lambda: None)
-    monkeypatch.setattr(chatterbox, "_load_v3", load_from_cache)
-    monkeypatch.setattr(chatterbox, "_stream_pcm", lambda *_args: iter(()))
-    settings = Settings(
-        speaking_model=CHATTERBOX_SPEAKING_MODEL,
-        device="cpu",
-        huggingface_cache=tmp_path,
-        PRESENTATOR_RUNTIME_UID=os.geteuid(),
-    )
-
-    engine = speaking_for_voice(settings, VoiceId.CHATTERBOX)
-    engine.load()
-
-    assert observed == [("cpu", tmp_path)]
-    assert engine.ready is True
 
 
 def test_piper_load_requires_local_onnx_and_metadata(tmp_path, monkeypatch) -> None:
