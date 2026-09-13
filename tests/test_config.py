@@ -6,7 +6,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from speech.config import HEAR_SAMPLE_RATE, QwenSpeaker, Settings
+from speech.config import HEAR_SAMPLE_RATE, MagpieSpeaker, QwenSpeaker, Settings
 from speech.pcm import wav_header
 from speech.selection import VoiceSelectionStore
 from speech.service import Runtime, RuntimeDependencies, failed_to_load_message
@@ -98,6 +98,19 @@ def test_qwen_speaker_is_a_closed_setting_with_ryan_as_its_default(
 
     monkeypatch.setenv("SPEECH_QWEN_SPEAKER", "invented")
     with pytest.raises(ValueError, match="qwen_speaker"):
+        Settings()
+
+
+def test_magpie_speaker_is_a_closed_setting_with_sofia_as_its_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert Settings().magpie_speaker is MagpieSpeaker.SOFIA
+
+    monkeypatch.setenv("SPEECH_MAGPIE_SPEAKER", "Aria")
+    assert Settings().magpie_speaker is MagpieSpeaker.ARIA
+
+    monkeypatch.setenv("SPEECH_MAGPIE_SPEAKER", "invented")
+    with pytest.raises(ValueError, match="magpie_speaker"):
         Settings()
 
 

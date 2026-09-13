@@ -3,7 +3,11 @@
 from pathlib import Path
 
 from huggingface_hub import constants as huggingface_hub_constants
-from presentator_speech_provider_contract import QWEN_MODEL_ID, QwenSpeaker
+from presentator_speech_provider_contract import (
+    QWEN_MODEL_ID,
+    MagpieSpeaker,
+    QwenSpeaker,
+)
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -33,6 +37,7 @@ class Settings(BaseSettings):
     )
     provider_root: Path | None = None
     qwen_speaker: QwenSpeaker = QwenSpeaker.RYAN
+    magpie_speaker: MagpieSpeaker = MagpieSpeaker.SOFIA
     private_directory: Path = Path("/run/presentator-speech")
     state_directory: Path = Field(
         default_factory=lambda: Path.home() / ".local/state/presentator-speech"

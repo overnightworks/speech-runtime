@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 from presentator_speech_provider_contract import (
     CHATTERBOX_SAMPLE_RATE,
+    MAGPIE_MODEL_ID,
+    MAGPIE_SAMPLE_RATE,
     QWEN_MODEL_ID,
     QWEN_SAMPLE_RATE,
     VOXCPM_MODEL_ID,
@@ -122,6 +124,25 @@ def speaking_for_voice(settings: Settings, voice: VoiceId) -> SpeakingEngine:
                     settings.device,
                     "--cache",
                     str(settings.huggingface_cache),
+                ),
+            ),
+        )
+    if voice is VoiceId.MAGPIE:
+        return ProviderProcess(
+            ProviderLaunch(
+                model_name=MAGPIE_MODEL_ID,
+                sample_rate=MAGPIE_SAMPLE_RATE,
+                streams=False,
+                executable=provider_entrypoint(
+                    settings.provider_root, ProviderId.MAGPIE
+                ),
+                arguments=(
+                    "--device",
+                    settings.device,
+                    "--cache",
+                    str(settings.huggingface_cache),
+                    "--speaker",
+                    settings.magpie_speaker.value,
                 ),
             ),
         )

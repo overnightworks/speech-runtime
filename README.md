@@ -6,7 +6,7 @@ co-presenter that will call it.
 One process holds a German voice and a German listener resident, and offers
 them over HTTP. Nothing in `src/presentator` imports this package. The caller
 owns the address. Settings · Voice chooses between downloaded Piper,
-Chatterbox, Qwen3-TTS 0.6B, and VoxCPM2; the durable choice is private state. An admin
+Chatterbox, Qwen3-TTS 0.6B, VoxCPM2, and cached NVIDIA Magpie; the durable choice is private state. An admin
 may explicitly download the pinned Qwen snapshot through the private control
 socket; it retains partials, never selects the voice, and reports local
 artifact truth.
@@ -19,6 +19,7 @@ artifact truth.
 | Speaking (optional) | [`ResembleAI/chatterbox`](https://huggingface.co/ResembleAI/chatterbox) Multilingual V3, snapshot `5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18` | MIT (`chatterbox-tts` 0.1.7) | Real German, streams PCM while it synthesises, 24 kHz. Installed `from_pretrained` takes only `device` and loads V2; this service loads `t3_mtl23ls_v3.safetensors` from the local Hub cache, pinned to the snapshot it was measured against. `resemble-perth` 1.0.1's `PerthImplicitWatermarker` needs `pkg_resources`, which setuptools stopped shipping at 82; this project pins `setuptools==81.0.0` so Chatterbox's own construction of the real watermarker succeeds instead of silently degrading to `perth`'s no-op. The streamed path calls `s3gen` directly rather than the model's own `generate()`, so it never reaches the line that applies the watermark to the waveform — unmarked audio either way, now for a stated reason rather than a substituted no-op. |
 | Speaking (optional) | [`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice), snapshot `85e237c12c027371202489a0ec509ded67b5e4b5` | Apache-2.0 (`qwen-tts` 0.1.1) | German and English through one configured built-in preset, initially Ryan. It returns a complete 24 kHz waveform, so `speaking.streams` is false. The isolated provider accepts the repository's `cuda` setting as `cuda:0`, uses bfloat16 and package-default attention, and reads only the pinned local snapshot. Runtime quality and latency remain unmeasured. |
 | Speaking (optional) | [`openbmb/VoxCPM2`](https://huggingface.co/openbmb/VoxCPM2), snapshot `32279effe8c19989596f05d353d1447f51d9e915` | Apache-2.0 (`voxcpm` 2.0.3) | German and English text-only streaming at 48 kHz through its isolated provider. It reads only the pinned local snapshot, uses no prompt, reference audio, cloning, or voice-design controls, and has no measured quality, latency, residency, or deployment result. |
+| Speaking (optional) | [`nvidia/magpie_tts_multilingual_357m`](https://huggingface.co/nvidia/magpie_tts_multilingual_357m), revision `5023df68bd3f5b5ce6d666a50979bc501af145cc` with NanoCodec revision `fc00890b604aa2de298d2641ffc6c5f6caf8c4d7` | NVIDIA Open Model License (`nemo-toolkit[tts]` 3.0.0) | German and English through one configured fixed voice, initially Sofia, at 22,050 Hz. It restores both immutable archives from the local Hub cache only. Installation, GPU operation, hearing, quality, and latency are unmeasured. |
 | Hearing | [`Systran/faster-whisper-large-v3`](https://huggingface.co/Systran/faster-whisper-large-v3) | MIT (CTranslate2 conversion of [`openai/whisper-large-v3`](https://huggingface.co/openai/whisper-large-v3), also MIT) | Already cached on this machine. German is a documented language. Partials are chunked re-decode of a growing buffer, not a native streaming architecture. |
 
 Checked and not chosen:
@@ -106,11 +107,11 @@ Weights stay in:
   reports the five fixed admin catalogue rows, typed recovery detail, and local
   artifact evidence. `POST /voices/qwen3-tts-0.6b/download` starts the pinned,
   tokenless Qwen transfer and returns promptly; it never selects a voice.
-  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b|voxcpm2}/load` is private too; it
+  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b|voxcpm2|nvidia-magpie}/load` is private too; it
   synchronously loads an already-downloaded baseline, atomically persists the
   choice, and waits for admitted speech before switching. Piper stays resident;
   deselected provider processes exit before Load succeeds and are rebuilt when selected again.
-  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b|voxcpm2}/sample/{de|en}` returns one fixed WAV only
+  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b|voxcpm2|nvidia-magpie}/sample/{de|en}` returns one fixed WAV only
   when its named voice is still active and ready; contention returns 409. The
   public TCP application has no `/voices` route.
 
@@ -131,6 +132,7 @@ All `SPEECH_*`:
 | `SPEECH_VOICE_CACHE` | `~/.cache/piper` | Where Piper ONNX files are kept |
 | `SPEECH_HUGGINGFACE_CACHE` | Provider Hub cache (normally `~/.cache/huggingface/hub`) | The shared local Hub cache for provider loading and status lookup |
 | `SPEECH_QWEN_SPEAKER` | `Ryan` | One of Vivian, Serena, Uncle_Fu, Dylan, Eric, Ryan, Aiden, Ono_Anna, or Sohee |
+| `SPEECH_MAGPIE_SPEAKER` | `Sofia` | One of Aria, Jason, John, Leo, or Sofia |
 | `SPEECH_PRIVATE_DIRECTORY` | `/run/presentator-speech` | Private directory that owns `speech.sock` |
 | `SPEECH_STATE_DIRECTORY` | `~/.local/state/presentator-speech` | Private directory containing the durable selected voice |
 

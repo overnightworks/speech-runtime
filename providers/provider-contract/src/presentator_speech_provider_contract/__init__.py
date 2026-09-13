@@ -54,6 +54,13 @@ VOXCPM_ARTIFACTS = (
     "tokenizer_config.json",
 )
 VOXCPM_SAMPLE_RATE = 48_000
+MAGPIE_MODEL_ID = "nvidia/magpie_tts_multilingual_357m"
+MAGPIE_MODEL_REVISION = "5023df68bd3f5b5ce6d666a50979bc501af145cc"
+MAGPIE_MODEL_FILENAME = "magpie_tts_multilingual_357m.nemo"
+MAGPIE_CODEC_ID = "nvidia/nemo-nano-codec-22khz-1.89kbps-21.5fps"
+MAGPIE_CODEC_REVISION = "fc00890b604aa2de298d2641ffc6c5f6caf8c4d7"
+MAGPIE_CODEC_FILENAME = "nemo-nano-codec-22khz-1.89kbps-21.5fps.nemo"
+MAGPIE_SAMPLE_RATE = 22_050
 
 
 class QwenSpeaker(StrEnum):
@@ -68,6 +75,16 @@ class QwenSpeaker(StrEnum):
     AIDEN = "Aiden"
     ONO_ANNA = "Ono_Anna"
     SOHEE = "Sohee"
+
+
+class MagpieSpeaker(StrEnum):
+    """The fixed Magpie voices accepted across the process boundary."""
+
+    ARIA = "Aria"
+    JASON = "Jason"
+    JOHN = "John"
+    LEO = "Leo"
+    SOFIA = "Sofia"
 
 
 MAX_FRAME_LENGTH = 1_048_585

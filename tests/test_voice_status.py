@@ -16,6 +16,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from presentator_speech_provider_contract import (
+    MAGPIE_SAMPLE_RATE,
     VOXCPM_ARTIFACTS,
     VOXCPM_MODEL_ID,
     VOXCPM_REVISION,
@@ -43,7 +44,7 @@ from speech.voices import (
     statuses,
 )
 from tests.conftest import FakeHearing, FakeSpeaking
-from tests.test_provider_process import _closed_provider
+from tests.test_provider_process import _assert_reaped, _closed_provider, _observed
 from tests.test_speak import (
     _ASGI_TIMEOUT_SECONDS,
     _response_body,
@@ -181,6 +182,27 @@ def _complete_voxcpm_snapshot(cache: Path) -> Path:
     return snapshot
 
 
+def _complete_magpie_snapshots(cache: Path) -> tuple[Path, Path]:
+    model = (
+        cache
+        / "models--nvidia--magpie_tts_multilingual_357m"
+        / "snapshots"
+        / "5023df68bd3f5b5ce6d666a50979bc501af145cc"
+        / "magpie_tts_multilingual_357m.nemo"
+    )
+    codec = (
+        cache
+        / "models--nvidia--nemo-nano-codec-22khz-1.89kbps-21.5fps"
+        / "snapshots"
+        / "fc00890b604aa2de298d2641ffc6c5f6caf8c4d7"
+        / "nemo-nano-codec-22khz-1.89kbps-21.5fps.nemo"
+    )
+    for artifact in (model, codec):
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.touch()
+    return model, codec
+
+
 def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_preset(
     tmp_path,
 ) -> None:
@@ -259,6 +281,41 @@ def test_voxcpm_requires_the_exact_snapshot_and_worker_and_uses_48_khz(
     assert engine.retain_when_inactive is False
 
 
+def test_magpie_requires_both_exact_archives_and_its_worker(tmp_path: Path) -> None:
+    provider_root = tmp_path / "providers"
+    cache = tmp_path / "hub"
+    model, codec = _complete_magpie_snapshots(cache)
+    settings = Settings(
+        provider_root=provider_root,
+        huggingface_cache=cache,
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+    )
+
+    missing_worker = statuses(settings, _RuntimeFacts().state())
+    worker = provider_root / "magpie/.venv/bin/presentator-magpie-worker"
+    worker.parent.mkdir(parents=True)
+    worker.write_text("#!/bin/false\n", encoding="utf-8")
+    worker.chmod(0o700)
+    model.unlink()
+    missing_model = statuses(settings, _RuntimeFacts().state())
+    model.touch()
+    codec.unlink()
+    missing_codec = statuses(settings, _RuntimeFacts().state())
+    codec.touch()
+    downloaded = statuses(settings, _RuntimeFacts().state())
+
+    assert missing_worker[4].state is VoiceState.UNAVAILABLE
+    assert missing_model[4].state is VoiceState.UNAVAILABLE
+    assert missing_codec[4].state is VoiceState.UNAVAILABLE
+    assert downloaded[4].state is VoiceState.DOWNLOADED
+    assert downloaded[4].language == "German and English — Sofia fixed voice"
+
+    engine = speaking_for_voice(settings, VoiceId.MAGPIE)
+    assert engine.model_name == "nvidia/magpie_tts_multilingual_357m"
+    assert engine.sample_rate == 22_050
+    assert engine.streams is False
+
+
 def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -316,6 +373,61 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
         assert voxcpm.state is fresh_voices.VoiceState.DOWNLOADED
         assert engine.model_name == VOXCPM_MODEL_ID
         assert engine.sample_rate == VOXCPM_SAMPLE_RATE
+    finally:
+        for name in ("speech.voices", "speech.speaking"):
+            sys.modules.pop(name, None)
+        sys.modules.update(previous_modules)
+        for name, value in previous_attributes.items():
+            if value is marker:
+                delattr(host, name)
+            else:
+                setattr(host, name, value)
+
+
+def test_magpie_catalogue_and_factory_import_no_provider_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider_root, cache = _closed_provider(tmp_path, provider_name="magpie")
+    _complete_magpie_snapshots(cache)
+    settings = Settings(
+        provider_root=provider_root,
+        huggingface_cache=cache,
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+    )
+    host = importlib.import_module("speech")
+    marker = object()
+    previous_attributes = {
+        name: getattr(host, name, marker) for name in ("voices", "speaking")
+    }
+    previous_modules = {
+        name: sys.modules.pop(name)
+        for name in ("speech.voices", "speech.speaking")
+        if name in sys.modules
+    }
+    original_import = builtins.__import__
+
+    def guard_provider_import(
+        name: str,
+        global_namespace: dict[str, object] | None = None,
+        local_namespace: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
+        if name.split(".", 1)[0] in {"nemo", "torch", "presentator_magpie"}:
+            raise AssertionError
+        return original_import(name, global_namespace, local_namespace, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guard_provider_import)
+    try:
+        fresh_voices = importlib.import_module("speech.voices")
+        fresh_speaking = importlib.import_module("speech.speaking")
+        rows = fresh_voices.statuses(settings, _RuntimeFacts().state())
+        magpie = next(row for row in rows if row.id is fresh_voices.VoiceId.MAGPIE)
+        engine = fresh_speaking.speaking_for_voice(
+            settings, fresh_voices.VoiceId.MAGPIE
+        )
+        assert magpie.state is fresh_voices.VoiceState.DOWNLOADED
+        assert engine.sample_rate == MAGPIE_SAMPLE_RATE
     finally:
         for name in ("speech.voices", "speech.speaking"):
             sys.modules.pop(name, None)
@@ -445,6 +557,78 @@ def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
         assert rate == VOXCPM_SAMPLE_RATE
         assert pcm == b"\x00\x01"
         assert request_ids.read_text().splitlines() == ["1", "2", "1", "2"]
+    finally:
+        initial.close()
+        if restored is not None:
+            restored.close()
+
+
+def test_magpie_load_restore_samples_public_speech_and_deselect_reap(
+    tmp_path: Path,
+) -> None:
+    provider_root, cache = _closed_provider(tmp_path, provider_name="magpie")
+    model, codec = _complete_magpie_snapshots(cache)
+    settings = Settings(
+        provider_root=provider_root,
+        huggingface_cache=cache,
+        device="cpu",
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+    )
+    selection = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+
+    def runtime() -> Runtime:
+        return Runtime(
+            None,
+            FakeHearing(),
+            dependencies=RuntimeDependencies(
+                selection=selection,
+                engine_factory=lambda voice: (
+                    speaking_for_voice(settings, voice)
+                    if voice is VoiceId.MAGPIE
+                    else FakeSpeaking()
+                ),
+                artifact_checker=lambda _voice: True,
+            ),
+        )
+
+    initial = runtime()
+    restored: Runtime | None = None
+    try:
+        control = TestClient(create_control_app(settings, initial))
+        assert control.post("/voices/nvidia-magpie/load").json() == {
+            "outcome": VoiceLoadOutcome.ACTIVATED
+        }
+        for language in ("de", "en"):
+            response = control.post(f"/voices/nvidia-magpie/sample/{language}")
+            rate, pcm = pcm_from_wav(response.content)
+            assert response.status_code == 200
+            assert rate == MAGPIE_SAMPLE_RATE
+            assert pcm == b"\x00\x01"
+        _, _, process_id, _ = _observed(cache)
+        assert selection.read() is VoiceId.MAGPIE
+        initial.close()
+
+        restored = runtime()
+        restored.load()
+        public = create_app(runtime=restored)
+        request_ids = cache / "request-ids"
+        disconnected = asyncio.run(
+            _disconnect_after_child_receives_request(public, request_ids, 3)
+        )
+        assert any(message["type"] == "http.response.start" for message in disconnected)
+        assert (cache / "cancel-observed").read_text().splitlines() == ["1"]
+
+        later = asyncio.run(_speak_once(public))
+        rate, pcm = pcm_from_wav(_wav_body(later))
+        assert rate == MAGPIE_SAMPLE_RATE
+        assert pcm == b"\x00\x01"
+        assert model.is_file()
+        assert codec.is_file()
+
+        assert restored.load_voice(VoiceId.PIPER) is VoiceLoadOutcome.ACTIVATED
+        _assert_reaped(process_id)
+        assert model.is_file()
+        assert codec.is_file()
     finally:
         initial.close()
         if restored is not None:

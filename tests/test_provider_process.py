@@ -16,6 +16,8 @@ import pytest
 from anyio import run, run_process
 from presentator_speech_provider_contract import (
     CHATTERBOX_SAMPLE_RATE,
+    MAGPIE_MODEL_ID,
+    MAGPIE_SAMPLE_RATE,
     MAX_FRAME_LENGTH,
     QWEN_MODEL_ID,
     QWEN_SAMPLE_RATE,
@@ -64,7 +66,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--expected-parent-pid", required=True)
 parser.add_argument("--device", required=True)
 parser.add_argument("--cache", required=True)
-if {provider!r} == "qwen":
+if {provider!r} in ("qwen", "magpie"):
     parser.add_argument("--speaker", required=True)
 arguments = parser.parse_args()
 cache = Path(arguments.cache)
@@ -83,7 +85,12 @@ if behavior == "startup-oversized":
 if behavior == "startup-failed":
     write_frame(stream, Frame(FrameKind.FAILED, 0, b"\x01"))
     raise SystemExit(1)
-rate = 48000 if {provider!r} == "voxcpm" else 24000
+if {provider!r} == "magpie":
+    rate = 22050
+elif {provider!r} == "voxcpm":
+    rate = 48000
+else:
+    rate = 24000
 write_frame(stream, Frame(FrameKind.READY, 0, bytes((0, 1)) + rate.to_bytes(4, "big")))
 if behavior == "idle-exit":
     while not (cache / "exit-now").exists():
@@ -170,12 +177,13 @@ def _provider_process(
     provider_name: str = "chatterbox",
 ) -> ProviderProcess:
     arguments = ["--device", "cpu", "--cache", str(cache)]
-    if provider_name == "qwen":
-        arguments.extend(("--speaker", "Ryan"))
+    if provider_name in {"qwen", "magpie"}:
+        arguments.extend(("--speaker", "Ryan" if provider_name == "qwen" else "Sofia"))
     model_name, sample_rate, streams = {
         "chatterbox": (CHATTERBOX_SPEAKING_MODEL, CHATTERBOX_SAMPLE_RATE, True),
         "qwen": (QWEN_MODEL_ID, QWEN_SAMPLE_RATE, False),
         "voxcpm": (VOXCPM_MODEL_ID, VOXCPM_SAMPLE_RATE, True),
+        "magpie": (MAGPIE_MODEL_ID, MAGPIE_SAMPLE_RATE, False),
     }[provider_name]
     return ProviderProcess(
         ProviderLaunch(

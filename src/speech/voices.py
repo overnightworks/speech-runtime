@@ -10,6 +10,12 @@ from huggingface_hub import try_to_load_from_cache
 from presentator_speech_provider_contract import (
     CHATTERBOX_ARTIFACTS,
     CHATTERBOX_REVISION,
+    MAGPIE_CODEC_FILENAME,
+    MAGPIE_CODEC_ID,
+    MAGPIE_CODEC_REVISION,
+    MAGPIE_MODEL_FILENAME,
+    MAGPIE_MODEL_ID,
+    MAGPIE_MODEL_REVISION,
     QWEN_ARTIFACTS,
     QWEN_MODEL_ID,
     QWEN_REVISION,
@@ -121,6 +127,7 @@ def statuses(settings: Settings, runtime: VoiceRuntimeState) -> tuple[VoiceStatu
             (VoiceId.CHATTERBOX, ProviderId.CHATTERBOX),
             (VoiceId.QWEN, ProviderId.QWEN),
             (VoiceId.VOXCPM, ProviderId.VOXCPM),
+            (VoiceId.MAGPIE, ProviderId.MAGPIE),
         )
         if provider_entrypoint_is_usable(settings.provider_root, provider)
     )
@@ -150,7 +157,11 @@ def _catalogue(settings: Settings) -> tuple[tuple[VoiceId, str, str], ...]:
             f"German and English — {settings.qwen_speaker.value} preset",
         ),
         (VoiceId.VOXCPM, "VoxCPM2", "German and English — text-only"),
-        (VoiceId.MAGPIE, "NVIDIA Magpie", "Not yet available"),
+        (
+            VoiceId.MAGPIE,
+            "NVIDIA Magpie",
+            f"German and English — {settings.magpie_speaker.value} fixed voice",
+        ),
     )
 
 
@@ -165,6 +176,8 @@ def installed_voice_ids(settings: Settings) -> frozenset[VoiceId]:
         installed.add(VoiceId.QWEN)
     if _voxcpm_is_present(settings.huggingface_cache):
         installed.add(VoiceId.VOXCPM)
+    if _magpie_is_present(settings.huggingface_cache):
+        installed.add(VoiceId.MAGPIE)
     return frozenset(installed)
 
 
@@ -224,6 +237,24 @@ def _voxcpm_is_present(cache: Path) -> bool:
     )
 
 
+def _magpie_is_present(cache: Path) -> bool:
+    return all(
+        isinstance(
+            try_to_load_from_cache(
+                repository,
+                filename,
+                cache_dir=cache,
+                revision=revision,
+            ),
+            str,
+        )
+        for repository, filename, revision in (
+            (MAGPIE_MODEL_ID, MAGPIE_MODEL_FILENAME, MAGPIE_MODEL_REVISION),
+            (MAGPIE_CODEC_ID, MAGPIE_CODEC_FILENAME, MAGPIE_CODEC_REVISION),
+        )
+    )
+
+
 def _state(
     voice_id: VoiceId,
     *,
@@ -231,8 +262,6 @@ def _state(
     installed: frozenset[VoiceId],
     usable_providers: frozenset[VoiceId],
 ) -> VoiceState:
-    if voice_id is VoiceId.MAGPIE:
-        return VoiceState.UNAVAILABLE
     active = voice_id is runtime.selected and runtime.ready
     if voice_id is runtime.failed or active:
         return VoiceState.FAILED if voice_id is runtime.failed else VoiceState.ACTIVE
@@ -240,12 +269,17 @@ def _state(
         return VoiceState.LOADING
     if voice_id is VoiceId.QWEN:
         return _qwen_state(voice_id, runtime, installed, usable_providers)
-    is_provider = voice_id in {VoiceId.CHATTERBOX, VoiceId.QWEN, VoiceId.VOXCPM}
+    is_provider = voice_id in {
+        VoiceId.CHATTERBOX,
+        VoiceId.QWEN,
+        VoiceId.VOXCPM,
+        VoiceId.MAGPIE,
+    }
     provider_usable = not is_provider or voice_id in usable_providers
     if voice_id not in installed:
         return (
             VoiceState.UNAVAILABLE
-            if voice_id in {VoiceId.QWEN, VoiceId.VOXCPM}
+            if voice_id in {VoiceId.QWEN, VoiceId.VOXCPM, VoiceId.MAGPIE}
             else VoiceState.NOT_DOWNLOADED
         )
     return VoiceState.DOWNLOADED if provider_usable else VoiceState.UNAVAILABLE
