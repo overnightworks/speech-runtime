@@ -7,10 +7,16 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from huggingface_hub import try_to_load_from_cache
-from presentator_chatterbox_contract import CHATTERBOX_ARTIFACTS, CHATTERBOX_REVISION
+from presentator_speech_provider_contract import (
+    CHATTERBOX_ARTIFACTS,
+    CHATTERBOX_REVISION,
+    QWEN_ARTIFACTS,
+    QWEN_MODEL_ID,
+    QWEN_REVISION,
+)
 
-from speech.chatterbox import chatterbox_entrypoint_is_usable
 from speech.config import CHATTERBOX_SPEAKING_MODEL, DEFAULT_SPEAKING_MODEL
+from speech.provider_process import ProviderId, provider_entrypoint_is_usable
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -95,7 +101,14 @@ class VoiceRuntimeState:
 def statuses(settings: Settings, runtime: VoiceRuntimeState) -> tuple[VoiceStatus, ...]:
     """Report the complete catalogue, refusing to guess after a failed lookup."""
     installed = installed_voice_ids(settings)
-    chatterbox_usable = chatterbox_entrypoint_is_usable(settings.provider_root)
+    usable_providers = frozenset(
+        voice
+        for voice, provider in (
+            (VoiceId.CHATTERBOX, ProviderId.CHATTERBOX),
+            (VoiceId.QWEN, ProviderId.QWEN),
+        )
+        if provider_entrypoint_is_usable(settings.provider_root, provider)
+    )
     return tuple(
         VoiceStatus(
             id=voice_id,
@@ -105,20 +118,25 @@ def statuses(settings: Settings, runtime: VoiceRuntimeState) -> tuple[VoiceStatu
                 voice_id,
                 runtime=runtime,
                 installed=installed,
-                chatterbox_usable=chatterbox_usable,
+                usable_providers=usable_providers,
             ),
         )
-        for voice_id, name, language in _CATALOGUE
+        for voice_id, name, language in _catalogue(settings)
     )
 
 
-_CATALOGUE = (
-    (VoiceId.PIPER, "Piper", "German — Thorsten voice"),
-    (VoiceId.CHATTERBOX, "Chatterbox", "Multilingual"),
-    (VoiceId.QWEN, "Qwen3-TTS 0.6B", "Not yet available"),
-    (VoiceId.VOXCPM, "VoxCPM2", "Not yet available"),
-    (VoiceId.MAGPIE, "NVIDIA Magpie", "Not yet available"),
-)
+def _catalogue(settings: Settings) -> tuple[tuple[VoiceId, str, str], ...]:
+    return (
+        (VoiceId.PIPER, "Piper", "German — Thorsten voice"),
+        (VoiceId.CHATTERBOX, "Chatterbox", "Multilingual"),
+        (
+            VoiceId.QWEN,
+            "Qwen3-TTS 0.6B",
+            f"German and English — {settings.qwen_speaker.value} preset",
+        ),
+        (VoiceId.VOXCPM, "VoxCPM2", "Not yet available"),
+        (VoiceId.MAGPIE, "NVIDIA Magpie", "Not yet available"),
+    )
 
 
 def installed_voice_ids(settings: Settings) -> frozenset[VoiceId]:
@@ -128,6 +146,8 @@ def installed_voice_ids(settings: Settings) -> frozenset[VoiceId]:
         installed.add(VoiceId.PIPER)
     if _chatterbox_is_present(settings.huggingface_cache):
         installed.add(VoiceId.CHATTERBOX)
+    if _qwen_is_present(settings.huggingface_cache):
+        installed.add(VoiceId.QWEN)
     return frozenset(installed)
 
 
@@ -152,14 +172,29 @@ def _chatterbox_is_present(cache: Path) -> bool:
     )
 
 
+def _qwen_is_present(cache: Path) -> bool:
+    return all(
+        isinstance(
+            try_to_load_from_cache(
+                QWEN_MODEL_ID,
+                filename,
+                cache_dir=cache,
+                revision=QWEN_REVISION,
+            ),
+            str,
+        )
+        for filename in QWEN_ARTIFACTS
+    )
+
+
 def _state(
     voice_id: VoiceId,
     *,
     runtime: VoiceRuntimeState,
     installed: frozenset[VoiceId],
-    chatterbox_usable: bool,
+    usable_providers: frozenset[VoiceId],
 ) -> VoiceState:
-    if voice_id in {VoiceId.QWEN, VoiceId.VOXCPM, VoiceId.MAGPIE}:
+    if voice_id in {VoiceId.VOXCPM, VoiceId.MAGPIE}:
         return VoiceState.UNAVAILABLE
     if voice_id is runtime.failed:
         return VoiceState.FAILED
@@ -167,7 +202,12 @@ def _state(
         return VoiceState.ACTIVE
     if runtime.loading and voice_id is (runtime.pending or runtime.selected):
         return VoiceState.LOADING
-    provider_usable = voice_id is not VoiceId.CHATTERBOX or chatterbox_usable
+    is_provider = voice_id in {VoiceId.CHATTERBOX, VoiceId.QWEN}
+    provider_usable = not is_provider or voice_id in usable_providers
     if voice_id not in installed:
-        return VoiceState.NOT_DOWNLOADED
+        return (
+            VoiceState.UNAVAILABLE
+            if voice_id is VoiceId.QWEN
+            else VoiceState.NOT_DOWNLOADED
+        )
     return VoiceState.DOWNLOADED if provider_usable else VoiceState.UNAVAILABLE

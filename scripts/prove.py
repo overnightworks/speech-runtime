@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import TextIO
 from urllib.parse import urlparse
 
-from speech.chatterbox import CHATTERBOX_SAMPLE_RATE
+from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
+
 from speech.config import CHATTERBOX_SPEAKING_MODEL
 from speech.cuda_libs import cuda_library_dirs
 

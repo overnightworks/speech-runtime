@@ -35,6 +35,7 @@ class FakeSpeaking:
     sample_rate = SPEAK_SAMPLE_RATE
     ready = True
     streams = False
+    retain_when_inactive = True
 
     def __init__(self, *, ready: bool = True, fail: bool = False) -> None:
         self.ready = ready

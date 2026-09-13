@@ -16,7 +16,7 @@ dependencies = [
     "piper-tts==1.8.0",
     "pydantic-settings==2.15.0",
     "uvicorn==0.52.4",
-    "presentator-chatterbox-contract",
+    "presentator-speech-provider-contract",
 ]
 
 [project.scripts]
@@ -34,7 +34,7 @@ dev = [
 packages = ["src/speech"]
 
 [tool.uv.sources]
-presentator-chatterbox-contract = { path = "providers/chatterbox-contract", editable = true }
+presentator-speech-provider-contract = { path = "providers/provider-contract", editable = true }
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
@@ -80,7 +80,7 @@ convention = "google"
 "src/speech/service.py" = ["BLE001", "C901", "PLR0911", "PLR0912", "PLR0915"]
 # Piper and faster-whisper stay unloaded until the process holds them.
 "src/speech/speaking.py" = ["PLC0415"]
-"src/speech/chatterbox.py" = [
+"src/speech/provider_process.py" = [
     "S404", "S603", "PLR0911", "BLE001", "B904", "EM101", "SIM105",
     "TC003", "TRY003", "TRY301",
 ]

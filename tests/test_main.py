@@ -15,11 +15,12 @@ from pathlib import Path
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
+from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
 
 from speech import __main__
 from speech.__main__ import PrivateSocket
-from speech.chatterbox import ChatterboxSpeaking
 from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from speech.provider_process import ProviderLaunch, ProviderProcess
 from speech.selection import VoiceSelectionStore
 from speech.service import Runtime, RuntimeDependencies, create_app, create_control_app
 from speech.voices import VoiceId
@@ -273,7 +274,7 @@ os.close(null)
 cache = Path(__import__("sys").argv[-1])
 while not (cache / "allow-ready").exists():
     time.sleep(0.01)
-from presentator_chatterbox_contract import Frame, FrameKind, write_frame
+from presentator_speech_provider_contract import Frame, FrameKind, write_frame
 write_frame(protocol, Frame(FrameKind.READY, 0, b"\\x00\\x01\\x00\\x00]\\xc0"))
 while True:
     time.sleep(1)
@@ -285,14 +286,22 @@ while True:
     closed = threading.Event()
     cache = tmp_path / "cache"
 
-    class ObservedChatterbox(ChatterboxSpeaking):
+    class ObservedProvider(ProviderProcess):
         def close(self) -> None:
             try:
                 super().close()
             finally:
                 closed.set()
 
-    engine = ObservedChatterbox(CHATTERBOX_SPEAKING_MODEL, "cpu", cache, root)
+    engine = ObservedProvider(
+        ProviderLaunch(
+            model_name=CHATTERBOX_SPEAKING_MODEL,
+            sample_rate=CHATTERBOX_SAMPLE_RATE,
+            streams=True,
+            executable=entrypoint,
+            arguments=("--device", "cpu", "--cache", str(cache)),
+        )
+    )
     runtime = Runtime(
         None,
         FakeHearing(),
@@ -334,7 +343,7 @@ while True:
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
     monkeypatch.setattr(__main__, "_server", lambda _app, _settings: next(servers))
     monkeypatch.setattr(__main__, "_install_signal_handlers", install)
-    monkeypatch.setattr("speech.chatterbox.subprocess.Popen", observed_popen)
+    monkeypatch.setattr("speech.provider_process.subprocess.Popen", observed_popen)
 
     outcome = asyncio.run(
         __main__.serve(

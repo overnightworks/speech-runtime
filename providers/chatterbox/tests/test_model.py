@@ -7,7 +7,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
-from presentator_chatterbox_contract import CHATTERBOX_ARTIFACTS, CHATTERBOX_REVISION
+from presentator_speech_provider_contract import (
+    CHATTERBOX_ARTIFACTS,
+    CHATTERBOX_REVISION,
+)
 
 from presentator_chatterbox import model
 

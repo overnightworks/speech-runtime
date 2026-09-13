@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
 from starlette.responses import StreamingResponse
 from starlette.status import (
     HTTP_200_OK,
@@ -18,7 +19,6 @@ from starlette.status import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
-from speech.chatterbox import CHATTERBOX_SAMPLE_RATE
 from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
 from speech.pcm import BYTES_PER_SAMPLE, is_silence, pcm_from_wav
 from speech.selection import VoiceSelectionStore
@@ -188,6 +188,7 @@ class _GatedVoice:
     model_name = "gated-voice"
     ready = True
     streams = True
+    retain_when_inactive = False
     sample_rate = SPEAK_SAMPLE_RATE
 
     def __init__(self) -> None:
@@ -385,7 +386,7 @@ def _runtime_for_deselection(
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     store.write(VoiceId.CHATTERBOX)
     closed: list[int] = []
-    speaking.streams = True
+    speaking.retain_when_inactive = False
     speaking.close = lambda: closed.append(1)
     runtime = Runtime(
         speaking,

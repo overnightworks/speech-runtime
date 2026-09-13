@@ -325,7 +325,7 @@ def test_sample_response_construction_failure_releases_admission_for_deselection
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     store.write(VoiceId.CHATTERBOX)
     old = FakeSpeaking()
-    old.streams = True
+    old.retain_when_inactive = False
     closed: list[int] = []
     old.close = lambda: closed.append(1)
     target = FakeSpeaking()

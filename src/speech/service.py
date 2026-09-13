@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from presentator_speech_provider_contract import QWEN_MODEL_ID
 from pydantic import BaseModel, Field
 from starlette.status import (
     HTTP_503_SERVICE_UNAVAILABLE,
@@ -91,6 +92,7 @@ class SpeakingEngine(Protocol):
     sample_rate: int
     ready: bool
     streams: bool
+    retain_when_inactive: bool
 
     def load(self) -> None:
         """Load weights and become ready, or raise."""
@@ -138,9 +140,8 @@ class Runtime:
         self._engine_factory = dependencies.engine_factory
         self._artifact_checker = dependencies.artifact_checker
         self._default_voice = dependencies.default_voice
-        self._selected: VoiceId | None = (
-            dependencies.default_voice if speaking is not None else None
-        )
+        self._selected = dependencies.default_voice if speaking is not None else None
+        self._ready_speaking = speaking if speaking and speaking.ready else None
         self._pending: VoiceId | None = None
         self._pending_engine: SpeakingEngine | None = None
         self._closing_engine: SpeakingEngine | None = None
@@ -189,9 +190,7 @@ class Runtime:
         """The contract body for GET /health."""
         self._reconcile_failed_active()
         return {
-            "speaking": {
-                **self._speaking_health(),
-            },
+            "speaking": self._speaking_health(),
             "hearing": {
                 "model": self.hearing.model_name,
                 "ready": self.hearing.ready,
@@ -308,6 +307,7 @@ class Runtime:
             engines = [self._pending_engine, self.speaking, *self._engines.values()]
             self._pending_engine = None
             self.speaking = None
+            self._ready_speaking = None
             self._engines.clear()
         failed = False
         for engine in _unique_engines(engines):
@@ -422,14 +422,14 @@ class Runtime:
             if self._stopping:
                 return VoiceLoadOutcome.NOT_ACTIVATED
             if (
-                self._selected is VoiceId.CHATTERBOX
-                and self.speaking is not None
+                self.speaking is not None
                 and self.speaking is not engine
+                and not self.speaking.retain_when_inactive
             ):
                 closing = self.speaking
                 self.speaking = None
-                if self._engines.get(VoiceId.CHATTERBOX) is closing:
-                    del self._engines[VoiceId.CHATTERBOX]
+                if self._engines.get(self._selected) is closing:
+                    self._engines.pop(self._selected)
                 self._closing_engine = closing
             else:
                 self._publish_voice(voice, engine, recovery)
@@ -439,7 +439,8 @@ class Runtime:
             except Exception:
                 with self._state_changed:
                     self._closing_engine = None
-                    self._engines[VoiceId.CHATTERBOX] = closing
+                    if self._selected is not None:
+                        self._engines[self._selected] = closing
                     self._state_changed.notify_all()
                 self._fatal_callback()
                 raise
@@ -457,10 +458,10 @@ class Runtime:
         self, voice: VoiceId, engine: SpeakingEngine, recovery: VoiceRecovery | None
     ) -> None:
         self.speaking = engine
+        self._ready_speaking = engine if engine.ready else None
         self._selected = voice
         self._engines[voice] = engine
-        if self._pending_engine is engine:
-            self._pending_engine = None
+        self._pending_engine = None
         self._recovery = recovery
 
     def _register_pending_engine(self, engine: SpeakingEngine) -> bool:
@@ -483,32 +484,31 @@ class Runtime:
     def _reconcile_failed_active(self) -> None:
         if not self._transition_guard.acquire(blocking=False):
             return
-        failed: SpeakingEngine | None = None
         try:
             with self._state_lock:
                 active = self.speaking
-                if active is None or active.ready or not active.streams:
+                if active is None:
                     return
-                if self.loading or self._stopping:
+                if active.ready:
+                    self._ready_speaking = active
                     return
-                failed = active
+                if active is not self._ready_speaking or self.loading or self._stopping:
+                    return
                 failed_voice = self._selected
                 self.speaking = None
-                if (
-                    failed_voice is not None
-                    and self._engines.get(failed_voice) is active
-                ):
-                    del self._engines[failed_voice]
+                self._ready_speaking = None
+                if self._engines.get(failed_voice) is active:
+                    self._engines.pop(failed_voice)
                 self._recovery = VoiceRecovery(
                     kind=VoiceRecoveryKind.LOAD_FAILED, voice=failed_voice
                 )
-                self._closing_engine = failed
+                self._closing_engine = active
             try:
-                failed.close()
+                active.close()
             except Exception:
                 with self._state_lock:
                     if failed_voice is not None:
-                        self._engines[failed_voice] = failed
+                        self._engines[failed_voice] = active
                 _LOG.exception("failed speaking engine cleanup failed")
                 self._fatal_callback()
             finally:
@@ -546,6 +546,8 @@ def _voice_from_model(model: str) -> VoiceId | None:
         return VoiceId.PIPER
     if model == CHATTERBOX_SPEAKING_MODEL:
         return VoiceId.CHATTERBOX
+    if model == QWEN_MODEL_ID:
+        return VoiceId.QWEN
     return None
 
 

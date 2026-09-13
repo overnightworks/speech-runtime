@@ -1,4 +1,4 @@
-"""The parent keeps Chatterbox protocol failures private and terminal."""
+"""The parent keeps provider protocol failures private and terminal."""
 
 from __future__ import annotations
 
@@ -14,8 +14,11 @@ from pathlib import Path
 
 import pytest
 from anyio import run, run_process
-from presentator_chatterbox_contract import (
+from presentator_speech_provider_contract import (
+    CHATTERBOX_SAMPLE_RATE,
     MAX_FRAME_LENGTH,
+    QWEN_MODEL_ID,
+    QWEN_SAMPLE_RATE,
     Frame,
     FrameDecoder,
     FrameKind,
@@ -24,8 +27,12 @@ from presentator_chatterbox_contract import (
     write_frame,
 )
 
-from speech.chatterbox import ChatterboxProtocolError, ChatterboxSpeaking
 from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from speech.provider_process import (
+    ProviderLaunch,
+    ProviderProcess,
+    ProviderProtocolError,
+)
 from speech.selection import VoiceSelectionStore
 from speech.service import Runtime, RuntimeDependencies
 from speech.voices import VoiceId, VoiceLoadOutcome, VoiceRecoveryKind
@@ -46,7 +53,7 @@ os.close(null)
 print("provider print noise", flush=True)
 os.write(1, b"native provider noise\n")
 
-from presentator_chatterbox_contract import (
+from presentator_speech_provider_contract import (
     MAX_FRAME_LENGTH, Frame, FrameKind, ProviderFailure, read_frame, write_frame
 )
 
@@ -54,6 +61,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--expected-parent-pid", required=True)
 parser.add_argument("--device", required=True)
 parser.add_argument("--cache", required=True)
+if {provider!r} == "qwen":
+    parser.add_argument("--speaker", required=True)
 arguments = parser.parse_args()
 cache = Path(arguments.cache)
 cache.mkdir(parents=True, exist_ok=True)
@@ -125,21 +134,57 @@ while True:
 """
 
 
-def _closed_provider(tmp_path: Path, behavior: str = "normal") -> tuple[Path, Path]:
+def _closed_provider(
+    tmp_path: Path, behavior: str = "normal", provider_name: str = "chatterbox"
+) -> tuple[Path, Path]:
     root = tmp_path / "providers"
-    provider = root / "chatterbox"
-    entrypoint = provider / ".venv" / "bin" / "presentator-chatterbox-worker"
-    entrypoint.parent.mkdir(parents=True)
+    provider = root / provider_name
+    entrypoint = provider / ".venv" / "bin" / f"presentator-{provider_name}-worker"
+    entrypoint.parent.mkdir(parents=True, exist_ok=True)
     entrypoint.write_text(
-        _WORKER.format(python=sys.executable, behavior=behavior), encoding="utf-8"
+        _WORKER.format(
+            python=sys.executable,
+            behavior=behavior,
+            provider=provider_name,
+        ),
+        encoding="utf-8",
     )
     entrypoint.chmod(0o700)
     return root, tmp_path / "cache"
 
 
-def _engine(tmp_path: Path, behavior: str = "normal") -> ChatterboxSpeaking:
+def _engine(tmp_path: Path, behavior: str = "normal") -> ProviderProcess:
     root, cache = _closed_provider(tmp_path, behavior)
-    return ChatterboxSpeaking(CHATTERBOX_SPEAKING_MODEL, "cpu", cache, root)
+    return _provider_process(root, cache)
+
+
+def _provider_process(
+    root: Path,
+    cache: Path,
+    *,
+    provider_name: str = "chatterbox",
+) -> ProviderProcess:
+    arguments = ["--device", "cpu", "--cache", str(cache)]
+    if provider_name == "qwen":
+        arguments.extend(("--speaker", "Ryan"))
+    model_name, sample_rate, streams = (
+        (QWEN_MODEL_ID, QWEN_SAMPLE_RATE, False)
+        if provider_name == "qwen"
+        else (CHATTERBOX_SPEAKING_MODEL, CHATTERBOX_SAMPLE_RATE, True)
+    )
+    return ProviderProcess(
+        ProviderLaunch(
+            model_name=model_name,
+            sample_rate=sample_rate,
+            streams=streams,
+            executable=root
+            / provider_name
+            / ".venv"
+            / "bin"
+            / f"presentator-{provider_name}-worker",
+            arguments=tuple(arguments),
+        )
+    )
 
 
 def _observed(cache: Path) -> tuple[str, dict[str, str], int, dict[str, str]]:
@@ -215,8 +260,8 @@ def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
         launches.append((arguments, keywords))
         return real_popen(arguments, **keywords)
 
-    monkeypatch.setattr("speech.chatterbox.subprocess.Popen", recording_popen)
-    engine = ChatterboxSpeaking(CHATTERBOX_SPEAKING_MODEL, "cpu", cache, root)
+    monkeypatch.setattr("speech.provider_process.subprocess.Popen", recording_popen)
+    engine = _provider_process(root, cache)
     loaded = threading.Thread(target=engine.load)
     loaded.start()
     loaded.join(timeout=5)
@@ -231,7 +276,7 @@ def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
     assert not request.is_alive()
     assert response == [b"\x00\x01"]
     assert any(
-        thread.name == "chatterbox-provider-owner" for thread in threading.enumerate()
+        thread.name == "speech-provider-owner" for thread in threading.enumerate()
     )
     cwd, environment, pid, arguments = _observed(cache)
     assert list(engine.pcm_chunks("later", "en")) == [b"\x00\x01"]
@@ -304,7 +349,7 @@ def test_stale_wrong_direction_out_of_order_and_midstream_exit_fail_closed(
 ) -> None:
     engine = _engine(tmp_path)
     engine.load()
-    with pytest.raises(ChatterboxProtocolError):
+    with pytest.raises(ProviderProtocolError):
         list(engine.pcm_chunks(text, "de"))
     engine.close()
 
@@ -314,7 +359,7 @@ def test_request_failure_is_sanitized_and_marks_the_adapter_unready(
 ) -> None:
     engine = _engine(tmp_path)
     engine.load()
-    with pytest.raises(RuntimeError, match="chatterbox synthesis failed"):
+    with pytest.raises(RuntimeError, match="speech provider synthesis failed"):
         list(engine.pcm_chunks("failed", "de"))
     assert engine.ready is False
     engine.close()
@@ -327,7 +372,7 @@ def test_early_exit_and_oversized_handshake_fail_without_an_owned_process(
     tmp_path: Path, behavior: str
 ) -> None:
     engine = _engine(tmp_path, behavior)
-    with pytest.raises(RuntimeError, match="chatterbox provider failed"):
+    with pytest.raises(RuntimeError, match="speech provider failed"):
         engine.load()
     _, _, pid, _ = _observed(tmp_path / "cache")
     engine.close()
@@ -338,7 +383,7 @@ def test_duplicate_terminal_is_rejected_before_a_later_request(tmp_path: Path) -
     engine = _engine(tmp_path, "duplicate-terminal")
     engine.load()
     assert list(engine.pcm_chunks("first", "de")) == [b"\x00\x01"]
-    with pytest.raises(ChatterboxProtocolError):
+    with pytest.raises(ProviderProtocolError):
         list(engine.pcm_chunks("second", "de"))
     engine.close()
 
@@ -346,8 +391,8 @@ def test_duplicate_terminal_is_rejected_before_a_later_request(tmp_path: Path) -
 def test_partial_cancel_frame_cannot_extend_the_single_drain_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("speech.chatterbox.CANCEL_DRAIN_SECONDS", 0.05)
-    monkeypatch.setattr("speech.chatterbox.TERMINATE_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr("speech.provider_process.CANCEL_DRAIN_SECONDS", 0.05)
+    monkeypatch.setattr("speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05)
     engine = _engine(tmp_path, "partial-cancel")
     engine.load()
     chunks = engine.pcm_chunks("cancel", "de")
@@ -361,12 +406,67 @@ def test_partial_cancel_frame_cannot_extend_the_single_drain_deadline(
     _assert_reaped(pid)
 
 
+def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("speech.provider_process.CANCEL_DRAIN_SECONDS", 0.05)
+    monkeypatch.setattr("speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05)
+    root, cache = _closed_provider(tmp_path, "partial-cancel", "qwen")
+    constructed: list[ProviderProcess] = []
+
+    def factory(_voice: VoiceId) -> ProviderProcess:
+        engine = _provider_process(
+            root,
+            cache,
+            provider_name="qwen",
+        )
+        constructed.append(engine)
+        return engine
+
+    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+    runtime = Runtime(
+        None,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=store,
+            engine_factory=factory,
+            artifact_checker=lambda _voice: True,
+        ),
+    )
+    assert runtime.load_voice(VoiceId.QWEN) is VoiceLoadOutcome.ACTIVATED
+    first = constructed[0]
+    chunks = first.pcm_chunks("cancel", "de")
+    assert next(chunks) == b"\x00\x01"
+    chunks.close()
+    _, _, first_pid, _ = _observed(cache)
+
+    snapshot = runtime.snapshot(Settings(huggingface_cache=tmp_path))
+
+    assert snapshot.recovery is not None
+    assert snapshot.recovery.kind is VoiceRecoveryKind.LOAD_FAILED
+    assert snapshot.recovery.voice is VoiceId.QWEN
+    assert store.read() is VoiceId.QWEN
+    assert runtime.capture_speaking() is None
+    _assert_reaped(first_pid)
+
+    _closed_provider(tmp_path, "normal", "qwen")
+    assert runtime.load_voice(VoiceId.QWEN) is VoiceLoadOutcome.ACTIVATED
+    assert len(constructed) == 2
+    runtime.close()
+
+
 def test_constructor_has_no_thread_process_or_filesystem_side_effect(
     tmp_path: Path,
 ) -> None:
     before = {thread.ident for thread in threading.enumerate()}
-    engine = ChatterboxSpeaking(
-        CHATTERBOX_SPEAKING_MODEL, "cpu", tmp_path / "cache", tmp_path / "missing"
+    engine = ProviderProcess(
+        ProviderLaunch(
+            model_name=CHATTERBOX_SPEAKING_MODEL,
+            sample_rate=CHATTERBOX_SAMPLE_RATE,
+            streams=True,
+            executable=tmp_path / "missing",
+            arguments=("--device", "cpu", "--cache", str(tmp_path / "cache")),
+        )
     )
     engine.close()
     assert {thread.ident for thread in threading.enumerate()} == before
@@ -405,13 +505,13 @@ def test_deselecting_chatterbox_reaps_provider_before_load_returns(
     tmp_path: Path,
 ) -> None:
     piper = FakeSpeaking()
-    chatterboxes: list[ChatterboxSpeaking] = []
+    chatterboxes: list[ProviderProcess] = []
     root, cache = _closed_provider(tmp_path)
 
-    def factory(voice: VoiceId) -> FakeSpeaking | ChatterboxSpeaking:
+    def factory(voice: VoiceId) -> FakeSpeaking | ProviderProcess:
         if voice is VoiceId.PIPER:
             return piper
-        engine = ChatterboxSpeaking(CHATTERBOX_SPEAKING_MODEL, "cpu", cache, root)
+        engine = _provider_process(root, cache)
         chatterboxes.append(engine)
         return engine
 
@@ -458,7 +558,7 @@ def test_active_provider_failure_reconciles_without_fatal_exit(
     runtime.set_fatal_callback(fatal.set)
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
     if failure == "request":
-        with pytest.raises(RuntimeError, match="chatterbox synthesis failed"):
+        with pytest.raises(RuntimeError, match="speech provider synthesis failed"):
             list(engine.pcm_chunks("failed", "de"))
     else:
         (tmp_path / "cache/exit-now").touch()
@@ -484,8 +584,8 @@ def test_close_allows_bounded_active_cancel_before_reaping(
     behavior: str,
     text: str,
 ) -> None:
-    monkeypatch.setattr("speech.chatterbox.CANCEL_DRAIN_SECONDS", 0.2)
-    monkeypatch.setattr("speech.chatterbox.TERMINATE_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr("speech.provider_process.CANCEL_DRAIN_SECONDS", 0.2)
+    monkeypatch.setattr("speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05)
     engine = _engine(tmp_path, behavior)
     engine.load()
     chunks = engine.pcm_chunks(text, "de")
@@ -532,9 +632,7 @@ def test_shutdown_during_handshake_closes_pending_without_publication(
         FakeHearing(),
         dependencies=RuntimeDependencies(
             selection=store,
-            engine_factory=lambda _voice: ChatterboxSpeaking(
-                CHATTERBOX_SPEAKING_MODEL, "cpu", cache, root
-            ),
+            engine_factory=lambda _voice: _provider_process(root, cache),
             artifact_checker=lambda _voice: True,
         ),
     )
@@ -564,8 +662,14 @@ def test_missing_entrypoint_failed_exec_leaves_no_retained_engine(
         FakeHearing(),
         dependencies=RuntimeDependencies(
             selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=lambda _voice: ChatterboxSpeaking(
-                CHATTERBOX_SPEAKING_MODEL, "cpu", tmp_path, tmp_path / "missing"
+            engine_factory=lambda _voice: ProviderProcess(
+                ProviderLaunch(
+                    model_name=CHATTERBOX_SPEAKING_MODEL,
+                    sample_rate=CHATTERBOX_SAMPLE_RATE,
+                    streams=True,
+                    executable=tmp_path / "missing",
+                    arguments=("--device", "cpu", "--cache", str(tmp_path)),
+                )
             ),
             artifact_checker=lambda _voice: True,
         ),
@@ -574,7 +678,7 @@ def test_missing_entrypoint_failed_exec_leaves_no_retained_engine(
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.NOT_ACTIVATED
     assert runtime.capture_speaking() is None
     assert not any(
-        thread.name == "chatterbox-provider-owner" and thread.is_alive()
+        thread.name == "speech-provider-owner" and thread.is_alive()
         for thread in threading.enumerate()
     )
     assert fatal.is_set() is False
@@ -598,9 +702,9 @@ def test_real_child_is_reaped_when_publication_setup_raises(
         def __init__(self) -> None:
             raise RuntimeError
 
-    monkeypatch.setattr("speech.chatterbox.FrameDecoder", BrokenDecoder)
-    monkeypatch.setattr("speech.chatterbox.subprocess.Popen", recording_popen)
-    with pytest.raises(RuntimeError, match="chatterbox provider failed"):
+    monkeypatch.setattr("speech.provider_process.FrameDecoder", BrokenDecoder)
+    monkeypatch.setattr("speech.provider_process.subprocess.Popen", recording_popen)
+    with pytest.raises(RuntimeError, match="speech provider failed"):
         engine.load()
     assert fatal.wait(timeout=5)
     engine.close()
@@ -634,12 +738,14 @@ def test_cleanup_failure_reaps_and_reports_fatal_lifecycle(
         started.append(process.pid)
         return FailingCleanupProcess(process)
 
-    monkeypatch.setattr("speech.chatterbox.subprocess.Popen", failing_cleanup_popen)
+    monkeypatch.setattr(
+        "speech.provider_process.subprocess.Popen", failing_cleanup_popen
+    )
     engine = _engine(tmp_path)
     engine.set_fatal_callback(fatal.set)
     engine.load()
 
-    with pytest.raises(RuntimeError, match="chatterbox provider cleanup failed"):
+    with pytest.raises(RuntimeError, match="speech provider cleanup failed"):
         engine.close()
 
     assert fatal.wait(timeout=5)
@@ -650,7 +756,7 @@ def test_cleanup_failure_reaps_and_reports_fatal_lifecycle(
 def test_term_resistant_leader_reaches_kill_and_reap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("speech.chatterbox.TERMINATE_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr("speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05)
     engine = _engine(tmp_path, "term-resistant")
     engine.load()
     _, _, pid, _ = _observed(tmp_path / "cache")
@@ -660,7 +766,7 @@ def test_term_resistant_leader_reaches_kill_and_reap(
 
 def test_parent_death_signal_follows_the_real_creator_thread(tmp_path: Path) -> None:
     provider_source = Path(__file__).parents[1] / "providers/chatterbox/src"
-    contract_source = Path(__file__).parents[1] / "providers/chatterbox-contract/src"
+    contract_source = Path(__file__).parents[1] / "providers/provider-contract/src"
     helper = r'''
 import os
 import subprocess

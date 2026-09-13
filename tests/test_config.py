@@ -6,7 +6,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from speech.config import HEAR_SAMPLE_RATE, Settings
+from speech.config import HEAR_SAMPLE_RATE, QwenSpeaker, Settings
 from speech.pcm import wav_header
 from speech.selection import VoiceSelectionStore
 from speech.service import Runtime, RuntimeDependencies, failed_to_load_message
@@ -86,6 +86,19 @@ def test_provider_root_is_optional_for_the_default_piper_process(
 ) -> None:
     monkeypatch.delenv("SPEECH_PROVIDER_ROOT", raising=False)
     assert Settings().provider_root is None
+
+
+def test_qwen_speaker_is_a_closed_setting_with_ryan_as_its_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert Settings().qwen_speaker is QwenSpeaker.RYAN
+
+    monkeypatch.setenv("SPEECH_QWEN_SPEAKER", "Sohee")
+    assert Settings().qwen_speaker is QwenSpeaker.SOHEE
+
+    monkeypatch.setenv("SPEECH_QWEN_SPEAKER", "invented")
+    with pytest.raises(ValueError, match="qwen_speaker"):
+        Settings()
 
 
 def test_a_failed_hearing_load_names_the_model(tmp_path) -> None:

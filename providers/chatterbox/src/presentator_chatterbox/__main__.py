@@ -17,13 +17,24 @@ def main() -> int:
         install_parent_death_signal(arguments.expected_parent_pid)
     except RuntimeError:
         return 1
-    from presentator_chatterbox.worker import run
+    from presentator_speech_provider_contract import ProviderFunctions, serve_provider
 
-    return run(
+    from presentator_chatterbox.model import load_model, pcm_chunks
+
+    return serve_provider(
         device=arguments.device,
         cache=arguments.cache,
         protocol_stdout=protocol_stdout,
+        functions=ProviderFunctions(load_model, pcm_chunks, _prepare),
     )
+
+
+def _prepare(model: object) -> None:
+    """Preserve Chatterbox's established pre-READY preparation."""
+    from presentator_chatterbox.model import pcm_chunks
+
+    for _pcm in pcm_chunks(model, "Hallo.", "de"):
+        pass
 
 
 def _arguments() -> argparse.Namespace:

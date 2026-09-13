@@ -14,16 +14,16 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
+import presentator_speech_provider_contract as worker
 import pytest
-from presentator_chatterbox_contract import (
+from presentator_speech_provider_contract import (
     Frame,
     FrameKind,
     ProviderFailure,
+    ProviderFunctions,
     read_frame,
     write_frame,
 )
-
-from presentator_chatterbox import worker
 
 
 def _encoded(*frames: Frame) -> bytes:
@@ -57,11 +57,15 @@ def _run_worker(
         worker.sys, "stdin", SimpleNamespace(buffer=BytesIO(input_bytes))
     )
     read_fd, write_fd = os.pipe()
-    result = worker.run(
+    result = worker.serve_provider(
         device="cpu",
         cache="/closed/cache",
         protocol_stdout=write_fd,
-        model_functions=(recording_loader, synthesizer),
+        functions=ProviderFunctions(
+            recording_loader,
+            synthesizer,
+            lambda model: [*synthesizer(model, "Hallo.", "de")],
+        ),
     )
     with os.fdopen(read_fd, "rb") as output:
         frames = _frames(output.read())
@@ -93,7 +97,7 @@ def test_run_loads_warms_then_maps_active_input_eof_to_sanitized_failure(
         Frame(FrameKind.FAILED, 1, bytes([ProviderFailure.PROVIDER_FAILURE])),
     ]
     assert not any(
-        thread.name == "chatterbox-provider-input" and thread.is_alive()
+        thread.name == "speech-provider-input" and thread.is_alive()
         for thread in threading.enumerate()
     )
 
@@ -119,11 +123,11 @@ def test_run_joins_a_cooperative_reader_that_is_still_returning(
 
     def run_worker() -> None:
         outcomes.append(
-            worker.run(
+            worker.serve_provider(
                 device="cpu",
                 cache="/closed/cache",
                 protocol_stdout=write_fd,
-                model_functions=(lambda *_args: object(), lambda *_args: ()),
+                functions=ProviderFunctions(lambda *_args: object(), lambda *_args: ()),
             )
         )
         finished.set()
@@ -141,7 +145,7 @@ def test_run_joins_a_cooperative_reader_that_is_still_returning(
     assert not running.is_alive()
     assert outcomes == [1]
     assert not any(
-        thread.name == "chatterbox-provider-input" and thread.is_alive()
+        thread.name == "speech-provider-input" and thread.is_alive()
         for thread in threading.enumerate()
     )
 
@@ -292,18 +296,26 @@ def _run_bootstrap(write_fd: int) -> None:
     real_import = builtins.__import__
 
     def importing(name: str, *args: object, **kwargs: object) -> object:
-        if name == "presentator_chatterbox.worker":
+        if name == "presentator_chatterbox.model":
             assert installed
             vars(builtins)["print"]("import print noise", flush=True)
             os.write(1, b"import native noise\n")
 
-            def fake_run(**arguments: object) -> int:
+            return SimpleNamespace(
+                load_model=lambda *_args: object(), pcm_chunks=lambda *_args: ()
+            )
+        if name == "presentator_speech_provider_contract":
+
+            def fake_serve_provider(**arguments: object) -> int:
                 protocol = int(arguments["protocol_stdout"])
                 os.write(protocol, b"protocol-only")
                 os.close(protocol)
                 return 0
 
-            return SimpleNamespace(run=fake_run)
+            return SimpleNamespace(
+                ProviderFunctions=lambda *functions: functions,
+                serve_provider=fake_serve_provider,
+            )
         return real_import(name, *args, **kwargs)
 
     builtins.__import__ = importing

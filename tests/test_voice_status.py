@@ -19,6 +19,7 @@ from speech.service import (
     create_app,
     create_control_app,
 )
+from speech.speaking import speaking_for_voice
 from speech.voices import (
     VoiceId,
     VoiceLoadOutcome,
@@ -115,6 +116,84 @@ def test_chatterbox_weights_need_the_exact_executable_but_active_survives_its_re
     assert active[1].state is VoiceState.ACTIVE
 
 
+def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_preset(
+    tmp_path,
+) -> None:
+    provider_root = tmp_path / "providers"
+    cache = tmp_path / "hub"
+    snapshot = (
+        cache
+        / "models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice"
+        / "snapshots"
+        / "85e237c12c027371202489a0ec509ded67b5e4b5"
+    )
+    artifacts = (
+        ".gitattributes",
+        "README.md",
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "speech_tokenizer/config.json",
+        "speech_tokenizer/configuration.json",
+        "speech_tokenizer/model.safetensors",
+        "speech_tokenizer/preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+    )
+    for artifact in artifacts:
+        path = snapshot / artifact
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    settings = Settings(
+        provider_root=provider_root,
+        huggingface_cache=cache,
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+    )
+
+    missing_worker = statuses(settings, _inactive_runtime_state())
+    worker = provider_root / "qwen/.venv/bin/presentator-qwen-worker"
+    worker.parent.mkdir(parents=True)
+    worker.write_text("#!/bin/false\n", encoding="utf-8")
+    worker.chmod(0o700)
+    (snapshot / "vocab.json").unlink()
+    missing_artifact = statuses(settings, _inactive_runtime_state())
+    (snapshot / "vocab.json").touch()
+    downloaded = statuses(settings, _inactive_runtime_state())
+    sohee = statuses(
+        Settings(
+            provider_root=provider_root,
+            huggingface_cache=cache,
+            qwen_speaker="Sohee",
+            PRESENTATOR_RUNTIME_UID=os.geteuid(),
+        ),
+        _inactive_runtime_state(),
+    )
+
+    assert missing_worker[2].state is VoiceState.UNAVAILABLE
+    assert missing_artifact[2].state is VoiceState.UNAVAILABLE
+    assert downloaded[2].state is VoiceState.DOWNLOADED
+    assert downloaded[2].language == "German and English — Ryan preset"
+    assert sohee[2].language == "German and English — Sohee preset"
+
+    engine = speaking_for_voice(settings, VoiceId.QWEN)
+    assert engine.model_name == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    assert engine.sample_rate == 24_000
+    assert engine.streams is False
+    assert engine.retain_when_inactive is False
+
+
+def _inactive_runtime_state() -> VoiceRuntimeState:
+    return VoiceRuntimeState(
+        selected=None,
+        ready=False,
+        loading=False,
+        pending=None,
+        failed=None,
+    )
+
+
 def test_private_endpoint_reports_loading_and_active_from_the_shared_runtime(
     tmp_path,
 ) -> None:
@@ -180,6 +259,7 @@ class _TrackedSpeaking(FakeSpeaking):
 def _switching_runtime(
     tmp_path, old, target, selection: VoiceSelectionStore | None = None
 ) -> tuple[Runtime, VoiceSelectionStore]:
+    old.retain_when_inactive = False
     store = selection or VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     store.write(VoiceId.CHATTERBOX)
     runtime = Runtime(
@@ -723,7 +803,7 @@ def test_every_speaking_surface_reconciles_a_dead_active_without_fallback(
             self.closed += 1
 
     engine = ClosableSpeaking()
-    engine.streams = True
+    engine.retain_when_inactive = False
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     runtime = Runtime(
         None,
@@ -756,6 +836,70 @@ def test_every_speaking_surface_reconciles_a_dead_active_without_fallback(
     assert engine.closed == 1
 
 
+def test_nonstreaming_provider_failure_reconciles_and_allows_a_fresh_load(
+    tmp_path,
+) -> None:
+    class ClosableSpeaking(FakeSpeaking):
+        retain_when_inactive = False
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed = 0
+
+        def close(self) -> None:
+            self.closed += 1
+
+    failed = ClosableSpeaking()
+    replacement = ClosableSpeaking()
+    engines = iter((failed, replacement))
+    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+    runtime = Runtime(
+        None,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=store,
+            engine_factory=lambda _voice: next(engines),
+            artifact_checker=lambda _voice: True,
+        ),
+    )
+    assert runtime.load_voice(VoiceId.QWEN) is VoiceLoadOutcome.ACTIVATED
+    failed.ready = False
+
+    snapshot = runtime.snapshot(Settings(voice_cache=tmp_path))
+
+    assert failed.closed == 1
+    assert snapshot.recovery is not None
+    assert snapshot.recovery.kind is VoiceRecoveryKind.LOAD_FAILED
+    assert snapshot.recovery.voice is VoiceId.QWEN
+    assert store.read() is VoiceId.QWEN
+    assert runtime.capture_speaking() is None
+    assert runtime.load_voice(VoiceId.QWEN) is VoiceLoadOutcome.ACTIVATED
+    assert _captured_engine(runtime) is replacement
+
+
+def test_switching_releases_any_provider_process_before_load_returns(tmp_path) -> None:
+    old = _TrackedSpeaking(sample_rate=24_000)
+    old.retain_when_inactive = False
+    target = _TrackedSpeaking()
+    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+    store.write(VoiceId.QWEN)
+    runtime = Runtime(
+        old,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=store,
+            engine_factory=lambda _voice: target,
+            artifact_checker=lambda _voice: True,
+            default_voice=VoiceId.QWEN,
+        ),
+    )
+
+    assert runtime.load_voice(VoiceId.PIPER) is VoiceLoadOutcome.ACTIVATED
+
+    assert old.closed == 1
+    assert _captured_engine(runtime) is target
+
+
 def test_failed_active_reconciliation_excludes_retry_until_close_finishes(
     tmp_path,
 ) -> None:
@@ -768,7 +912,7 @@ def test_failed_active_reconciliation_excludes_retry_until_close_finishes(
             assert release_close.wait(timeout=5)
 
     failed = HeldCloseSpeaking()
-    failed.streams = True
+    failed.retain_when_inactive = False
     replacement = FakeSpeaking()
     created = iter((failed, replacement))
     runtime = Runtime(

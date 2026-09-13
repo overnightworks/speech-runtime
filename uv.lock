@@ -348,11 +348,6 @@ wheels = [
 ]
 
 [[package]]
-name = "presentator-chatterbox-contract"
-version = "0.0.0"
-source = { editable = "providers/chatterbox-contract" }
-
-[[package]]
 name = "presentator-speech"
 version = "0.0.0"
 source = { editable = "." }
@@ -363,7 +358,7 @@ dependencies = [
     { name = "nvidia-cublas-cu12" },
     { name = "nvidia-cudnn-cu12" },
     { name = "piper-tts" },
-    { name = "presentator-chatterbox-contract" },
+    { name = "presentator-speech-provider-contract" },
     { name = "pydantic-settings" },
     { name = "uvicorn" },
 ]
@@ -384,7 +379,7 @@ requires-dist = [
     { name = "nvidia-cublas-cu12", specifier = "==12.4.5.8" },
     { name = "nvidia-cudnn-cu12", specifier = "==9.1.0.70" },
     { name = "piper-tts", specifier = "==1.8.0" },
-    { name = "presentator-chatterbox-contract", editable = "providers/chatterbox-contract" },
+    { name = "presentator-speech-provider-contract", editable = "providers/provider-contract" },
     { name = "pydantic-settings", specifier = "==2.15.0" },
     { name = "uvicorn", specifier = "==0.52.4" },
 ]
@@ -396,6 +391,11 @@ dev = [
     { name = "ruff", specifier = "==0.16.2" },
     { name = "websockets", specifier = "==15.0.1" },
 ]
+
+[[package]]
+name = "presentator-speech-provider-contract"
+version = "0.0.0"
+source = { editable = "providers/provider-contract" }
 
 [[package]]
 name = "protobuf"

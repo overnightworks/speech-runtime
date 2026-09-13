@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from huggingface_hub import constants as huggingface_hub_constants
+from presentator_speech_provider_contract import QWEN_MODEL_ID, QwenSpeaker
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
         default_factory=lambda: Path(huggingface_hub_constants.HF_HUB_CACHE)
     )
     provider_root: Path | None = None
+    qwen_speaker: QwenSpeaker = QwenSpeaker.RYAN
     private_directory: Path = Path("/run/presentator-speech")
     state_directory: Path = Field(
         default_factory=lambda: Path.home() / ".local/state/presentator-speech"
@@ -58,7 +60,11 @@ class Settings(BaseSettings):
     @field_validator("speaking_model")
     @classmethod
     def _speaking_model_is_a_baseline(cls, model: str) -> str:
-        if model not in {DEFAULT_SPEAKING_MODEL, CHATTERBOX_SPEAKING_MODEL}:
+        if model not in {
+            DEFAULT_SPEAKING_MODEL,
+            CHATTERBOX_SPEAKING_MODEL,
+            QWEN_MODEL_ID,
+        }:
             raise ValueError(_SPEAKING_MODEL_ERROR)
         return model
 

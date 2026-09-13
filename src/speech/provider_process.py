@@ -1,4 +1,4 @@
-"""Parent adapter for the isolated Chatterbox provider."""
+"""Parent adapter for one isolated local speech provider."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Generator
-from enum import Enum
+from dataclasses import dataclass
+from enum import Enum, StrEnum
 from pathlib import Path
 
-from presentator_chatterbox_contract import (
-    CHATTERBOX_SAMPLE_RATE,
+from presentator_speech_provider_contract import (
     Frame,
     FrameDecoder,
     FrameKind,
@@ -33,8 +33,15 @@ _NVIDIA_LIBRARY_DIRECTORIES = (
 )
 
 
-class ChatterboxProtocolError(RuntimeError):
+class ProviderProtocolError(RuntimeError):
     """The provider broke its private, sanitized wire contract."""
+
+
+class ProviderId(StrEnum):
+    """The provider directories and executable suffixes the service may use."""
+
+    CHATTERBOX = "chatterbox"
+    QWEN = "qwen"
 
 
 class _OwnerExit(Enum):
@@ -42,26 +49,33 @@ class _OwnerExit(Enum):
     PROVIDER_FAILURE = "provider_failure"
 
 
-class ChatterboxSpeaking:
-    """One retained provider process, owned by a dedicated creator thread."""
+@dataclass(frozen=True, slots=True)
+class ProviderLaunch:
+    """Immutable executable and voice facts for one isolated provider."""
 
-    streams = True
-    sample_rate = CHATTERBOX_SAMPLE_RATE
+    model_name: str
+    sample_rate: int
+    streams: bool
+    executable: Path | None
+    arguments: tuple[str, ...]
+
+
+class ProviderProcess:
+    """One retained provider process, owned by a dedicated creator thread."""
 
     def __init__(
         self,
-        model_name: str,
-        device: str,
-        cache: Path,
-        provider_root: Path | None,
+        launch: ProviderLaunch,
         *,
         fatal_callback: Callable[[], None] | None = None,
     ) -> None:
         """Store immutable launch data; construction never creates a process."""
-        self.model_name = model_name
-        self._device = device
-        self._cache = cache
-        self._provider_root = provider_root
+        self.model_name = launch.model_name
+        self.sample_rate = launch.sample_rate
+        self.streams = launch.streams
+        self.retain_when_inactive = False
+        self._executable = launch.executable
+        self._arguments = launch.arguments
         self._fatal_callback = fatal_callback or (lambda: None)
         self.ready = False
         self._state_lock = threading.Lock()
@@ -82,27 +96,27 @@ class ChatterboxSpeaking:
         """Start the stable creator and wait for its single READY handshake."""
         with self._state_lock:
             if self._failed or self._closing:
-                raise RuntimeError("chatterbox provider failed")
+                raise RuntimeError("speech provider failed")
             if self.ready:
                 return
             if self._owner is None:
                 self._owner = threading.Thread(
                     target=self._run_owner,
-                    name="chatterbox-provider-owner",
+                    name="speech-provider-owner",
                 )
                 self._owner.start()
         self._ready.wait()
         with self._state_lock:
             ready = self.ready
         if not ready:
-            raise RuntimeError("chatterbox provider failed")
+            raise RuntimeError("speech provider failed")
 
     def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
         """Stream one request and cancel/drain it if the response closes early."""
         normalized = language.strip().lower().replace("_", "-")
         language_code = {"de": 1, "en": 2}.get((normalized or "de").split("-", 1)[0])
         if language_code is None:
-            raise ValueError("unsupported Chatterbox language")
+            raise ValueError("unsupported speech provider language")
         payload = bytes([language_code]) + text.encode("utf-8")
         process = self._live_process()
         completed = False
@@ -118,7 +132,7 @@ class ChatterboxSpeaking:
                     continue
                 if frame.kind is FrameKind.FAILED:
                     self._mark_failed()
-                    raise RuntimeError("chatterbox synthesis failed")
+                    raise RuntimeError("speech provider synthesis failed")
                 completed = True
                 return
         finally:
@@ -139,11 +153,11 @@ class ChatterboxSpeaking:
         self._request_owner_stop(_OwnerExit.ORDINARY_CLOSE)
         if not self._stopped.wait((2 * TERMINATE_GRACE_SECONDS) + 2):
             self._fatal_callback()
-            raise RuntimeError("chatterbox provider cleanup failed")
+            raise RuntimeError("speech provider cleanup failed")
         owner.join(timeout=1)
         if owner.is_alive() or self._cleanup_failed:
             self._fatal_callback()
-            raise RuntimeError("chatterbox provider cleanup failed")
+            raise RuntimeError("speech provider cleanup failed")
 
     def set_fatal_callback(self, callback: Callable[[], None]) -> None:
         """Give the runtime its process-lifecycle failure notification seam."""
@@ -157,7 +171,7 @@ class ChatterboxSpeaking:
             child = self._spawn()
             decoder = FrameDecoder()
             if child.stdout is None:
-                raise ChatterboxProtocolError
+                raise ProviderProtocolError
             os.set_blocking(child.stdout.fileno(), False)
             with self._state_lock:
                 self._process = child
@@ -210,19 +224,16 @@ class ChatterboxSpeaking:
             return command
 
     def _spawn(self) -> subprocess.Popen[bytes]:
-        entrypoint = chatterbox_entrypoint(self._provider_root)
+        entrypoint = self._executable
         if not _is_executable_file(entrypoint):
-            raise RuntimeError("chatterbox provider unavailable")
+            raise RuntimeError("speech provider unavailable")
         provider_directory = entrypoint.parents[2]
         return subprocess.Popen(
             [
                 str(entrypoint),
                 "--expected-parent-pid",
                 str(os.getpid()),
-                "--device",
-                self._device,
-                "--cache",
-                str(self._cache),
+                *self._arguments,
             ],
             shell=False,
             stdin=subprocess.PIPE,
@@ -239,7 +250,7 @@ class ChatterboxSpeaking:
         with self._state_lock:
             process = self._process
             if process is None or not self.ready or self._closing or self._failed:
-                raise RuntimeError("chatterbox provider is not ready")
+                raise RuntimeError("speech provider is not ready")
             self._request_finished.clear()
             return process
 
@@ -250,7 +261,7 @@ class ChatterboxSpeaking:
                 self._failed = True
                 self.ready = False
                 self._request_owner_stop(_OwnerExit.PROVIDER_FAILURE)
-                raise RuntimeError("chatterbox request ids exhausted")
+                raise RuntimeError("speech provider request ids exhausted")
             self._next_request_id += 1
             return request_id
 
@@ -259,19 +270,19 @@ class ChatterboxSpeaking:
             write_frame(process.stdin, frame)
         except (BrokenPipeError, OSError, ProtocolError, ValueError) as error:
             self._mark_failed()
-            raise ChatterboxProtocolError from error
+            raise ProviderProtocolError from error
 
     def _read(self, process: subprocess.Popen[bytes]) -> Frame:
         with self._state_lock:
             decoder = self._response_decoder
         if decoder is None:
             self._mark_failed()
-            raise ChatterboxProtocolError
+            raise ProviderProtocolError
         try:
             return self._read_available_frame(process, decoder)
         except (EOFError, OSError, ProtocolError, ValueError) as error:
             self._mark_failed()
-            raise ChatterboxProtocolError from error
+            raise ProviderProtocolError from error
 
     def _read_available_frame(
         self,
@@ -314,7 +325,7 @@ class ChatterboxSpeaking:
             allowed.add(FrameKind.CANCELLED)
         if frame.request_id != request_id or frame.kind not in allowed:
             self._mark_failed()
-            raise ChatterboxProtocolError
+            raise ProviderProtocolError
 
     def _cancel_and_drain(
         self, process: subprocess.Popen[bytes], request_id: int
@@ -325,16 +336,16 @@ class ChatterboxSpeaking:
             with self._state_lock:
                 decoder = self._response_decoder
             if decoder is None:
-                raise ChatterboxProtocolError
+                raise ProviderProtocolError
             while True:
                 frame = self._read_available_frame(process, decoder, deadline=deadline)
                 self._validate_response(frame, request_id, cancelling=True)
                 if frame.kind in {FrameKind.COMPLETE, FrameKind.CANCELLED}:
                     return
                 if frame.kind is FrameKind.FAILED:
-                    raise ChatterboxProtocolError
+                    raise ProviderProtocolError
         except (
-            ChatterboxProtocolError,
+            ProviderProtocolError,
             OSError,
             ProtocolError,
             TimeoutError,
@@ -376,18 +387,26 @@ class ChatterboxSpeaking:
                 stream.close()
 
 
-def chatterbox_entrypoint(provider_root: Path | None) -> Path | None:
-    """Return the one closed worker path without searching another location."""
+def provider_entrypoint(
+    provider_root: Path | None, provider: ProviderId
+) -> Path | None:
+    """Return one closed worker path without searching another location."""
     if provider_root is None:
         return None
     return (
-        provider_root / "chatterbox" / ".venv" / "bin" / "presentator-chatterbox-worker"
+        provider_root
+        / provider.value
+        / ".venv"
+        / "bin"
+        / (f"presentator-{provider.value}-worker")
     )
 
 
-def chatterbox_entrypoint_is_usable(provider_root: Path | None) -> bool:
+def provider_entrypoint_is_usable(
+    provider_root: Path | None, provider: ProviderId
+) -> bool:
     """Report whether the configured closed worker is a regular executable."""
-    return _is_executable_file(chatterbox_entrypoint(provider_root))
+    return _is_executable_file(provider_entrypoint(provider_root, provider))
 
 
 def _is_executable_file(entrypoint: Path | None) -> bool:
