@@ -169,4 +169,6 @@ uv run pytest -q
 ```
 Chatterbox, Qwen, and VoxCPM each run in an independently locked provider virtual
 environment. The speech service talks to them through one private binary
-protocol and worker loop; neither provider SDK enters the service process.
+protocol and worker loop; neither provider SDK enters the service process. Provider
+children use the platform default executable search path, excluding the parent's
+PATH and secrets.

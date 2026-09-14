@@ -285,6 +285,7 @@ def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
     cublas = root / "chatterbox/.venv/lib/python3.12/site-packages/nvidia/cublas/lib"
     cublas.mkdir(parents=True)
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setenv("PATH", "parent-executable-search-path")
     real_popen = subprocess.Popen
     launches: list[tuple[list[str], dict[str, object]]] = []
 
@@ -327,6 +328,7 @@ def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
         "TRANSFORMERS_OFFLINE": "1",
         "TOKENIZERS_PARALLELISM": "false",
         "PYTHONUNBUFFERED": "1",
+        "PATH": os.defpath,
         "LD_LIBRARY_PATH": str(cublas),
     }
     assert set(environment) <= {*expected_environment, "LC_CTYPE"}

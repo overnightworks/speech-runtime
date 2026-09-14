@@ -432,6 +432,7 @@ def _provider_environment(provider_directory: Path) -> dict[str, str]:
         "TRANSFORMERS_OFFLINE": "1",
         "TOKENIZERS_PARALLELISM": "false",
         "PYTHONUNBUFFERED": "1",
+        "PATH": os.defpath,
     }
     visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
     if visible_devices is not None:
