@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import logging
 import os
 import signal
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
 _SOCKET_NAME = "speech.sock"
 _DIRECTORY_MODE = 0o700
 _SOCKET_MODE = 0o600
+_LIVENESS_TIMEOUT_SECONDS = 0.2
+_LOCK_SUFFIX = ".lock"
 
 
 class PrivateSocket(AbstractContextManager[socket.socket]):
@@ -35,26 +38,31 @@ class PrivateSocket(AbstractContextManager[socket.socket]):
         self._directory = directory
         self._runtime_uid = runtime_uid
         self._path = directory / _SOCKET_NAME
+        self._lock_path = directory / (_SOCKET_NAME + _LOCK_SUFFIX)
         self._socket: socket.socket | None = None
         self._inode: tuple[int, int] | None = None
+        self._lock_fd: int | None = None
 
     def __enter__(self) -> socket.socket:
         """Validate the directory and bind a new private socket inode."""
         self._prepare_directory()
-        if self._path.exists() or self._path.is_symlink():
-            message = f"private speech socket already exists: {self._path}"
-            raise FileExistsError(message)
-        bound = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._lock_fd = self._acquire_start_lock()
         try:
-            bound.bind(str(self._path))
-            inode = self._path.stat()
-            self._socket = bound
-            self._inode = (inode.st_dev, inode.st_ino)
-            self._path.chmod(_SOCKET_MODE)
-            bound.listen()
+            self._reclaim_stale_socket()
+            bound = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                bound.bind(str(self._path))
+                inode = self._path.stat()
+                self._socket = bound
+                self._inode = (inode.st_dev, inode.st_ino)
+                self._path.chmod(_SOCKET_MODE)
+                bound.listen()
+            except BaseException:
+                bound.close()
+                self._remove_if_owned()
+                raise
         except BaseException:
-            bound.close()
-            self._remove_if_owned()
+            self._release_start_lock()
             raise
         return bound
 
@@ -63,6 +71,38 @@ class PrivateSocket(AbstractContextManager[socket.socket]):
         if self._socket is not None:
             self._socket.close()
         self._remove_if_owned()
+        self._release_start_lock()
+
+    def _acquire_start_lock(self) -> int:
+        """Hold the one exclusive start lock for this socket's whole lifetime."""
+        fd = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, _SOCKET_MODE)
+        os.fchmod(fd, _SOCKET_MODE)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            message = (
+                f"another speech service is starting or running: {self._lock_path}"
+            )
+            raise FileExistsError(message) from None
+        return fd
+
+    def _release_start_lock(self) -> None:
+        """Unlock and close only; never unlink.
+
+        Unlinking here would let a third starter reuse this path's inode for
+        a brand-new lock while a second starter (who acquired it between this
+        release and the unlink) still believes it holds the one true lock.
+        The file's existence never means a lock is held; the kernel lock
+        already ended when this descriptor closes.
+        """
+        if self._lock_fd is None:
+            return
+        try:
+            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+        finally:
+            os.close(self._lock_fd)
+        self._lock_fd = None
 
     def _prepare_directory(self) -> None:
         self._directory.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
@@ -75,6 +115,27 @@ class PrivateSocket(AbstractContextManager[socket.socket]):
             message = f"private speech directory is unsafe: {self._directory}"
             raise PermissionError(message)
 
+    def _reclaim_stale_socket(self) -> None:
+        """Remove a leftover socket inode; refuse anything live, foreign, or swapped."""
+        try:
+            before = self._path.lstat()
+        except FileNotFoundError:
+            return
+        if not stat.S_ISSOCK(before.st_mode) or before.st_uid != self._runtime_uid:
+            message = f"private speech socket already exists: {self._path}"
+            raise FileExistsError(message)
+        if not _probe_is_dead(self._path):
+            message = f"private speech socket already exists: {self._path}"
+            raise FileExistsError(message)
+        try:
+            after = self._path.lstat()
+        except FileNotFoundError:
+            return
+        if not _same_socket_inode(before, after, runtime_uid=self._runtime_uid):
+            message = f"private speech socket changed during reclamation: {self._path}"
+            raise FileExistsError(message)
+        self._path.unlink()
+
     def _remove_if_owned(self) -> None:
         if self._inode is None:
             return
@@ -84,6 +145,31 @@ class PrivateSocket(AbstractContextManager[socket.socket]):
             return
         if (current.st_dev, current.st_ino) == self._inode:
             self._path.unlink()
+
+
+def _probe_is_dead(path: Path) -> bool:
+    """Return True when nothing accepts connections on the socket path."""
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(_LIVENESS_TIMEOUT_SECONDS)
+        probe.connect(str(path))
+    except (ConnectionRefusedError, FileNotFoundError):
+        return True
+    else:
+        return False
+    finally:
+        probe.close()
+
+
+def _same_socket_inode(
+    before: os.stat_result, after: os.stat_result, *, runtime_uid: int
+) -> bool:
+    return (
+        stat.S_ISSOCK(after.st_mode)
+        and after.st_dev == before.st_dev
+        and after.st_ino == before.st_ino
+        and after.st_uid == runtime_uid
+    )
 
 
 def main() -> None:

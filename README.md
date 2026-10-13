@@ -139,8 +139,9 @@ All `SPEECH_*`:
 When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 
 `PRESENTATOR_RUNTIME_UID` is the same positive runtime UID the co-presenter
-uses. Speech creates its private directory at mode 0700 and its socket at 0600;
-an existing socket or an unsafe directory refuses startup.
+uses. Speech creates its private directory at mode 0700 and its socket at 0600.
+A dead leftover socket is replaced; a socket with a live listener, a foreign
+or non-socket path, or an unsafe directory refuses startup.
 
 If a model cannot be loaded the process exits and names which one failed.
 
