@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import perth
 import pytest
 import torch
 from presentator_speech_provider_contract import (
@@ -13,6 +14,10 @@ from presentator_speech_provider_contract import (
 )
 
 from presentator_chatterbox import model
+
+
+def test_the_real_watermarker_is_importable() -> None:
+    assert perth.PerthImplicitWatermarker is not None
 
 
 class _SnapshotObservedError(RuntimeError):
