@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling==1.29.0"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
@@ -16,7 +16,7 @@ dependencies = [
     "nvidia-cudnn-cu12==9.1.0.70",
     "piper-tts==1.8.0",
     "pydantic-settings==2.15.0",
-    "uvicorn==0.52.4",
+    "uvicorn==0.54.0",
     "presentator-speech-provider-contract",
 ]
 
@@ -25,9 +25,9 @@ presentator-speech = "speech.__main__:main"
 
 [dependency-groups]
 dev = [
-    "httpx==0.28.1",
+    "httpx2==2.13.1",
     "pytest==9.1.1",
-    "ruff==0.16.2",
+    "ruff==0.17.1",
     "websockets==15.0.1",
 ]
 
