@@ -7,7 +7,7 @@ name = "presentator-voxcpm-provider"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "numpy==1.26.4",
+    "numpy==2.5.4",
     "presentator-speech-provider-contract",
     "voxcpm==2.0.3",
 ]
