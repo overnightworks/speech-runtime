@@ -367,6 +367,7 @@ dependencies = [
     { name = "presentator-speech-provider-contract" },
     { name = "pydantic-settings" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -374,7 +375,6 @@ dev = [
     { name = "httpx2" },
     { name = "pytest" },
     { name = "ruff" },
-    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -389,6 +389,7 @@ requires-dist = [
     { name = "presentator-speech-provider-contract", editable = "providers/provider-contract" },
     { name = "pydantic-settings", specifier = "==2.15.0" },
     { name = "uvicorn", specifier = "==0.54.0" },
+    { name = "websockets", specifier = "==17.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -396,7 +397,6 @@ dev = [
     { name = "httpx2", specifier = "==2.13.1" },
     { name = "pytest", specifier = "==9.1.1" },
     { name = "ruff", specifier = "==0.17.1" },
-    { name = "websockets", specifier = "==17.2" },
 ]
 
 [[package]]

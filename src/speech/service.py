@@ -708,11 +708,13 @@ def create_app(
 
     app = FastAPI(title="presentator-speech")
     app.state.runtime = runtime
-    _mount_routes(app, runtime)
+    mount_speech_routes(app, runtime)
     return app
 
 
-def _mount_routes(app: FastAPI, runtime: Runtime) -> None:
+def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
+    """Mount /health, /speak and /hear over the one runtime, for every listener."""
+
     @app.get("/health")
     def health() -> dict[str, object]:
         return runtime.health()
@@ -739,11 +741,6 @@ def _mount_routes(app: FastAPI, runtime: Runtime) -> None:
         try:
             session = runtime.hearing.open_session(language)
             await _hear_loop(websocket, session, debug=runtime.debug)
-            event = session.flush()
-            if event is None or websocket.client_state != WebSocketState.CONNECTED:
-                return
-            _log_text(debug=runtime.debug, kind="hear", text=str(event["text"]))
-            await websocket.send_json(event)
         except WebSocketDisconnect:
             return
         except FrameTooLargeError:

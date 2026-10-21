@@ -107,11 +107,6 @@ class HearingSession:
             self._last_partial = text
             return {"text": text, "final": False}
 
-    def flush(self) -> dict[str, object] | None:
-        """Force a final for whatever is still buffered."""
-        with self._lock:
-            return self._take_final_locked()
-
     def _take_final_locked(self) -> dict[str, object] | None:
         if not self._pcm or not self._heard_speech:
             self._reset()

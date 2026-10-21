@@ -1,4 +1,4 @@
-"""Start the public speech API and its private status listener together."""
+"""Start the public speech API and its private listener together."""
 
 from __future__ import annotations
 

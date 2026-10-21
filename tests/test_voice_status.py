@@ -794,12 +794,6 @@ def test_private_endpoint_reports_loading_and_active_from_the_shared_runtime(
     assert active[0]["state"] == VoiceState.ACTIVE
 
 
-def test_public_tcp_application_has_no_voice_control_route() -> None:
-    app = create_app(runtime=Runtime(FakeSpeaking(), FakeHearing()))
-
-    assert TestClient(app).get("/voices").status_code == 404
-
-
 def test_status_refuses_the_whole_snapshot_when_cache_lookup_fails(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

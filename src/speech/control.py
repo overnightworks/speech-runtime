@@ -1,11 +1,11 @@
-"""The private Unix-socket voice status, download, Load, and sample controls."""
+"""The private Unix-socket app: the speech routes and the voice controls."""
 
 from enum import StrEnum
 
 from fastapi import FastAPI, HTTPException
 
 from speech.config import Settings
-from speech.service import Runtime, SynthesisBusyError
+from speech.service import Runtime, SynthesisBusyError, mount_speech_routes
 from speech.voices import VoiceDownloadOutcome, VoiceId, VoiceLoadOutcome, VoiceSnapshot
 from speech.wav_response import ClosingWavResponse
 
@@ -24,8 +24,14 @@ _SAMPLE_TEXT: dict[SampleLanguage, str] = {
 
 
 def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
-    """Build the private control surface over the shared runtime."""
-    app = FastAPI(title="presentator-speech-control", docs_url=None, redoc_url=None)
+    """Build the private app: the speech routes and the voice controls, no docs."""
+    app = FastAPI(
+        title="presentator-speech-private",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    mount_speech_routes(app, runtime)
 
     @app.get("/voices")
     def voices() -> VoiceSnapshot:

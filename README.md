@@ -1,7 +1,7 @@
 # Local speech
 
 Audience: the operator starting this process on the home server, and the
-co-presenter that will call it.
+co-presenter and Presentator that call it.
 
 One process holds a German voice and a German listener resident, and offers
 them over HTTP. Nothing in `src/presentator` imports this package. The caller
@@ -103,7 +103,11 @@ Weights stay in:
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
 - `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox and Qwen, and 48 000 Hz for VoxCPM2), also reported as `speaking.sample_rate`. Runtime serialises request synthesis across every engine. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
-- `GET /voices` exists only on `speech.sock` in `SPEECH_PRIVATE_DIRECTORY`. It
+- `/health`, `/speak` and `/hear` answer on both listeners: the TCP listener,
+  which stays for the co-presenter, and `speech.sock` in
+  `SPEECH_PRIVATE_DIRECTORY`, through the same runtime and handlers. The socket
+  serves nothing else beside the voice controls (no `/docs`, no `/openapi.json`).
+- `GET /voices` exists only on `speech.sock`. It
   reports the five fixed admin catalogue rows, typed recovery detail, and local
   artifact evidence. `POST /voices/qwen3-tts-0.6b/download` starts the pinned,
   tokenless Qwen transfer and returns promptly; it never selects a voice.
@@ -140,6 +144,8 @@ When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influenc
 
 `PRESENTATOR_RUNTIME_UID` is the same positive runtime UID the co-presenter
 uses. Speech creates its private directory at mode 0700 and its socket at 0600.
+That UID is the socket's only authority: the Presentator container and every
+process under it may speak, hear and control voices through the socket.
 A dead leftover socket is replaced; a socket with a live listener, a foreign
 or non-socket path, or an unsafe directory refuses startup.
 

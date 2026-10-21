@@ -197,6 +197,27 @@ def test_private_socket_removes_only_the_inode_it_bound(tmp_path) -> None:
     assert inode > 0
 
 
+@pytest.mark.parametrize(
+    ("directory_mode", "uid_offset"),
+    [(0o755, 0), (0o700, 1)],
+    ids=["other-mode", "other-owner"],
+)
+def test_private_socket_refuses_an_unsafe_directory(
+    tmp_path, directory_mode: int, uid_offset: int
+) -> None:
+    directory = tmp_path / "private"
+    directory.mkdir()
+    directory.chmod(directory_mode)
+
+    with (
+        pytest.raises(PermissionError, match="private speech directory is unsafe"),
+        PrivateSocket(directory, runtime_uid=os.geteuid() + uid_offset),
+    ):
+        pytest.fail("the socket must not be bound")
+
+    assert not (directory / "speech.sock").exists()
+
+
 def test_private_socket_preserves_an_existing_socket_path(tmp_path) -> None:
     existing = tmp_path / "speech.sock"
     existing.touch()

@@ -20,7 +20,7 @@ from starlette.status import (
 )
 
 from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
-from speech.pcm import BYTES_PER_SAMPLE, is_silence, pcm_from_wav
+from speech.pcm import is_silence, pcm_from_wav
 from speech.selection import VoiceSelectionStore
 from speech.service import Runtime, RuntimeDependencies, SpeakRequest, create_app
 from speech.speaking import PiperSpeaking, speaking_for_voice
@@ -29,8 +29,8 @@ from tests.conftest import (
     SPEAK_SAMPLE_RATE,
     FakeHearing,
     FakeSpeaking,
+    GatedSpeaking,
     an_app,
-    sine_pcm,
 )
 
 
@@ -182,32 +182,6 @@ def _response_body(response: StreamingResponse) -> bytes:
     return asyncio.run(deliver())
 
 
-class _GatedVoice:
-    """A synthesis fake whose first PCM step waits for a test-controlled gate."""
-
-    model_name = "gated-voice"
-    ready = True
-    streams = True
-    retain_when_inactive = False
-    sample_rate = SPEAK_SAMPLE_RATE
-
-    def __init__(self) -> None:
-        self.entered_first_step = threading.Event()
-        self.release_first_step = threading.Event()
-
-    def load(self) -> None:
-        self.ready = True
-
-    def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
-        del text, language
-        self.entered_first_step.set()
-        self.release_first_step.wait(timeout=_ASGI_TIMEOUT_SECONDS)
-        pcm = sine_pcm(0.05, rate=self.sample_rate)
-        mid = (len(pcm) // 2) // BYTES_PER_SAMPLE * BYTES_PER_SAMPLE
-        yield pcm[:mid]
-        yield pcm[mid:]
-
-
 def _speak_scope() -> dict[str, object]:
     return {
         "type": "http",
@@ -328,7 +302,7 @@ def test_speak_disconnect_between_chunks_frees_the_voice_for_the_next_request() 
     """ASGI2.3 cancels the send-side task while it awaits `send()` holding a chunk."""
 
     async def scenario() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-        voice = _GatedVoice()
+        voice = GatedSpeaking()
         app = an_app(voice)
         receive = _DisconnectingReceive()
         send = _HoldingSend(hold_after_first_chunk=True)
@@ -358,7 +332,7 @@ def test_speak_disconnect_during_synthesis_frees_the_voice() -> None:
     """ASGI2.3 defers cancellation until the in-flight thread-pool `next()` returns."""
 
     async def scenario() -> list[dict[str, object]]:
-        voice = _GatedVoice()
+        voice = GatedSpeaking()
         app = an_app(voice)
         receive = _DisconnectingReceive()
         send = _HoldingSend()
