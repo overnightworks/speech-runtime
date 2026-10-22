@@ -3,12 +3,12 @@ requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
-name = "presentator-voxcpm-provider"
+name = "overnightworks-presentator-voxcpm-provider"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "numpy==2.5.4",
-    "presentator-speech-provider-contract",
+    "overnightworks-presentator-speech-provider-contract",
     "voxcpm==2.0.3",
 ]
 
@@ -16,7 +16,7 @@ dependencies = [
 presentator-voxcpm-worker = "presentator_voxcpm.__main__:main"
 
 [tool.uv.sources]
-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
+overnightworks-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
 
 [dependency-groups]
 dev = ["pytest==9.1.1", "ruff==0.17.1"]

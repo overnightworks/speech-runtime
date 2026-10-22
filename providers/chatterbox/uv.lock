@@ -910,6 +910,42 @@ wheels = [
 ]
 
 [[package]]
+name = "overnightworks-presentator-chatterbox-provider"
+version = "0.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "chatterbox-tts" },
+    { name = "numpy" },
+    { name = "overnightworks-presentator-speech-provider-contract" },
+    { name = "setuptools" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "chatterbox-tts", specifier = "==0.1.7" },
+    { name = "numpy", specifier = "==1.26.4" },
+    { name = "overnightworks-presentator-speech-provider-contract", editable = "../provider-contract" },
+    { name = "setuptools", specifier = "==81.0.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = "==9.1.1" },
+    { name = "ruff", specifier = "==0.17.1" },
+]
+
+[[package]]
+name = "overnightworks-presentator-speech-provider-contract"
+version = "0.0.0"
+source = { editable = "../provider-contract" }
+
+[[package]]
 name = "packaging"
 version = "26.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1004,42 +1040,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/74/89/1f3e8e1fc3e97de0f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/45/e2/bbb7129c9e7999a6b8ee9cca3b66486c25c423ab5a75f34071798b74ce94/pre_commit-4.6.2-py2.py3-none-any.whl", hash = "sha256:e2dde9a75d3bce11bd3831c26d134df00a2803c1d818be6a0383c3dcda25dc4e", size = 226202, upload-time = "2026-08-10T22:07:16.942Z" },
 ]
-
-[[package]]
-name = "presentator-chatterbox-provider"
-version = "0.0.0"
-source = { editable = "." }
-dependencies = [
-    { name = "chatterbox-tts" },
-    { name = "numpy" },
-    { name = "presentator-speech-provider-contract" },
-    { name = "setuptools" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "chatterbox-tts", specifier = "==0.1.7" },
-    { name = "numpy", specifier = "==1.26.4" },
-    { name = "presentator-speech-provider-contract", editable = "../provider-contract" },
-    { name = "setuptools", specifier = "==81.0.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = "==9.1.1" },
-    { name = "ruff", specifier = "==0.17.1" },
-]
-
-[[package]]
-name = "presentator-speech-provider-contract"
-version = "0.0.0"
-source = { editable = "../provider-contract" }
 
 [[package]]
 name = "protobuf"

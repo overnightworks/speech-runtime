@@ -1595,6 +1595,46 @@ wheels = [
 ]
 
 [[package]]
+name = "overnightworks-presentator-magpie-provider"
+version = "0.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "nemo-toolkit", extra = ["tts"] },
+    { name = "numpy" },
+    { name = "omegaconf" },
+    { name = "overnightworks-presentator-speech-provider-contract" },
+    { name = "torch" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "huggingface-hub" },
+    { name = "nemo-toolkit", extras = ["tts"], specifier = "==3.0.0" },
+    { name = "numpy" },
+    { name = "omegaconf" },
+    { name = "overnightworks-presentator-speech-provider-contract", editable = "../provider-contract" },
+    { name = "torch" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = "==9.1.1" },
+    { name = "ruff", specifier = "==0.17.1" },
+]
+
+[[package]]
+name = "overnightworks-presentator-speech-provider-contract"
+version = "0.0.0"
+source = { editable = "../provider-contract" }
+
+[[package]]
 name = "overrides"
 version = "7.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1696,46 +1736,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/d8/a2/6ce46575a8d34b31d
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/38/e02fc99994d882c19d71ecfedb3d19edc38a2a0764f1c7e76eebd92c71f0/portalocker-4.3.1-py3-none-any.whl", hash = "sha256:083fe42eda7f79304ffc73da2a4c7d8492ad18750fa3c9679d851b25daf7d457", size = 128957, upload-time = "2026-09-13T04:03:21.423Z" },
 ]
-
-[[package]]
-name = "presentator-magpie-provider"
-version = "0.0.0"
-source = { editable = "." }
-dependencies = [
-    { name = "huggingface-hub" },
-    { name = "nemo-toolkit", extra = ["tts"] },
-    { name = "numpy" },
-    { name = "omegaconf" },
-    { name = "presentator-speech-provider-contract" },
-    { name = "torch" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "huggingface-hub" },
-    { name = "nemo-toolkit", extras = ["tts"], specifier = "==3.0.0" },
-    { name = "numpy" },
-    { name = "omegaconf" },
-    { name = "presentator-speech-provider-contract", editable = "../provider-contract" },
-    { name = "torch" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = "==9.1.1" },
-    { name = "ruff", specifier = "==0.17.1" },
-]
-
-[[package]]
-name = "presentator-speech-provider-contract"
-version = "0.0.0"
-source = { editable = "../provider-contract" }
 
 [[package]]
 name = "propcache"

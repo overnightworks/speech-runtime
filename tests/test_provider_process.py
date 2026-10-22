@@ -32,15 +32,15 @@ from presentator_speech_provider_contract import (
     write_frame,
 )
 
-from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
-from speech.provider_process import (
+from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from presentator_speech.provider_process import (
     ProviderLaunch,
     ProviderProcess,
     ProviderProtocolError,
 )
-from speech.selection import VoiceSelectionStore
-from speech.service import Runtime, RuntimeDependencies
-from speech.voices import VoiceId, VoiceLoadOutcome, VoiceRecoveryKind
+from presentator_speech.selection import VoiceSelectionStore
+from presentator_speech.service import Runtime, RuntimeDependencies
+from presentator_speech.voices import VoiceId, VoiceLoadOutcome, VoiceRecoveryKind
 from tests.conftest import FakeHearing, FakeSpeaking
 
 _WORKER = r"""#!{python}
@@ -295,7 +295,9 @@ def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
         launches.append((arguments, keywords))
         return real_popen(arguments, **keywords)
 
-    monkeypatch.setattr("speech.provider_process.subprocess.Popen", recording_popen)
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.subprocess.Popen", recording_popen
+    )
     engine = _provider_process(root, cache)
     loaded = threading.Thread(target=engine.load)
     loaded.start()
@@ -427,8 +429,12 @@ def test_duplicate_terminal_is_rejected_before_a_later_request(tmp_path: Path) -
 def test_partial_cancel_frame_cannot_extend_the_single_drain_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("speech.provider_process.CANCEL_DRAIN_SECONDS", 0.05)
-    monkeypatch.setattr("speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.CANCEL_DRAIN_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05
+    )
     engine = _engine(tmp_path, "partial-cancel")
     engine.load()
     chunks = engine.pcm_chunks("cancel", "de")
@@ -445,8 +451,12 @@ def test_partial_cancel_frame_cannot_extend_the_single_drain_deadline(
 def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("speech.provider_process.CANCEL_DRAIN_SECONDS", 0.05)
-    monkeypatch.setattr("speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.CANCEL_DRAIN_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05
+    )
     root, cache = _closed_provider(tmp_path, "partial-cancel", "qwen")
     constructed: list[ProviderProcess] = []
 
@@ -620,8 +630,10 @@ def test_close_allows_bounded_active_cancel_before_reaping(
     behavior: str,
     text: str,
 ) -> None:
-    monkeypatch.setattr("speech.provider_process.CANCEL_DRAIN_SECONDS", 0.2)
-    monkeypatch.setattr("speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr("presentator_speech.provider_process.CANCEL_DRAIN_SECONDS", 0.2)
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05
+    )
     engine = _engine(tmp_path, behavior)
     engine.load()
     chunks = engine.pcm_chunks(text, "de")
@@ -738,8 +750,12 @@ def test_real_child_is_reaped_when_publication_setup_raises(
         def __init__(self) -> None:
             raise RuntimeError
 
-    monkeypatch.setattr("speech.provider_process.FrameDecoder", BrokenDecoder)
-    monkeypatch.setattr("speech.provider_process.subprocess.Popen", recording_popen)
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.FrameDecoder", BrokenDecoder
+    )
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.subprocess.Popen", recording_popen
+    )
     with pytest.raises(RuntimeError, match="speech provider failed"):
         engine.load()
     assert fatal.wait(timeout=5)
@@ -775,7 +791,7 @@ def test_cleanup_failure_reaps_and_reports_fatal_lifecycle(
         return FailingCleanupProcess(process)
 
     monkeypatch.setattr(
-        "speech.provider_process.subprocess.Popen", failing_cleanup_popen
+        "presentator_speech.provider_process.subprocess.Popen", failing_cleanup_popen
     )
     engine = _engine(tmp_path)
     engine.set_fatal_callback(fatal.set)
@@ -792,7 +808,9 @@ def test_cleanup_failure_reaps_and_reports_fatal_lifecycle(
 def test_term_resistant_leader_reaches_kill_and_reap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05
+    )
     engine = _engine(tmp_path, "term-resistant")
     engine.load()
     _, _, pid, _ = _observed(tmp_path / "cache")

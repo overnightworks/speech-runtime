@@ -25,8 +25,8 @@ from urllib.parse import urlparse
 
 from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
 
-from speech.config import CHATTERBOX_SPEAKING_MODEL
-from speech.cuda_libs import cuda_library_dirs
+from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL
+from presentator_speech.cuda_libs import cuda_library_dirs
 
 SENTENCE = (
     "Die Kamera zeigt den Vortragenden, während im Hintergrund "
@@ -485,7 +485,7 @@ def main() -> None:
             )
         project = Path(__file__).resolve().parents[1]
         server = subprocess.Popen(
-            [sys.executable, "-m", "speech"],
+            [sys.executable, "-m", "presentator_speech"],
             cwd=project,
             env=env,
             stdout=subprocess.PIPE,

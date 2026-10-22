@@ -24,13 +24,16 @@ from presentator_speech_provider_contract import (
     VOXCPM_REVISION,
 )
 
-from speech.config import CHATTERBOX_SPEAKING_MODEL, DEFAULT_SPEAKING_MODEL
-from speech.provider_process import ProviderId, provider_entrypoint_is_usable
+from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, DEFAULT_SPEAKING_MODEL
+from presentator_speech.provider_process import (
+    ProviderId,
+    provider_entrypoint_is_usable,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from speech.config import Settings
+    from presentator_speech.config import Settings
 
 
 class VoiceId(StrEnum):

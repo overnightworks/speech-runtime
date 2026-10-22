@@ -15,12 +15,12 @@ from presentator_speech_provider_contract import (
     QWEN_REVISION,
 )
 
-from speech import qwen_download, voices
-from speech.config import Settings
-from speech.control import create_control_app
-from speech.selection import VoiceSelectionStore
-from speech.service import Runtime, RuntimeDependencies, create_app
-from speech.voices import (
+from presentator_speech import qwen_download, voices
+from presentator_speech.config import Settings
+from presentator_speech.control import create_control_app
+from presentator_speech.selection import VoiceSelectionStore
+from presentator_speech.service import Runtime, RuntimeDependencies, create_app
+from presentator_speech.voices import (
     VoiceDownloadOutcome,
     VoiceId,
     VoiceLoadOutcome,

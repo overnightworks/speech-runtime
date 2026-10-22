@@ -5,12 +5,12 @@ import stat
 
 import pytest
 
-from speech.selection import (
+from presentator_speech.selection import (
     DurabilityUnconfirmedError,
     SelectionError,
     VoiceSelectionStore,
 )
-from speech.voices import VoiceId
+from presentator_speech.voices import VoiceId
 
 
 def test_selection_creates_private_state_and_atomically_restores_a_voice(
@@ -63,11 +63,12 @@ def test_selection_keeps_the_previous_choice_when_commit_has_not_happened(
 
     if step == "write":
         monkeypatch.setattr(
-            "speech.selection.os.write", lambda *_args: (_ for _ in ()).throw(OSError())
+            "presentator_speech.selection.os.write",
+            lambda *_args: (_ for _ in ()).throw(OSError()),
         )
     else:
         monkeypatch.setattr(
-            "speech.selection.Path.replace",
+            "presentator_speech.selection.Path.replace",
             lambda *_args: (_ for _ in ()).throw(OSError()),
         )
 

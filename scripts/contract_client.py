@@ -1,6 +1,6 @@
 """Drive the three speech endpoints over the wire.
 
-This process must not import the `speech` package. It is the parallel-lane
+This process must not import the `presentator_speech` package. It is the parallel-lane
 proof: a caller that only knows the HTTP contract.
 """
 
@@ -25,8 +25,8 @@ SILENCE_SECONDS = 0.9
 
 
 def _must_not_have_imported_speech() -> None:
-    if "speech" in sys.modules:
-        message = "contract client imported speech"
+    if "presentator_speech" in sys.modules:
+        message = "contract client imported presentator_speech"
         raise SystemExit(message)
 
 

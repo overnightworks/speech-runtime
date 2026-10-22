@@ -858,6 +858,40 @@ wheels = [
 ]
 
 [[package]]
+name = "overnightworks-presentator-qwen-provider"
+version = "0.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "numpy" },
+    { name = "overnightworks-presentator-speech-provider-contract" },
+    { name = "qwen-tts" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = "==1.26.4" },
+    { name = "overnightworks-presentator-speech-provider-contract", editable = "../provider-contract" },
+    { name = "qwen-tts", specifier = "==0.1.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = "==9.1.1" },
+    { name = "ruff", specifier = "==0.17.1" },
+]
+
+[[package]]
+name = "overnightworks-presentator-speech-provider-contract"
+version = "0.0.0"
+source = { editable = "../provider-contract" }
+
+[[package]]
 name = "packaging"
 version = "26.3"
 source = { registry = "https://pypi.org/simple" }
@@ -936,40 +970,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/83/43/85ef45e8b36c6a485
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/2d/d4bf65e47cea8ff2c794a600c4fd1273a7902f268757c531e0ee9f18aa58/pooch-1.9.0-py3-none-any.whl", hash = "sha256:f265597baa9f760d25ceb29d0beb8186c243d6607b0f60b83ecf14078dbc703b", size = 67175, upload-time = "2026-01-30T19:15:08.36Z" },
 ]
-
-[[package]]
-name = "presentator-qwen-provider"
-version = "0.0.0"
-source = { editable = "." }
-dependencies = [
-    { name = "numpy" },
-    { name = "presentator-speech-provider-contract" },
-    { name = "qwen-tts" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", specifier = "==1.26.4" },
-    { name = "presentator-speech-provider-contract", editable = "../provider-contract" },
-    { name = "qwen-tts", specifier = "==0.1.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = "==9.1.1" },
-    { name = "ruff", specifier = "==0.17.1" },
-]
-
-[[package]]
-name = "presentator-speech-provider-contract"
-version = "0.0.0"
-source = { editable = "../provider-contract" }
 
 [[package]]
 name = "protobuf"

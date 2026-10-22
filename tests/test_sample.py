@@ -11,16 +11,16 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.responses import StreamingResponse
 
-from speech.config import Settings
-from speech.control import SampleLanguage, create_control_app
-from speech.pcm import pcm_from_wav
-from speech.selection import VoiceSelectionStore
-from speech.service import (
+from presentator_speech.config import Settings
+from presentator_speech.control import SampleLanguage, create_control_app
+from presentator_speech.pcm import pcm_from_wav
+from presentator_speech.selection import VoiceSelectionStore
+from presentator_speech.service import (
     Runtime,
     RuntimeDependencies,
     create_app,
 )
-from speech.voices import VoiceId, VoiceLoadOutcome
+from presentator_speech.voices import VoiceId, VoiceLoadOutcome
 from tests.conftest import FakeHearing, FakeSpeaking
 from tests.test_speak import _ASGI_TIMEOUT_SECONDS
 

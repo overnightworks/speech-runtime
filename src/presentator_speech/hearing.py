@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Final
 
 import numpy as np
 
-from speech.config import HEAR_SAMPLE_RATE
-from speech.pcm import BYTES_PER_SAMPLE, is_silence
+from presentator_speech.config import HEAR_SAMPLE_RATE
+from presentator_speech.pcm import BYTES_PER_SAMPLE, is_silence
 
 if TYPE_CHECKING:
-    from speech.config import Settings
+    from presentator_speech.config import Settings
 
 _LOG = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ class WhisperHearing:
 
     def load(self) -> None:
         """Load the CTranslate2 weights onto the configured device."""
-        from speech.cuda_libs import prepare_cuda_libraries
+        from presentator_speech.cuda_libs import prepare_cuda_libraries
 
         prepare_cuda_libraries()
         from faster_whisper import WhisperModel

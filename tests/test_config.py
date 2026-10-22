@@ -6,11 +6,20 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from speech.config import HEAR_SAMPLE_RATE, MagpieSpeaker, QwenSpeaker, Settings
-from speech.pcm import wav_header
-from speech.selection import VoiceSelectionStore
-from speech.service import Runtime, RuntimeDependencies, failed_to_load_message
-from speech.voices import VoiceId
+from presentator_speech.config import (
+    HEAR_SAMPLE_RATE,
+    MagpieSpeaker,
+    QwenSpeaker,
+    Settings,
+)
+from presentator_speech.pcm import wav_header
+from presentator_speech.selection import VoiceSelectionStore
+from presentator_speech.service import (
+    Runtime,
+    RuntimeDependencies,
+    failed_to_load_message,
+)
+from presentator_speech.voices import VoiceId
 from tests.conftest import FakeHearing, FakeSpeaking, an_app
 
 

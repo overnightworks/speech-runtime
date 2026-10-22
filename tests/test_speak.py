@@ -19,12 +19,17 @@ from starlette.status import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
-from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
-from speech.pcm import is_silence, pcm_from_wav
-from speech.selection import VoiceSelectionStore
-from speech.service import Runtime, RuntimeDependencies, SpeakRequest, create_app
-from speech.speaking import PiperSpeaking, speaking_for_voice
-from speech.voices import VoiceId, VoiceLoadOutcome
+from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from presentator_speech.pcm import is_silence, pcm_from_wav
+from presentator_speech.selection import VoiceSelectionStore
+from presentator_speech.service import (
+    Runtime,
+    RuntimeDependencies,
+    SpeakRequest,
+    create_app,
+)
+from presentator_speech.speaking import PiperSpeaking, speaking_for_voice
+from presentator_speech.voices import VoiceId, VoiceLoadOutcome
 from tests.conftest import (
     SPEAK_SAMPLE_RATE,
     FakeHearing,

@@ -18,14 +18,14 @@ import uvicorn
 from fastapi.testclient import TestClient
 from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
 
-from speech import __main__
-from speech.__main__ import PrivateSocket
-from speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
-from speech.control import create_control_app
-from speech.provider_process import ProviderLaunch, ProviderProcess
-from speech.selection import VoiceSelectionStore
-from speech.service import Runtime, RuntimeDependencies, create_app
-from speech.voices import VoiceId
+from presentator_speech import __main__
+from presentator_speech.__main__ import PrivateSocket
+from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from presentator_speech.control import create_control_app
+from presentator_speech.provider_process import ProviderLaunch, ProviderProcess
+from presentator_speech.selection import VoiceSelectionStore
+from presentator_speech.service import Runtime, RuntimeDependencies, create_app
+from presentator_speech.voices import VoiceId
 from tests.conftest import FakeHearing, FakeSpeaking
 
 
@@ -470,7 +470,9 @@ while True:
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
     monkeypatch.setattr(__main__, "_server", lambda _app, _settings: next(servers))
     monkeypatch.setattr(__main__, "_install_signal_handlers", install)
-    monkeypatch.setattr("speech.provider_process.subprocess.Popen", observed_popen)
+    monkeypatch.setattr(
+        "presentator_speech.provider_process.subprocess.Popen", observed_popen
+    )
 
     outcome = asyncio.run(
         __main__.serve(

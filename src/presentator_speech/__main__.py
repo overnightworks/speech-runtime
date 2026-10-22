@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING
 
 import uvicorn
 
-from speech.config import Settings, load_settings
-from speech.control import create_control_app
-from speech.cuda_libs import prepare_cuda_libraries
-from speech.service import Runtime, create_app
+from presentator_speech.config import Settings, load_settings
+from presentator_speech.control import create_control_app
+from presentator_speech.cuda_libs import prepare_cuda_libraries
+from presentator_speech.service import Runtime, create_app
 
 if TYPE_CHECKING:
     from pathlib import Path

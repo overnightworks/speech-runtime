@@ -20,28 +20,28 @@ from starlette.status import (
 )
 from starlette.websockets import WebSocketState
 
-from speech.card import card_memory_mb
-from speech.config import (
+from presentator_speech.card import card_memory_mb
+from presentator_speech.config import (
     CHATTERBOX_SPEAKING_MODEL,
     DEFAULT_SPEAKING_MODEL,
     HEAR_SAMPLE_RATE,
     load_settings,
 )
-from speech.hearing import (
+from presentator_speech.hearing import (
     POLL_WAIT_SECONDS,
     FrameTooLargeError,
     HearingSession,
     hearing_from_settings,
 )
-from speech.pcm import wav_header
-from speech.qwen_download import _QwenDownload, download_qwen
-from speech.selection import (
+from presentator_speech.pcm import wav_header
+from presentator_speech.qwen_download import _QwenDownload, download_qwen
+from presentator_speech.selection import (
     DurabilityUnconfirmedError,
     SelectionError,
     VoiceSelectionStore,
 )
-from speech.speaking import speaking_for_voice
-from speech.voices import (
+from presentator_speech.speaking import speaking_for_voice
+from presentator_speech.voices import (
     VoiceDownloadOutcome,
     VoiceId,
     VoiceLoadOutcome,
@@ -53,12 +53,12 @@ from speech.voices import (
     qwen_worker_is_usable,
     statuses,
 )
-from speech.wav_response import ClosingWavResponse
+from presentator_speech.wav_response import ClosingWavResponse
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
 
-    from speech.config import Settings
+    from presentator_speech.config import Settings
 
 _LOG = logging.getLogger(__name__)
 

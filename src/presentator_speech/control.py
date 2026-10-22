@@ -4,10 +4,15 @@ from enum import StrEnum
 
 from fastapi import FastAPI, HTTPException
 
-from speech.config import Settings
-from speech.service import Runtime, SynthesisBusyError, mount_speech_routes
-from speech.voices import VoiceDownloadOutcome, VoiceId, VoiceLoadOutcome, VoiceSnapshot
-from speech.wav_response import ClosingWavResponse
+from presentator_speech.config import Settings
+from presentator_speech.service import Runtime, SynthesisBusyError, mount_speech_routes
+from presentator_speech.voices import (
+    VoiceDownloadOutcome,
+    VoiceId,
+    VoiceLoadOutcome,
+    VoiceSnapshot,
+)
+from presentator_speech.wav_response import ClosingWavResponse
 
 
 class SampleLanguage(StrEnum):

@@ -3,9 +3,9 @@ requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
-name = "presentator-speech"
+name = "overnightworks-presentator-speech"
 version = "0.0.0"
-description = "Local speaking and hearing for agent-presentator, one process on the card."
+description = "Local speaking and hearing, one process on the card."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi==0.141.1",
@@ -18,11 +18,11 @@ dependencies = [
     "pydantic-settings==2.15.0",
     "uvicorn==0.54.0",
     "websockets==17.2",
-    "presentator-speech-provider-contract",
+    "overnightworks-presentator-speech-provider-contract",
 ]
 
 [project.scripts]
-presentator-speech = "speech.__main__:main"
+presentator-speech = "presentator_speech.__main__:main"
 
 [dependency-groups]
 dev = [
@@ -32,10 +32,10 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/speech"]
+packages = ["src/presentator_speech"]
 
 [tool.uv.sources]
-presentator-speech-provider-contract = { path = "providers/provider-contract", editable = true }
+overnightworks-presentator-speech-provider-contract = { path = "providers/provider-contract", editable = true }
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
@@ -76,14 +76,14 @@ convention = "google"
     "BLE001",
 ]
 # nvidia-smi is resolved on PATH; the arguments are a constant.
-"src/speech/card.py" = ["S404", "S603"]
+"src/presentator_speech/card.py" = ["S404", "S603"]
 # A failed load can be any library error; the process still names the model and stops.
-"src/speech/service.py" = ["BLE001", "C901", "PLR0911", "PLR0912", "PLR0915"]
-"src/speech/qwen_download.py" = ["BLE001"] # A provider callback may raise any library error.
+"src/presentator_speech/service.py" = ["BLE001", "C901", "PLR0911", "PLR0912", "PLR0915"]
+"src/presentator_speech/qwen_download.py" = ["BLE001"] # A provider callback may raise any library error.
 # Piper and faster-whisper stay unloaded until the process holds them.
-"src/speech/speaking.py" = ["PLC0415"]
-"src/speech/provider_process.py" = [
+"src/presentator_speech/speaking.py" = ["PLC0415"]
+"src/presentator_speech/provider_process.py" = [
     "S404", "S603", "PLR0911", "BLE001", "B904", "EM101", "SIM105",
     "TC003", "TRY003", "TRY301",
 ]
-"src/speech/hearing.py" = ["PLC0415"]
+"src/presentator_speech/hearing.py" = ["PLC0415"]

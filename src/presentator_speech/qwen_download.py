@@ -12,9 +12,9 @@ from presentator_speech_provider_contract import (
     QWEN_REVISION,
 )
 
-from speech import voices
-from speech.config import Settings
-from speech.voices import VoiceDownloadOutcome
+from presentator_speech import voices
+from presentator_speech.config import Settings
+from presentator_speech.voices import VoiceDownloadOutcome
 
 
 def download_qwen(settings: Settings) -> None:

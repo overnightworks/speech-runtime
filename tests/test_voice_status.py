@@ -23,19 +23,19 @@ from presentator_speech_provider_contract import (
     VOXCPM_SAMPLE_RATE,
 )
 
-from speech import voices
-from speech.config import Settings
-from speech.control import create_control_app
-from speech.pcm import pcm_from_wav
-from speech.selection import VoiceSelectionStore
-from speech.service import (
+from presentator_speech import voices
+from presentator_speech.config import Settings
+from presentator_speech.control import create_control_app
+from presentator_speech.pcm import pcm_from_wav
+from presentator_speech.selection import VoiceSelectionStore
+from presentator_speech.service import (
     Runtime,
     RuntimeDependencies,
     SpeakingEngine,
     create_app,
 )
-from speech.speaking import speaking_for_voice
-from speech.voices import (
+from presentator_speech.speaking import speaking_for_voice
+from presentator_speech.voices import (
     VoiceId,
     VoiceLoadOutcome,
     VoiceRecoveryKind,
@@ -331,14 +331,14 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
         huggingface_cache=cache,
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
-    host = importlib.import_module("speech")
+    host = importlib.import_module("presentator_speech")
     marker = object()
     previous_attributes = {
         name: getattr(host, name, marker) for name in ("voices", "speaking")
     }
     previous_modules = {
         name: sys.modules.pop(name)
-        for name in ("speech.voices", "speech.speaking")
+        for name in ("presentator_speech.voices", "presentator_speech.speaking")
         if name in sys.modules
     }
     original_import = builtins.__import__
@@ -358,8 +358,8 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
 
     monkeypatch.setattr(builtins, "__import__", guard_provider_import)
     try:
-        fresh_voices = importlib.import_module("speech.voices")
-        fresh_speaking = importlib.import_module("speech.speaking")
+        fresh_voices = importlib.import_module("presentator_speech.voices")
+        fresh_speaking = importlib.import_module("presentator_speech.speaking")
         rows = fresh_voices.statuses(
             settings,
             fresh_voices.VoiceRuntimeState(
@@ -374,7 +374,7 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
         assert engine.model_name == VOXCPM_MODEL_ID
         assert engine.sample_rate == VOXCPM_SAMPLE_RATE
     finally:
-        for name in ("speech.voices", "speech.speaking"):
+        for name in ("presentator_speech.voices", "presentator_speech.speaking"):
             sys.modules.pop(name, None)
         sys.modules.update(previous_modules)
         for name, value in previous_attributes.items():
@@ -394,14 +394,14 @@ def test_magpie_catalogue_and_factory_import_no_provider_packages(
         huggingface_cache=cache,
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
-    host = importlib.import_module("speech")
+    host = importlib.import_module("presentator_speech")
     marker = object()
     previous_attributes = {
         name: getattr(host, name, marker) for name in ("voices", "speaking")
     }
     previous_modules = {
         name: sys.modules.pop(name)
-        for name in ("speech.voices", "speech.speaking")
+        for name in ("presentator_speech.voices", "presentator_speech.speaking")
         if name in sys.modules
     }
     original_import = builtins.__import__
@@ -419,8 +419,8 @@ def test_magpie_catalogue_and_factory_import_no_provider_packages(
 
     monkeypatch.setattr(builtins, "__import__", guard_provider_import)
     try:
-        fresh_voices = importlib.import_module("speech.voices")
-        fresh_speaking = importlib.import_module("speech.speaking")
+        fresh_voices = importlib.import_module("presentator_speech.voices")
+        fresh_speaking = importlib.import_module("presentator_speech.speaking")
         rows = fresh_voices.statuses(settings, _RuntimeFacts().state())
         magpie = next(row for row in rows if row.id is fresh_voices.VoiceId.MAGPIE)
         engine = fresh_speaking.speaking_for_voice(
@@ -429,7 +429,7 @@ def test_magpie_catalogue_and_factory_import_no_provider_packages(
         assert magpie.state is fresh_voices.VoiceState.DOWNLOADED
         assert engine.sample_rate == MAGPIE_SAMPLE_RATE
     finally:
-        for name in ("speech.voices", "speech.speaking"):
+        for name in ("presentator_speech.voices", "presentator_speech.speaking"):
             sys.modules.pop(name, None)
         sys.modules.update(previous_modules)
         for name, value in previous_attributes.items():

@@ -3,16 +3,16 @@ requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
-name = "presentator-chatterbox-provider"
+name = "overnightworks-presentator-chatterbox-provider"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["chatterbox-tts==0.1.7", "numpy==1.26.4", "presentator-speech-provider-contract", "setuptools==81.0.0"]
+dependencies = ["chatterbox-tts==0.1.7", "numpy==1.26.4", "overnightworks-presentator-speech-provider-contract", "setuptools==81.0.0"]
 
 [project.scripts]
 presentator-chatterbox-worker = "presentator_chatterbox.__main__:main"
 
 [tool.uv.sources]
-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
+overnightworks-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
 
 [dependency-groups]
 dev = ["pytest==9.1.1", "ruff==0.17.1"]

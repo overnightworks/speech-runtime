@@ -3,12 +3,12 @@ requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
-name = "presentator-qwen-provider"
+name = "overnightworks-presentator-qwen-provider"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "numpy==1.26.4",
-    "presentator-speech-provider-contract",
+    "overnightworks-presentator-speech-provider-contract",
     "qwen-tts==0.1.1",
 ]
 
@@ -16,7 +16,7 @@ dependencies = [
 presentator-qwen-worker = "presentator_qwen.__main__:main"
 
 [tool.uv.sources]
-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
+overnightworks-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
 
 [dependency-groups]
 dev = ["pytest==9.1.1", "ruff==0.17.1"]

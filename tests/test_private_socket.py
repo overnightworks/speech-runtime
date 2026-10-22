@@ -18,11 +18,11 @@ from fastapi.testclient import TestClient
 from starlette.types import Message, Receive, Scope, Send
 from websockets.asyncio.client import ClientConnection, unix_connect
 
-from speech.__main__ import PrivateSocket
-from speech.config import HEAR_SAMPLE_RATE, Settings
-from speech.control import create_control_app
-from speech.pcm import BYTES_PER_SAMPLE, WAV_HEADER_BYTES, pcm_from_wav
-from speech.service import Runtime, create_app
+from presentator_speech.__main__ import PrivateSocket
+from presentator_speech.config import HEAR_SAMPLE_RATE, Settings
+from presentator_speech.control import create_control_app
+from presentator_speech.pcm import BYTES_PER_SAMPLE, WAV_HEADER_BYTES, pcm_from_wav
+from presentator_speech.service import Runtime, create_app
 from tests.conftest import (
     GATE_TIMEOUT_SECONDS,
     SPEAK_SAMPLE_RATE,
