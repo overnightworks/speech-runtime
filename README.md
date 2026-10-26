@@ -99,6 +99,51 @@ Weights stay in:
 - VoxCPM2: `~/.cache/huggingface/hub/models--openbmb--VoxCPM2` (pinned snapshot `32279effe8c19989596f05d353d1447f51d9e915`)
 - Whisper: `~/.cache/huggingface/hub/models--Systran--faster-whisper-large-v3`
 
+## CPU
+
+Hearing on the CPU with `scripts/prove.py --measure`, 26.10.2026: AMD Ryzen 5
+5600X, 12 threads, 60 GB, `SPEECH_DEVICE=cpu`, `CUDA_VISIBLE_DEVICES` empty
+for speech and the client, Piper `de_DE-thorsten-medium`, the first sentence
+(14 words) five times on one socket, the same pacing loop and 0.9 s of client
+silence as in "Card". Each cell is median / worst of the completed
+repetitions. The 1-minute load was recorded at the start of each run; other
+lanes shared the machine in all but the later turbo run (the proof's own
+ceiling is 18).
+`nvidia-smi --query-compute-apps=pid` at health ready listed two foreign pids
+and never the speech process, in every run.
+
+| What | large-v3, 4 threads | large-v3-turbo, 4 threads | large-v3-turbo, 4 threads, 26.10.2026 | large-v3, 8 threads | medium, 4 threads |
+| --- | --- | --- | --- | --- | --- |
+| Revision | `edaa852ec7e145841d8ffdb056a99866b5f0a478` | `0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf` (`main`) | same as the turbo column before | same as 4 threads | `08e178d48790749d25932bbc082711ddcfdfbc4f` (`main`) |
+| `load_1min` at the start | 3.36 | 4.03 | 0.89 | 9.73 | 3.05 |
+| Load to ready | 6.1 s | 3.3 s | 3.3 s | 5.5 s | 3.4 s |
+| Audio length | 5.677 s | 5.851 s | 5.677 s | 5.805 s | 5.677 s |
+| First partial (from start of sending) | 6.753 s / 7.172 s, all 5 while sending | 7.316 s / 7.458 s, all 5 while sending | 6.261 s / 6.330 s, both while sending; rep 3 17.614 s after speech ended | 6.764 s / 7.191 s, all 5 while sending | 4.643 s / 4.643 s, 1 completed, while sending; rep 2 (not completed) 17.169 s after sending ended |
+| Start of sending to final | 21.909 s / 22.604 s, 5 of 5 | 21.009 s / 38.991 s, 5 of 5 | 18.759 s / 18.867 s, 2 of 5; rep 3: no final within 30 s | 22.265 s / 23.194 s, 5 of 5 | 14.722 s / 14.722 s, 1 of 5; rep 2: no final within 30 s, the other repetitions did not run |
+| End of speech to final | 13.880 s / 14.587 s | 12.708 s / 30.686 s | 10.734 s / 10.841 s | 13.915 s / 14.865 s | 6.685 s / 6.685 s |
+| Sending ended (speech / after silence) | 8.0 s / 9.3 s | 8.3 s / 9.6 s | 8.0 s / 9.3 s | 8.3 s / 9.6 s | 8.0 s / 9.3 s |
+| Final text against the spoken sentence | same words in 5 of 5 | same words in 5 of 5 | same words in 2 of 2 | same words in 5 of 5 | same words in 1 of 1 |
+| Peak RSS of the speech process | 3280 MiB | 1885 MiB | 1885 MiB | 3275 MiB | 1845 MiB |
+
+The recorded rows were taken before the client stamped the last speech frame and
+each event at its real boundary, so their end of speech to final values are
+understated by at most about 0.15 s (one frame's pacing and drains). That does
+not change any model's standing against the bar. No final in these rows arrived
+more than 30 s after sending ended.
+
+The completed count and the worst value vary between runs on the CPU: the
+later turbo run completed 2 of 5 where the first completed 5 of 5, so a single
+5-of-5 row is not read as stable.
+
+The Card's start of sending to final (GPU, one sample, 08.09.2026, same
+sentence, same Piper voice, same pacing loop and 0.9 s of client silence; the
+transport has since moved from TCP to the private socket) was 9.559 s, so a
+run holds the bar at a median of at most 10.559 s. No CPU run holds it. End of
+speech to final has no GPU counterpart: no GPU run was made. The client's
+pacing sends the sentence more slowly than real time (about 8.0 s of sending
+for 5.7 s of audio), so the first partial arrives while frames are still being
+sent even where the decode is slow.
+
 ## Contract
 
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
@@ -161,10 +206,25 @@ Stage proof (takes `/tmp/probe-stack.lock`, checks load, one heavy step at a
 time). It selects Chatterbox when the durable selection is absent and points
 `SPEECH_PROVIDER_ROOT` at `speech/providers` unless the caller set it, so each
 provider needs its virtual environment first (`uv sync --locked` inside
-`speech/providers/<provider>`):
+`speech/providers/<provider>`). It gives speech a temporary
+`SPEECH_STATE_DIRECTORY`, so it never reads or writes the operator's voice
+choice. `SPEECH_DEVICE` (default `cuda`) and `SPEECH_HEARING_MODEL` (default
+large-v3) pass through; on `cpu` the card is hidden from speech with an empty
+`CUDA_VISIBLE_DEVICES`. Weights must already be cached, because
+`HF_HUB_OFFLINE=1` is the default and resolves `refs/main`:
 
 ```sh
 uv run python scripts/prove.py
+```
+
+Every run reports load to ready, the card's compute pids at health ready and
+the peak RSS of the speech process. `--measure` only swaps the contract markers
+for the hearing measurement behind "CPU" (five repetitions, two final timings,
+missed gates kept as values):
+
+```sh
+SPEECH_DEVICE=cpu SPEECH_SPEAKING_MODEL=de_DE-thorsten-medium \
+  OMP_NUM_THREADS=4 uv run python scripts/prove.py --measure
 ```
 
 Checks:

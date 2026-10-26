@@ -7,6 +7,8 @@ Piper caches.
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import fcntl
 import json
 import os
@@ -19,14 +21,18 @@ import tempfile
 import threading
 import time
 from array import array
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 
 import httpx2
 from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
 
 from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL
 from presentator_speech.cuda_libs import cuda_library_dirs
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 SENTENCE = (
     "Die Kamera zeigt den Vortragenden, während im Hintergrund "
@@ -40,6 +46,15 @@ SECOND = "Die nächste Folie bitte."
 LOCK_PATH = Path("/tmp/probe-stack.lock")
 GERMAN_WAV_PATH = Path("/tmp/issue-83-voice/german.wav")
 MEASURE_REPETITIONS = 5
+MEASURE_FLAG = {False: [], True: ["--measure"]}
+CONTRACT_MARKERS = {
+    False: (
+        "contract_hear_partial",
+        "contract_hear_final",
+        "contract_hear_second_final",
+    ),
+    True: ("measure_rep1", "measure_summary"),
+}
 LOAD_CEILING = 18.0
 READY_TIMEOUT_SECONDS = 300.0
 PIPER_FIRST_BYTE_LIMIT_S = 0.5
@@ -49,6 +64,7 @@ PROVIDER_ROOT = Path(__file__).resolve().parents[1] / "providers"
 HF_CACHE = Path.home() / ".cache" / "huggingface" / "hub"
 CHATTERBOX_CACHE = HF_CACHE / "models--ResembleAI--chatterbox"
 WHISPER_CACHE = HF_CACHE / "models--Systran--faster-whisper-large-v3"
+DEFAULT_HEARING_MODEL = "Systran/faster-whisper-large-v3"
 
 
 def _load_1min() -> float:
@@ -253,6 +269,71 @@ def _nvidia_memory() -> str:
     return completed.stdout.strip()
 
 
+def _nvidia_compute_pids() -> str:
+    try:
+        completed = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        return f"unavailable: {error}"
+    return " ".join(completed.stdout.split()) or "none"
+
+
+def peak_rss_mib(status: str) -> float:
+    """Read `VmHWM`, the process's peak resident set, from /proc/<pid>/status."""
+    for line in status.splitlines():
+        if line.startswith("VmHWM:"):
+            return int(line.split()[1]) / 1024
+    message = "no VmHWM in the process status"
+    raise SystemExit(message)
+
+
+@dataclass(frozen=True)
+class _RunningSpeech:
+    process: subprocess.Popen[str]
+    health: dict[str, object]
+    ready_seconds: float
+
+    def peak_rss_mib(self) -> float:
+        status = Path(f"/proc/{self.process.pid}/status")
+        return peak_rss_mib(status.read_text(encoding="utf-8"))
+
+
+@contextlib.contextmanager
+def _speech_server(
+    project: Path, env: dict[str, str], socket_path: Path
+) -> Iterator[_RunningSpeech]:
+    """Start speech, wait until both models are ready, and stop it on the way out."""
+    server = subprocess.Popen(
+        [sys.executable, "-m", "presentator_speech"],
+        cwd=project,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        started = time.monotonic()
+        health = _wait_ready(socket_path)
+        yield _RunningSpeech(server, health, time.monotonic() - started)
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait(timeout=5)
+        if server.stdout is not None:
+            leftover = server.stdout.read()
+            if leftover:
+                print("server_log_tail:")
+                print(leftover[-4000:])
+        print("server_exit", server.returncode)
+
+
 def _first_byte_limit(model: str) -> float:
     if model == CHATTERBOX_SPEAKING_MODEL:
         return CHATTERBOX_FIRST_BYTE_LIMIT_S
@@ -421,11 +502,13 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
         raise SystemExit("concurrent speak returned identical bodies")
 
 
-def _prove_contract(project: Path, socket_path: Path, env: dict[str, str]) -> None:
+def _prove_contract(
+    project: Path, socket_path: Path, env: dict[str, str], *, measure: bool
+) -> None:
     client = project / "scripts" / "contract_client.py"
     print("contract_client_start")
     completed = subprocess.run(
-        [sys.executable, str(client), str(socket_path)],
+        [sys.executable, str(client), *MEASURE_FLAG[measure], str(socket_path)],
         check=False,
         cwd="/tmp",
         env=env,
@@ -437,11 +520,7 @@ def _prove_contract(project: Path, socket_path: Path, env: dict[str, str]) -> No
     if completed.returncode != 0:
         message = f"contract client failed: {completed.returncode}"
         raise SystemExit(message)
-    for marker in (
-        "contract_hear_partial",
-        "contract_hear_final",
-        "contract_hear_second_final",
-    ):
+    for marker in CONTRACT_MARKERS[measure]:
         if marker not in completed.stdout:
             message = f"contract client did not report {marker}"
             raise SystemExit(message)
@@ -452,9 +531,16 @@ def _speech_environment(private_directory: Path, speaking_model: str) -> dict[st
     env["SPEECH_PRIVATE_DIRECTORY"] = str(private_directory)
     env["PRESENTATOR_RUNTIME_UID"] = str(os.geteuid())
     env.setdefault("SPEECH_PROVIDER_ROOT", str(PROVIDER_ROOT))
-    env["SPEECH_DEVICE"] = "cuda"
+    env["SPEECH_DEVICE"] = os.environ.get("SPEECH_DEVICE", "cuda")
+    if env["SPEECH_DEVICE"] == "cpu":
+        env["CUDA_VISIBLE_DEVICES"] = ""
+    state_directory = private_directory / "state"
+    state_directory.mkdir(mode=0o700, exist_ok=True)
+    env["SPEECH_STATE_DIRECTORY"] = str(state_directory)
     env["SPEECH_SPEAKING_MODEL"] = speaking_model
-    env["SPEECH_HEARING_MODEL"] = "Systran/faster-whisper-large-v3"
+    env["SPEECH_HEARING_MODEL"] = os.environ.get(
+        "SPEECH_HEARING_MODEL", DEFAULT_HEARING_MODEL
+    )
     env["SPEECH_DEBUG"] = "false"
     env.setdefault("HF_HUB_OFFLINE", "1")
     env.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -465,8 +551,23 @@ def _speech_environment(private_directory: Path, speaking_model: str) -> dict[st
     return env
 
 
+def parse_arguments(arguments: list[str]) -> argparse.Namespace:
+    """Read the command line before anything starts; `--help` and typos exit here."""
+    parser = argparse.ArgumentParser(
+        description="Stage proof of the speech service under the probe-stack lock.",
+        allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--measure",
+        action="store_true",
+        help="run the CPU hearing measurement instead of the contract proof",
+    )
+    return parser.parse_args(arguments)
+
+
 def main() -> None:
     """Run the stage proof under the probe-stack lock."""
+    options = parse_arguments(sys.argv[1:])
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
     _wait_for_load()
@@ -481,30 +582,29 @@ def main() -> None:
             "SPEECH_SPEAKING_MODEL",
             CHATTERBOX_SPEAKING_MODEL,
         )
-        env = _speech_environment(private_directory, speaking_model)
         project = Path(__file__).resolve().parents[1]
-        server = subprocess.Popen(
-            [sys.executable, "-m", "presentator_speech"],
-            cwd=project,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
         try:
-            health = _wait_ready(socket_path)
-            print("health_ready", json.dumps(health, sort_keys=True))
-            _require_speaking(health, speaking_model)
-            print("gpu_both_resident", _nvidia_memory())
-            print("whisper_cache", WHISPER_CACHE)
-            print("chatterbox_cache", CHATTERBOX_CACHE)
-            print("piper_cache", PIPER_CACHE)
-            german = _prove_speak(socket_path, speaking_model)
-            GERMAN_WAV_PATH.parent.mkdir(parents=True, exist_ok=True)
-            GERMAN_WAV_PATH.write_bytes(german)
-            print("german_wav", GERMAN_WAV_PATH)
-            _prove_concurrent_speak(socket_path, speaking_model)
-            _prove_contract(project, socket_path, env)
+            env = _speech_environment(private_directory, speaking_model)
+            with _speech_server(project, env, socket_path) as running:
+                print("health_ready", json.dumps(running.health, sort_keys=True))
+                print("load_to_ready_s", f"{running.ready_seconds:.1f}")
+                print(
+                    "gpu_compute_pids",
+                    _nvidia_compute_pids(),
+                    f"speech_pid={running.process.pid}",
+                )
+                _require_speaking(running.health, speaking_model)
+                print("gpu_both_resident", _nvidia_memory())
+                print("whisper_cache", WHISPER_CACHE)
+                print("chatterbox_cache", CHATTERBOX_CACHE)
+                print("piper_cache", PIPER_CACHE)
+                german = _prove_speak(socket_path, speaking_model)
+                GERMAN_WAV_PATH.parent.mkdir(parents=True, exist_ok=True)
+                GERMAN_WAV_PATH.write_bytes(german)
+                print("german_wav", GERMAN_WAV_PATH)
+                _prove_concurrent_speak(socket_path, speaking_model)
+                _prove_contract(project, socket_path, env, measure=options.measure)
+                print("peak_rss_mib", f"{running.peak_rss_mib():.0f}")
             print("gpu_after", _nvidia_memory())
             print("caches_kept")
             print("  huggingface:", HF_CACHE)
@@ -512,18 +612,6 @@ def main() -> None:
             print("  piper:", PIPER_CACHE)
             print("PROOF_OK")
         finally:
-            server.terminate()
-            try:
-                server.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                server.kill()
-                server.wait(timeout=5)
-            if server.stdout is not None:
-                leftover = server.stdout.read()
-                if leftover:
-                    print("server_log_tail:")
-                    print(leftover[-4000:])
-            print("server_exit", server.returncode)
             shutil.rmtree(private_directory)
             print("gpu_released", _nvidia_memory())
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
