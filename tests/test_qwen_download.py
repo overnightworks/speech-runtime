@@ -19,7 +19,7 @@ from presentator_speech import qwen_download, voices
 from presentator_speech.config import Settings
 from presentator_speech.control import create_control_app
 from presentator_speech.selection import VoiceSelectionStore
-from presentator_speech.service import Runtime, RuntimeDependencies, create_app
+from presentator_speech.service import Runtime, RuntimeDependencies
 from presentator_speech.voices import (
     VoiceDownloadOutcome,
     VoiceId,
@@ -550,25 +550,6 @@ def test_shutdown_refuses_new_downloads_without_orphaning_the_running_worker(
         _qwen_state(runtime, tmp_path, monkeypatch, complete=True)
         is VoiceState.DOWNLOADED
     )
-
-
-def test_get_and_public_speech_cannot_start_the_download(tmp_path: Path) -> None:
-    downloads = 0
-
-    def download() -> None:
-        nonlocal downloads
-        downloads += 1
-
-    runtime = _runtime(tmp_path, complete=lambda: False, download=download)
-    settings = Settings(voice_cache=tmp_path, huggingface_cache=tmp_path)
-
-    assert (
-        TestClient(create_control_app(settings, runtime)).get("/voices").status_code
-        == 200
-    )
-    public = TestClient(create_app(runtime=runtime))
-    assert public.post("/voices/qwen3-tts-0.6b/download").status_code == 404
-    assert downloads == 0
 
 
 def test_download_refuses_a_missing_worker_before_starting_the_callback() -> None:

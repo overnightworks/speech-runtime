@@ -1,10 +1,11 @@
 # Local speech
 
-Audience: the operator starting this process on the home server, and the
-co-presenter and Presentator that call it.
+Audience: the operator starting this process on the home server, and
+Presentator, which calls it.
 
 One process holds a German voice and a German listener resident, and offers
-them over HTTP. Nothing in `src/presentator` imports this package. The caller
+them over HTTP on a private Unix socket. Nothing in `src/presentator`
+imports this package. The caller
 owns the address. Settings · Voice chooses between downloaded Piper,
 Chatterbox, Qwen3-TTS 0.6B, VoxCPM2, and cached NVIDIA Magpie; the durable choice is private state. An admin
 may explicitly download the pinned Qwen snapshot through the private control
@@ -103,11 +104,10 @@ Weights stay in:
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
 - `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox and Qwen, and 48 000 Hz for VoxCPM2), also reported as `speaking.sample_rate`. Runtime serialises request synthesis across every engine. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
-- `/health`, `/speak` and `/hear` answer on both listeners: the TCP listener,
-  which stays for the co-presenter, and `speech.sock` in
-  `SPEECH_PRIVATE_DIRECTORY`, through the same runtime and handlers. The socket
-  serves nothing else beside the voice controls (no `/docs`, no `/openapi.json`).
-- `GET /voices` exists only on `speech.sock`. It
+- `/health`, `/speak` and `/hear` answer only on `speech.sock` in
+  `SPEECH_PRIVATE_DIRECTORY`; the process binds no TCP port. The socket serves
+  nothing else beside the voice controls (no `/docs`, no `/openapi.json`).
+- `GET /voices` is one of those controls. It
   reports the five fixed admin catalogue rows, typed recovery detail, and local
   artifact evidence. `POST /voices/qwen3-tts-0.6b/download` starts the pinned,
   tokenless Qwen transfer and returns promptly; it never selects a voice.
@@ -116,8 +116,7 @@ Weights stay in:
   choice, and waits for admitted speech before switching. Piper stays resident;
   deselected provider processes exit before Load succeeds and are rebuilt when selected again.
   `POST /voices/{piper|chatterbox|qwen3-tts-0.6b|voxcpm2|nvidia-magpie}/sample/{de|en}` returns one fixed WAV only
-  when its named voice is still active and ready; contention returns 409. The
-  public TCP application has no `/voices` route.
+  when its named voice is still active and ready; contention returns 409.
 
 `sample_rate` is the hear rate. Speak is a WAV, so its rate is in the header. A caller that feeds speak output into hear must resample.
 
@@ -127,8 +126,6 @@ All `SPEECH_*`:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SPEECH_HOST` | `127.0.0.1` | Bind address |
-| `SPEECH_PORT` | `8090` | Bind port |
 | `SPEECH_DEVICE` | `cuda` | Device for hearing and isolated providers. Chatterbox and VoxCPM2 accept `cuda` or `cpu`; Qwen accepts only `cuda` and maps it to `cuda:0`. Piper stays on CPU. |
 | `SPEECH_SPEAKING_MODEL` | `de_DE-thorsten-medium` | First-run default only, used when `selected-voice` is absent |
 | `SPEECH_HEARING_MODEL` | `Systran/faster-whisper-large-v3` | Hugging Face id or faster-whisper size name |
@@ -142,8 +139,8 @@ All `SPEECH_*`:
 
 When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 
-`PRESENTATOR_RUNTIME_UID` is the same positive runtime UID the co-presenter
-uses. Speech creates its private directory at mode 0700 and its socket at 0600.
+`PRESENTATOR_RUNTIME_UID` is the positive runtime UID that Presentator
+shares with speech. Speech creates its private directory at mode 0700 and its socket at 0600.
 That UID is the socket's only authority: the Presentator container and every
 process under it may speak, hear and control voices through the socket.
 A dead leftover socket is replaced; a socket with a live listener, a foreign
@@ -161,7 +158,10 @@ uv run presentator-speech
 ```
 
 Stage proof (takes `/tmp/probe-stack.lock`, checks load, one heavy step at a
-time). It selects Chatterbox when the durable selection is absent:
+time). It selects Chatterbox when the durable selection is absent and points
+`SPEECH_PROVIDER_ROOT` at `speech/providers` unless the caller set it, so each
+provider needs its virtual environment first (`uv sync --locked` inside
+`speech/providers/<provider>`):
 
 ```sh
 uv run python scripts/prove.py

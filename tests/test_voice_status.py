@@ -32,7 +32,6 @@ from presentator_speech.service import (
     Runtime,
     RuntimeDependencies,
     SpeakingEngine,
-    create_app,
 )
 from presentator_speech.speaking import speaking_for_voice
 from presentator_speech.voices import (
@@ -544,7 +543,7 @@ def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
 
         restored = runtime()
         restored.load()
-        public = create_app(runtime=restored)
+        public = create_control_app(settings, restored)
         request_ids = cache / "request-ids"
         disconnected = asyncio.run(
             _disconnect_after_child_receives_request(public, request_ids, 3)
@@ -610,7 +609,7 @@ def test_magpie_load_restore_samples_public_speech_and_deselect_reap(
 
         restored = runtime()
         restored.load()
-        public = create_app(runtime=restored)
+        public = create_control_app(settings, restored)
         request_ids = cache / "request-ids"
         disconnected = asyncio.run(
             _disconnect_after_child_receives_request(public, request_ids, 3)
@@ -1296,17 +1295,16 @@ def test_recoverable_startup_keeps_hearing_live_and_refuses_speaking(
     )
 
     runtime.load()
-    public = TestClient(create_app(runtime=runtime))
     private = TestClient(create_control_app(Settings(voice_cache=tmp_path), runtime))
 
-    assert public.get("/health").json()["speaking"] == {
+    assert private.get("/health").json()["speaking"] == {
         "model": "unavailable",
         "ready": False,
         "streams": False,
         "sample_rate": 0,
     }
     assert (
-        public.post("/speak", json={"text": "Hallo", "language": "de"}).status_code
+        private.post("/speak", json={"text": "Hallo", "language": "de"}).status_code
         == 503
     )
     assert hearing.ready is True

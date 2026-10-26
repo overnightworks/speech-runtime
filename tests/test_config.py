@@ -23,8 +23,18 @@ from presentator_speech.voices import VoiceId
 from tests.conftest import FakeHearing, FakeSpeaking, an_app
 
 
+@pytest.mark.parametrize(
+    ("name", "value"), [("SPEECH_HOST", "example.invalid"), ("SPEECH_PORT", "8090")]
+)
+def test_a_stale_tcp_setting_in_the_environment_is_ignored(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    Settings()
+
+
 def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SPEECH_PORT", "9001")
     monkeypatch.setenv("SPEECH_DEVICE", "cpu")
     monkeypatch.setenv("SPEECH_SPEAKING_MODEL", "ResembleAI/chatterbox")
     monkeypatch.setenv("SPEECH_HEARING_MODEL", "Systran/faster-whisper-large-v3")
@@ -33,7 +43,6 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
 
     settings = Settings()
 
-    assert settings.port == 9001
     assert settings.device == "cpu"
     assert settings.speaking_model == "ResembleAI/chatterbox"
     assert settings.hearing_model == "Systran/faster-whisper-large-v3"

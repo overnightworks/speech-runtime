@@ -10,19 +10,19 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import shutil
 import socket
 import statistics
 import subprocess
 import sys
+import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
 from array import array
 from pathlib import Path
 from typing import TextIO
-from urllib.parse import urlparse
 
+import httpx2
 from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
 
 from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL
@@ -45,6 +45,7 @@ READY_TIMEOUT_SECONDS = 300.0
 PIPER_FIRST_BYTE_LIMIT_S = 0.5
 CHATTERBOX_FIRST_BYTE_LIMIT_S = 1.0
 PIPER_CACHE = Path.home() / ".cache" / "piper"
+PROVIDER_ROOT = Path(__file__).resolve().parents[1] / "providers"
 HF_CACHE = Path.home() / ".cache" / "huggingface" / "hub"
 CHATTERBOX_CACHE = HF_CACHE / "models--ResembleAI--chatterbox"
 WHISPER_CACHE = HF_CACHE / "models--Systran--faster-whisper-large-v3"
@@ -80,24 +81,19 @@ def _acquire_lock(lock: TextIO) -> None:
         return
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def _get_json(socket_path: Path, target: str) -> dict[str, object]:
+    transport = httpx2.HTTPTransport(uds=str(socket_path))
+    with httpx2.Client(transport=transport, base_url="http://speech") as client:
+        return client.get(target, timeout=5).json()
 
 
-def _get_json(url: str) -> dict[str, object]:
-    with urllib.request.urlopen(url, timeout=5) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-def _wait_ready(base: str) -> dict[str, object]:
+def _wait_ready(socket_path: Path) -> dict[str, object]:
     deadline = time.monotonic() + READY_TIMEOUT_SECONDS
     last: dict[str, object] | None = None
     while time.monotonic() < deadline:
         try:
-            last = _get_json(f"{base}/health")
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+            last = _get_json(socket_path, "/health")
+        except (httpx2.HTTPError, json.JSONDecodeError):
             time.sleep(0.5)
             continue
         speaking = last["speaking"]
@@ -192,25 +188,23 @@ def _http_body_complete(header: bytes, body: bytes) -> bool:
 
 
 def _speak_measured(
-    base: str,
+    socket_path: Path,
     text: str,
     language: str = "de",
 ) -> tuple[bytes, float, float]:
-    parsed = urlparse(base)
-    host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 80
     payload = json.dumps({"text": text, "language": language}).encode("utf-8")
     request = (
         b"POST /speak HTTP/1.1\r\n"
-        + f"Host: {host}:{port}\r\n".encode()
-        + b"Content-Type: application/json\r\n"
+        b"Host: speech\r\n"
+        b"Content-Type: application/json\r\n"
         + f"Content-Length: {len(payload)}\r\n".encode()
         + b"Connection: close\r\n"
         + b"\r\n"
         + payload
     )
-    sock = socket.create_connection((host, port), timeout=120)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(120)
+    sock.connect(str(socket_path))
     try:
         start = time.perf_counter()
         sock.sendall(request)
@@ -290,14 +284,14 @@ def _require_speaking(health: dict[str, object], model: str) -> None:
 
 
 def _prove_one_speak(
-    base: str,
+    socket_path: Path,
     text: str,
     language: str,
     *,
     limit: float,
     label: str,
 ) -> tuple[bytes, float, float]:
-    wav, ttfa, total = _speak_measured(base, text, language=language)
+    wav, ttfa, total = _speak_measured(socket_path, text, language=language)
     rate, pcm = _pcm_from_wav(wav)
     duration = (len(pcm) / 2) / rate
     rtf = duration / total if total else 0.0
@@ -325,7 +319,7 @@ def _prove_one_speak(
 
 
 def _prove_speak_medians(
-    base: str,
+    socket_path: Path,
     text: str,
     language: str,
     *,
@@ -338,7 +332,7 @@ def _prove_speak_medians(
     rtfs: list[float] = []
     for rep in range(1, MEASURE_REPETITIONS + 1):
         wav, ttfa, rtf = _prove_one_speak(
-            base,
+            socket_path,
             text,
             language,
             limit=limit,
@@ -359,7 +353,7 @@ def _prove_speak_medians(
     return wavs[-1], median_ttfa, median_rtf
 
 
-def _prove_speak(base: str, model: str) -> bytes:
+def _prove_speak(socket_path: Path, model: str) -> bytes:
     """Speak German and English MEASURE_REPETITIONS times each.
 
     `_prove_one_speak` fails the run the moment any single repetition, in
@@ -368,24 +362,24 @@ def _prove_speak(base: str, model: str) -> bytes:
     """
     limit = _first_byte_limit(model)
     german, _ttfa_de, _rtf_de = _prove_speak_medians(
-        base,
+        socket_path,
         SENTENCE,
         "de",
         limit=limit,
         label="speak_wire_de",
     )
-    _prove_speak_medians(base, ENGLISH, "en", limit=limit, label="speak_wire_en")
+    _prove_speak_medians(socket_path, ENGLISH, "en", limit=limit, label="speak_wire_en")
     return german
 
 
-def _prove_concurrent_speak(base: str, model: str) -> None:
+def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
     limit = _first_byte_limit(model)
     results: dict[str, tuple[bytes, float, float]] = {}
     errors: list[str] = []
 
     def run(key: str, text: str) -> None:
         try:
-            results[key] = _speak_measured(base, text, language="de")
+            results[key] = _speak_measured(socket_path, text, language="de")
         except Exception as error:
             errors.append(f"{key}: {error}")
 
@@ -427,11 +421,11 @@ def _prove_concurrent_speak(base: str, model: str) -> None:
         raise SystemExit("concurrent speak returned identical bodies")
 
 
-def _prove_contract(project: Path, base: str, env: dict[str, str]) -> None:
+def _prove_contract(project: Path, socket_path: Path, env: dict[str, str]) -> None:
     client = project / "scripts" / "contract_client.py"
     print("contract_client_start")
     completed = subprocess.run(
-        [sys.executable, str(client), base],
+        [sys.executable, str(client), str(socket_path)],
         check=False,
         cwd="/tmp",
         env=env,
@@ -453,6 +447,24 @@ def _prove_contract(project: Path, base: str, env: dict[str, str]) -> None:
             raise SystemExit(message)
 
 
+def _speech_environment(private_directory: Path, speaking_model: str) -> dict[str, str]:
+    env = os.environ.copy()
+    env["SPEECH_PRIVATE_DIRECTORY"] = str(private_directory)
+    env["PRESENTATOR_RUNTIME_UID"] = str(os.geteuid())
+    env.setdefault("SPEECH_PROVIDER_ROOT", str(PROVIDER_ROOT))
+    env["SPEECH_DEVICE"] = "cuda"
+    env["SPEECH_SPEAKING_MODEL"] = speaking_model
+    env["SPEECH_HEARING_MODEL"] = "Systran/faster-whisper-large-v3"
+    env["SPEECH_DEBUG"] = "false"
+    env.setdefault("HF_HUB_OFFLINE", "1")
+    env.setdefault("TRANSFORMERS_OFFLINE", "1")
+    cuda_dirs = ":".join(str(path) for path in cuda_library_dirs())
+    if cuda_dirs:
+        existing = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{cuda_dirs}:{existing}" if existing else cuda_dirs
+    return env
+
+
 def main() -> None:
     """Run the stage proof under the probe-stack lock."""
     if hasattr(sys.stdout, "reconfigure"):
@@ -463,26 +475,13 @@ def main() -> None:
         print("waiting_for_lock", LOCK_PATH)
         _acquire_lock(lock)
         print("gpu_before", _nvidia_memory())
-        port = _free_port()
-        env = os.environ.copy()
+        private_directory = Path(tempfile.mkdtemp(prefix="speech-"))
+        socket_path = private_directory / "speech.sock"
         speaking_model = os.environ.get(
             "SPEECH_SPEAKING_MODEL",
             CHATTERBOX_SPEAKING_MODEL,
         )
-        env["SPEECH_HOST"] = "127.0.0.1"
-        env["SPEECH_PORT"] = str(port)
-        env["SPEECH_DEVICE"] = "cuda"
-        env["SPEECH_SPEAKING_MODEL"] = speaking_model
-        env["SPEECH_HEARING_MODEL"] = "Systran/faster-whisper-large-v3"
-        env["SPEECH_DEBUG"] = "false"
-        env.setdefault("HF_HUB_OFFLINE", "1")
-        env.setdefault("TRANSFORMERS_OFFLINE", "1")
-        cuda_dirs = ":".join(str(path) for path in cuda_library_dirs())
-        if cuda_dirs:
-            existing = env.get("LD_LIBRARY_PATH", "")
-            env["LD_LIBRARY_PATH"] = (
-                f"{cuda_dirs}:{existing}" if existing else cuda_dirs
-            )
+        env = _speech_environment(private_directory, speaking_model)
         project = Path(__file__).resolve().parents[1]
         server = subprocess.Popen(
             [sys.executable, "-m", "presentator_speech"],
@@ -492,21 +491,20 @@ def main() -> None:
             stderr=subprocess.STDOUT,
             text=True,
         )
-        base = f"http://127.0.0.1:{port}"
         try:
-            health = _wait_ready(base)
+            health = _wait_ready(socket_path)
             print("health_ready", json.dumps(health, sort_keys=True))
             _require_speaking(health, speaking_model)
             print("gpu_both_resident", _nvidia_memory())
             print("whisper_cache", WHISPER_CACHE)
             print("chatterbox_cache", CHATTERBOX_CACHE)
             print("piper_cache", PIPER_CACHE)
-            german = _prove_speak(base, speaking_model)
+            german = _prove_speak(socket_path, speaking_model)
             GERMAN_WAV_PATH.parent.mkdir(parents=True, exist_ok=True)
             GERMAN_WAV_PATH.write_bytes(german)
             print("german_wav", GERMAN_WAV_PATH)
-            _prove_concurrent_speak(base, speaking_model)
-            _prove_contract(project, base, env)
+            _prove_concurrent_speak(socket_path, speaking_model)
+            _prove_contract(project, socket_path, env)
             print("gpu_after", _nvidia_memory())
             print("caches_kept")
             print("  huggingface:", HF_CACHE)
@@ -526,6 +524,7 @@ def main() -> None:
                     print("server_log_tail:")
                     print(leftover[-4000:])
             print("server_exit", server.returncode)
+            shutil.rmtree(private_directory)
             print("gpu_released", _nvidia_memory())
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
             print("lock_released")

@@ -7,10 +7,11 @@ import struct
 import threading
 from typing import TYPE_CHECKING
 
-from presentator_speech.config import HEAR_SAMPLE_RATE
+from presentator_speech.config import HEAR_SAMPLE_RATE, Settings
+from presentator_speech.control import create_control_app
 from presentator_speech.hearing import HearingSession
 from presentator_speech.pcm import BYTES_PER_SAMPLE
-from presentator_speech.service import Runtime, create_app
+from presentator_speech.service import Runtime
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -168,4 +169,4 @@ def an_app(
         debug=debug,
         memory_probe=memory_probe if memory_probe is not None else (lambda: 0),
     )
-    return create_app(runtime=runtime)
+    return create_control_app(Settings(), runtime)

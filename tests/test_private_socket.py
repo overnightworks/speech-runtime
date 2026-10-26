@@ -14,7 +14,6 @@ from typing import Any
 import httpx2
 import pytest
 import uvicorn
-from fastapi.testclient import TestClient
 from starlette.types import Message, Receive, Scope, Send
 from websockets.asyncio.client import ClientConnection, unix_connect
 
@@ -22,7 +21,7 @@ from presentator_speech.__main__ import PrivateSocket
 from presentator_speech.config import HEAR_SAMPLE_RATE, Settings
 from presentator_speech.control import create_control_app
 from presentator_speech.pcm import BYTES_PER_SAMPLE, WAV_HEADER_BYTES, pcm_from_wav
-from presentator_speech.service import Runtime, create_app
+from presentator_speech.service import Runtime
 from tests.conftest import (
     GATE_TIMEOUT_SECONDS,
     SPEAK_SAMPLE_RATE,
@@ -32,12 +31,6 @@ from tests.conftest import (
 )
 
 _SPEAK_BODY = {"text": "Hallo", "language": "de"}
-_ABSENT_FROM_TCP = [
-    ("GET", "/voices"),
-    ("POST", "/voices/piper/load"),
-    ("POST", "/voices/qwen3-tts-0.6b/download"),
-    ("POST", "/voices/piper/sample/de"),
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,14 +94,6 @@ def _socket_client(server: _PrivateServer) -> httpx2.AsyncClient:
     )
 
 
-def _tcp_client(runtime: Runtime) -> httpx2.AsyncClient:
-    return httpx2.AsyncClient(
-        transport=httpx2.ASGITransport(app=create_app(runtime=runtime)),
-        base_url="http://tcp",
-        timeout=GATE_TIMEOUT_SECONDS,
-    )
-
-
 def _gated_runtime(voice: GatedSpeaking, hearing: FakeHearing | None = None) -> Runtime:
     return Runtime(voice, hearing or FakeHearing(), memory_probe=lambda: 0)
 
@@ -147,21 +132,6 @@ async def _speak_then_pause(connection: ClientConnection) -> None:
 
 def _hear_uri() -> str:
     return "ws://speech/hear?language=de"
-
-
-def test_socket_health_equals_the_tcp_health_of_the_same_runtime(tmp_path) -> None:
-    async def scenario() -> tuple[httpx2.Response, httpx2.Response]:
-        runtime = _gated_runtime(GatedSpeaking())
-        async with _serving(tmp_path, runtime) as server:
-            async with _socket_client(server) as socket_client:
-                private = await socket_client.get("/health")
-            async with _tcp_client(runtime) as tcp_client:
-                return private, await tcp_client.get("/health")
-
-    private, public = asyncio.run(scenario())
-
-    assert private.status_code == 200
-    assert private.json() == public.json()
 
 
 def test_socket_streams_speak_while_the_voice_is_still_synthesizing(tmp_path) -> None:
@@ -220,10 +190,7 @@ def test_socket_speak_disconnect_frees_the_voice_for_the_next_caller(tmp_path) -
     _assert_whole_wav(later.status_code, later.content, voice)
 
 
-@pytest.mark.parametrize("speaker", ["socket", "tcp"])
-def test_a_speak_on_either_listener_holds_the_one_synthesis_gate(
-    tmp_path, speaker: str
-) -> None:
+def test_a_speak_holds_the_one_synthesis_gate(tmp_path) -> None:
     async def scenario() -> tuple[
         GatedSpeaking, httpx2.Response, httpx2.Response, httpx2.Response
     ]:
@@ -232,11 +199,9 @@ def test_a_speak_on_either_listener_holds_the_one_synthesis_gate(
         async with (
             _serving(tmp_path, runtime) as server,
             _socket_client(server) as socket_client,
-            _tcp_client(runtime) as tcp_client,
             _gates_released(voice),
         ):
-            speaking_client = socket_client if speaker == "socket" else tcp_client
-            talk = asyncio.create_task(speaking_client.post("/speak", json=_SPEAK_BODY))
+            talk = asyncio.create_task(socket_client.post("/speak", json=_SPEAK_BODY))
             await _wait_for(voice.entered_first_step)
             busy = await socket_client.post("/voices/piper/sample/de")
             voice.release_first_step.set()
@@ -307,10 +272,3 @@ def test_socket_serves_no_api_documentation(tmp_path, path: str) -> None:
             return await client.get(path)
 
     assert asyncio.run(scenario()).status_code == 404
-
-
-@pytest.mark.parametrize(("method", "path"), _ABSENT_FROM_TCP)
-def test_tcp_application_has_no_voice_control_route(method: str, path: str) -> None:
-    client = TestClient(create_app(runtime=_gated_runtime(GatedSpeaking())))
-
-    assert client.request(method, path).status_code == 404

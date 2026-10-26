@@ -1,4 +1,4 @@
-"""Start the public speech API and its private listener together."""
+"""Start the speech service on its private socket."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import uvicorn
 from presentator_speech.config import Settings, load_settings
 from presentator_speech.control import create_control_app
 from presentator_speech.cuda_libs import prepare_cuda_libraries
-from presentator_speech.service import Runtime, create_app
+from presentator_speech.service import Runtime
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -183,21 +183,19 @@ def main() -> None:
 
 
 async def serve(settings: Settings) -> int:
-    """Run both servers until a signal or fatal lifecycle outcome."""
+    """Run the server until a signal or fatal lifecycle outcome."""
     runtime_uid = _require_runtime_uid(settings)
     prepare_cuda_libraries()
     loop = asyncio.get_running_loop()
     fatal = asyncio.Event()
     runtime = Runtime.from_settings(settings)
     runtime.set_fatal_callback(lambda: loop.call_soon_threadsafe(fatal.set))
-    public = _server(create_app(settings, runtime), settings)
-    private = _server(create_control_app(settings, runtime), settings)
+    server = _server(create_control_app(settings, runtime))
     stopping = asyncio.Event()
     loading_stop = threading.Event()
     _install_signal_handlers(stopping, loading_stop)
     with PrivateSocket(settings.private_directory, runtime_uid=runtime_uid) as uds:
-        public_task = asyncio.create_task(public.serve())
-        private_task = asyncio.create_task(private.serve(sockets=[uds]))
+        server_task = asyncio.create_task(server.serve(sockets=[uds]))
         runtime.begin_loading()
         loader = asyncio.create_task(asyncio.to_thread(runtime.load, loading_stop))
         stopped = asyncio.create_task(stopping.wait())
@@ -205,7 +203,7 @@ async def serve(settings: Settings) -> int:
         result = 1
         try:
             done, _pending = await asyncio.wait(
-                {loader, public_task, private_task, stopped, fatal_task},
+                {loader, server_task, stopped, fatal_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if fatal_task in done:
@@ -220,15 +218,14 @@ async def serve(settings: Settings) -> int:
                     result = 1
                 else:
                     done, _pending = await asyncio.wait(
-                        {public_task, private_task, stopped, fatal_task},
+                        {server_task, stopped, fatal_task},
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     result = 0 if stopped in done else 1
         finally:
             runtime.begin_shutdown()
             loading_stop.set()
-            public.should_exit = True
-            private.should_exit = True
+            server.should_exit = True
             stopped.cancel()
             fatal_task.cancel()
             try:
@@ -236,18 +233,12 @@ async def serve(settings: Settings) -> int:
             except RuntimeError:
                 logging.getLogger(__name__).exception("speech model cleanup failed")
                 result = 1
-            await asyncio.gather(
-                public_task, private_task, loader, return_exceptions=True
-            )
+            await asyncio.gather(server_task, loader, return_exceptions=True)
         return result
 
 
-def _server(app: object, settings: Settings) -> uvicorn.Server:
-    server = uvicorn.Server(
-        uvicorn.Config(app, host=settings.host, port=settings.port, log_level="info")
-    )
-    server.install_signal_handlers = lambda: None
-    return server
+def _server(app: object) -> uvicorn.Server:
+    return uvicorn.Server(uvicorn.Config(app, log_level="info"))
 
 
 def _require_runtime_uid(settings: Settings) -> int:
@@ -271,3 +262,7 @@ def _install_signal_handlers(
     loop = asyncio.get_running_loop()
     for received in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(received, stop)
+
+
+if __name__ == "__main__":
+    main()

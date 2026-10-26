@@ -20,13 +20,13 @@ from starlette.status import (
 )
 
 from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from presentator_speech.control import create_control_app
 from presentator_speech.pcm import is_silence, pcm_from_wav
 from presentator_speech.selection import VoiceSelectionStore
 from presentator_speech.service import (
     Runtime,
     RuntimeDependencies,
     SpeakRequest,
-    create_app,
 )
 from presentator_speech.speaking import PiperSpeaking, speaking_for_voice
 from presentator_speech.voices import VoiceId, VoiceLoadOutcome
@@ -158,7 +158,7 @@ class _ResponseBoundaryError(RuntimeError):
 
 
 def _speak_response(runtime: Runtime) -> StreamingResponse:
-    app = create_app(runtime=runtime)
+    app = create_control_app(Settings(), runtime)
     route = next(
         route for route in app.routes if getattr(route, "path", None) == "/speak"
     )

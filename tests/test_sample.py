@@ -18,7 +18,6 @@ from presentator_speech.selection import VoiceSelectionStore
 from presentator_speech.service import (
     Runtime,
     RuntimeDependencies,
-    create_app,
 )
 from presentator_speech.voices import VoiceId, VoiceLoadOutcome
 from tests.conftest import FakeHearing, FakeSpeaking
@@ -59,7 +58,6 @@ def test_private_sample_uses_its_fixed_phrase_and_native_rate(
     private = TestClient(create_control_app(settings, runtime)).post(
         f"/voices/piper/sample/{language}"
     )
-    public = TestClient(create_app(runtime=runtime)).post("/voices/piper/sample/de")
 
     assert private.status_code == 200
     assert private.headers["content-type"] == "audio/wav"
@@ -68,7 +66,6 @@ def test_private_sample_uses_its_fixed_phrase_and_native_rate(
     assert pcm
     assert speaking.heard_text == phrase
     assert speaking.heard_language == language
-    assert public.status_code == 404
 
 
 def test_sample_refuses_a_stale_voice_without_synthesising(tmp_path) -> None:
@@ -111,7 +108,7 @@ def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(tmp_path) 
     )
 
     async def scenario() -> int:
-        public = create_app(runtime=runtime)
+        public = create_control_app(settings, runtime)
         sent = False
         stopped = asyncio.Event()
 

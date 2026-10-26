@@ -25,7 +25,6 @@ from presentator_speech.config import (
     CHATTERBOX_SPEAKING_MODEL,
     DEFAULT_SPEAKING_MODEL,
     HEAR_SAMPLE_RATE,
-    load_settings,
 )
 from presentator_speech.hearing import (
     POLL_WAIT_SECONDS,
@@ -698,22 +697,8 @@ def _public_wav_chunks(
         lease.close()
 
 
-def create_app(
-    settings: Settings | None = None,
-    runtime: Runtime | None = None,
-) -> FastAPI:
-    """Build the public application over the orchestrator-owned runtime."""
-    if runtime is None:
-        runtime = Runtime.from_settings(settings or load_settings())
-
-    app = FastAPI(title="presentator-speech")
-    app.state.runtime = runtime
-    mount_speech_routes(app, runtime)
-    return app
-
-
 def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
-    """Mount /health, /speak and /hear over the one runtime, for every listener."""
+    """Mount /health, /speak and /hear over the one runtime."""
 
     @app.get("/health")
     def health() -> dict[str, object]:

@@ -1,4 +1,4 @@
-"""Drive the three speech endpoints over the wire.
+"""Drive the three speech endpoints over the private socket.
 
 This process must not import the `presentator_speech` package. It is the parallel-lane
 proof: a caller that only knows the HTTP contract.
@@ -7,13 +7,15 @@ proof: a caller that only knows the HTTP contract.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
+import socket
 import sys
 import time
-import urllib.request
 from array import array
+from pathlib import Path
 
-import websockets
+from websockets.asyncio.client import ClientConnection, unix_connect
 
 SENTENCE = (
     "Die Kamera zeigt den Vortragenden, während im Hintergrund "
@@ -30,9 +32,35 @@ def _must_not_have_imported_speech() -> None:
         raise SystemExit(message)
 
 
-def _get_json(url: str) -> dict[str, object]:
-    with urllib.request.urlopen(url, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+class _UnixHttpConnection(http.client.HTTPConnection):
+    def __init__(self, path: Path, timeout: float) -> None:
+        super().__init__("speech", timeout=timeout)
+        self._path = path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(str(self._path))
+
+
+def _request(
+    path: Path, method: str, target: str, body: bytes | None, timeout: float
+) -> bytes:
+    connection = _UnixHttpConnection(path, timeout)
+    try:
+        connection.request(method, target, body, {"Content-Type": "application/json"})
+        response = connection.getresponse()
+        data = response.read()
+    finally:
+        connection.close()
+    if response.status != http.client.OK:
+        message = f"{method} {target} answered {response.status}"
+        raise SystemExit(message)
+    return data
+
+
+def _get_json(path: Path, target: str) -> dict[str, object]:
+    return json.loads(_request(path, "GET", target, None, 30).decode("utf-8"))
 
 
 def _pcm_from_wav(data: bytes) -> tuple[int, bytes]:
@@ -71,15 +99,9 @@ def _resample(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
     return out.tobytes()
 
 
-def _speak(base: str, text: str) -> bytes:
-    request = urllib.request.Request(
-        f"{base}/speak",
-        data=json.dumps({"text": text, "language": "de"}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read()
+def _speak(path: Path, text: str) -> bytes:
+    body = json.dumps({"text": text, "language": "de"}).encode("utf-8")
+    return _request(path, "POST", "/speak", body, 60)
 
 
 def _rms(pcm: bytes) -> float:
@@ -92,7 +114,7 @@ def _rms(pcm: bytes) -> float:
 
 
 async def _drain(
-    websocket: websockets.ClientConnection,
+    websocket: ClientConnection,
     events: list[dict[str, object]],
     timeout: float,
 ) -> None:
@@ -127,7 +149,7 @@ def frames_remain_unsent(pcm: bytes, next_offset: int) -> bool:
 
 
 async def _send_pcm(
-    websocket: websockets.ClientConnection,
+    websocket: ClientConnection,
     pcm: bytes,
     sample_rate: int,
     events: list[dict[str, object]],
@@ -141,7 +163,7 @@ async def _send_pcm(
 
 
 async def _hear_utterance(
-    websocket: websockets.ClientConnection,
+    websocket: ClientConnection,
     pcm: bytes,
     sample_rate: int,
 ) -> tuple[list[dict[str, object]], dict[str, object] | None, float, int, bool]:
@@ -177,8 +199,8 @@ async def _hear_utterance(
     return events, partial, partial_at, partial_frame, still_sending
 
 
-async def _run(base: str) -> None:
-    health = _get_json(f"{base}/health")
+async def _run(path: Path) -> None:
+    health = _get_json(path, "/health")
     print("contract_health", json.dumps(health, sort_keys=True))
     speaking = health["speaking"]
     hearing = health["hearing"]
@@ -190,7 +212,7 @@ async def _run(base: str) -> None:
         raise SystemExit(message)
     sample_rate = int(health["sample_rate"])
 
-    wav = _speak(base, SENTENCE)
+    wav = _speak(path, SENTENCE)
     rate, pcm = _pcm_from_wav(wav)
     pcm = _resample(pcm, rate, sample_rate)
     print(
@@ -202,9 +224,9 @@ async def _run(base: str) -> None:
         message = "speak returned silence"
         raise SystemExit(message)
 
-    hear_url = base.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
-    hear_url = f"{hear_url}/hear?language=de"
-    async with websockets.connect(hear_url, max_size=None) as socket:
+    async with unix_connect(
+        str(path), uri="ws://speech/hear?language=de", max_size=None
+    ) as connection:
         first_started = time.perf_counter()
         (
             first,
@@ -212,7 +234,7 @@ async def _run(base: str) -> None:
             partial_at,
             partial_frame,
             still_sending,
-        ) = await _hear_utterance(socket, pcm, sample_rate)
+        ) = await _hear_utterance(connection, pcm, sample_rate)
         if partial is None or not still_sending:
             message = "no non-empty partial arrived while frames were still being sent"
             raise SystemExit(message)
@@ -232,12 +254,12 @@ async def _run(base: str) -> None:
             f"t={time.perf_counter() - first_started:.3f}s",
             json.dumps(first_final, ensure_ascii=False),
         )
-        second_wav = _speak(base, SECOND)
+        second_wav = _speak(path, SECOND)
         rate2, pcm2 = _pcm_from_wav(second_wav)
         pcm2 = _resample(pcm2, rate2, sample_rate)
         second_started = time.perf_counter()
         second, _partial2, _at2, _frame2, _sending2 = await _hear_utterance(
-            socket,
+            connection,
             pcm2,
             sample_rate,
         )
@@ -255,11 +277,11 @@ async def _run(base: str) -> None:
 
 
 def main() -> None:
-    """Drive health, speak, and hear against BASE_URL."""
+    """Drive health, speak, and hear against the speech socket path."""
     _must_not_have_imported_speech()
     if len(sys.argv) != 2:
-        raise SystemExit("usage: contract_client.py http://127.0.0.1:PORT")
-    asyncio.run(_run(sys.argv[1].rstrip("/")))
+        raise SystemExit("usage: contract_client.py SOCKET_PATH")
+    asyncio.run(_run(Path(sys.argv[1])))
 
 
 if __name__ == "__main__":

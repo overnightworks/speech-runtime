@@ -25,8 +25,6 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="SPEECH_", hide_input_in_errors=True)
 
-    host: str = "127.0.0.1"
-    port: int = 8090
     device: str = "cuda"
     speaking_model: str = DEFAULT_SPEAKING_MODEL
     hearing_model: str = DEFAULT_HEARING_MODEL
