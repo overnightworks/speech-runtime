@@ -278,14 +278,15 @@ def _state(
         VoiceId.VOXCPM,
         VoiceId.MAGPIE,
     }
-    provider_usable = not is_provider or voice_id in usable_providers
+    if is_provider and voice_id not in usable_providers:
+        return VoiceState.UNAVAILABLE
     if voice_id not in installed:
         return (
             VoiceState.UNAVAILABLE
             if voice_id in {VoiceId.QWEN, VoiceId.VOXCPM, VoiceId.MAGPIE}
             else VoiceState.NOT_DOWNLOADED
         )
-    return VoiceState.DOWNLOADED if provider_usable else VoiceState.UNAVAILABLE
+    return VoiceState.DOWNLOADED
 
 
 def _qwen_state(

@@ -9,6 +9,7 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -741,6 +742,26 @@ class _StatusScenario:
             (VoiceId.CHATTERBOX,),
             VoiceState.LOADING,
         ),
+        pytest.param(
+            _StatusScenario(
+                VoiceId.CHATTERBOX,
+                _RuntimeFacts().state(),
+                (),
+                (),
+                VoiceState.UNAVAILABLE,
+            ),
+            id="512-line4-chatterbox-without-worker",
+        ),
+        pytest.param(
+            _StatusScenario(
+                VoiceId.CHATTERBOX,
+                _RuntimeFacts().state(),
+                (),
+                (VoiceId.CHATTERBOX,),
+                VoiceState.NOT_DOWNLOADED,
+            ),
+            id="512-line4-chatterbox-worker-without-weights",
+        ),
     ],
 )
 def test_catalogue_preserves_runtime_precedence_before_download_evidence(
@@ -826,6 +847,22 @@ class _TrackedSpeaking(FakeSpeaking):
 
     def close(self) -> None:
         self.closed += 1
+
+
+def _runtime_loading(
+    selection: VoiceSelectionStore,
+    engine_factory: Callable[[VoiceId], SpeakingEngine],
+    artifact_checker: Callable[[VoiceId], bool] = lambda _voice: True,
+) -> Runtime:
+    return Runtime(
+        None,
+        FakeHearing(),
+        dependencies=RuntimeDependencies(
+            selection=selection,
+            engine_factory=engine_factory,
+            artifact_checker=artifact_checker,
+        ),
+    )
 
 
 def _switching_runtime(
@@ -1049,16 +1086,9 @@ def test_a_failed_load_preserves_the_active_engine_and_records_recovery(
     tmp_path,
 ) -> None:
     active = FakeSpeaking()
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=lambda voice: (
-                active if voice is VoiceId.PIPER else FakeSpeaking(fail=True)
-            ),
-            artifact_checker=lambda _voice: True,
-        ),
+    runtime = _runtime_loading(
+        VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+        lambda voice: active if voice is VoiceId.PIPER else FakeSpeaking(fail=True),
     )
     assert runtime.load_voice(VoiceId.PIPER) is VoiceLoadOutcome.ACTIVATED
 
@@ -1077,14 +1107,8 @@ def test_a_failed_voice_can_be_loaded_again(tmp_path) -> None:
     def factory(_voice: VoiceId) -> FakeSpeaking:
         return FakeSpeaking(fail=not ready)
 
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=factory,
-            artifact_checker=lambda _voice: True,
-        ),
+    runtime = _runtime_loading(
+        VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()), factory
     )
 
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.NOT_ACTIVATED
@@ -1102,15 +1126,7 @@ def test_directory_sync_failure_activates_the_visible_choice_with_a_notice(
     monkeypatch.setattr(
         selection, "_sync_directory", lambda: (_ for _ in ()).throw(OSError())
     )
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=selection,
-            engine_factory=lambda _voice: engine,
-            artifact_checker=lambda _voice: True,
-        ),
-    )
+    runtime = _runtime_loading(selection, lambda _voice: engine)
 
     assert (
         runtime.load_voice(VoiceId.PIPER)
@@ -1126,14 +1142,9 @@ def test_directory_sync_failure_activates_the_visible_choice_with_a_notice(
 def test_failed_voice_load_logs_the_voice_without_request_content(
     tmp_path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=lambda _voice: FakeSpeaking(fail=True),
-            artifact_checker=lambda _voice: True,
-        ),
+    runtime = _runtime_loading(
+        VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+        lambda _voice: FakeSpeaking(fail=True),
     )
     caplog.set_level(logging.ERROR)
 
@@ -1146,14 +1157,10 @@ def test_failed_voice_load_logs_the_voice_without_request_content(
 def test_artifact_check_failure_returns_a_logged_typed_outcome(
     tmp_path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=lambda _voice: pytest.fail("constructed an engine"),
-            artifact_checker=lambda _voice: (_ for _ in ()).throw(OSError("cache")),
-        ),
+    runtime = _runtime_loading(
+        VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+        lambda _voice: pytest.fail("constructed an engine"),
+        lambda _voice: (_ for _ in ()).throw(OSError("cache")),
     )
     caplog.set_level(logging.ERROR)
 
@@ -1175,14 +1182,8 @@ def test_unsafe_state_store_refuses_before_constructing_an_engine(tmp_path) -> N
         constructed.append(voice)
         return FakeSpeaking()
 
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(directory, owner_uid=os.geteuid()),
-            engine_factory=factory,
-            artifact_checker=lambda _voice: True,
-        ),
+    runtime = _runtime_loading(
+        VoiceSelectionStore(directory, owner_uid=os.geteuid()), factory
     )
 
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.NOT_ACTIVATED
@@ -1202,14 +1203,10 @@ def test_startup_selection_holds_load_guard_until_its_activation_finishes(
             return VoiceId.PIPER
 
     engines = {VoiceId.PIPER: FakeSpeaking(), VoiceId.CHATTERBOX: FakeSpeaking()}
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=HeldSelection(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=engines.__getitem__,
-            artifact_checker=lambda voice: voice in engines,
-        ),
+    runtime = _runtime_loading(
+        HeldSelection(tmp_path / "state", owner_uid=os.geteuid()),
+        engines.__getitem__,
+        lambda voice: voice in engines,
     )
     loader = threading.Thread(target=runtime.load)
     loader.start()
@@ -1248,15 +1245,7 @@ def test_duplicate_load_is_refused_and_retained_chatterbox_is_not_rebuilt(
         engines.append(engine)
         return engine
 
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=store,
-            engine_factory=factory,
-            artifact_checker=lambda _voice: True,
-        ),
-    )
+    runtime = _runtime_loading(store, factory)
     first = threading.Thread(target=runtime.load_voice, args=(VoiceId.CHATTERBOX,))
     first.start()
     assert entered.wait(timeout=5)
@@ -1337,14 +1326,8 @@ def test_shutdown_winning_before_pending_registration_never_loads_or_publishes(
         assert release.wait(timeout=5)
         return engine
 
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=factory,
-            artifact_checker=lambda _voice: True,
-        ),
+    runtime = _runtime_loading(
+        VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()), factory
     )
     activation = threading.Thread(target=runtime.load_voice, args=(VoiceId.CHATTERBOX,))
     activation.start()
@@ -1376,15 +1359,7 @@ def test_every_speaking_surface_reconciles_a_dead_active_without_fallback(
     engine = ClosableSpeaking()
     engine.retain_when_inactive = False
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=store,
-            engine_factory=lambda _voice: engine,
-            artifact_checker=lambda _voice: True,
-        ),
-    )
+    runtime = _runtime_loading(store, lambda _voice: engine)
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
     engine.ready = False
     settings = Settings(voice_cache=tmp_path, huggingface_cache=tmp_path)
@@ -1424,15 +1399,7 @@ def test_nonstreaming_provider_failure_reconciles_and_allows_a_fresh_load(
     replacement = ClosableSpeaking()
     engines = iter((failed, replacement))
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=store,
-            engine_factory=lambda _voice: next(engines),
-            artifact_checker=lambda _voice: True,
-        ),
-    )
+    runtime = _runtime_loading(store, lambda _voice: next(engines))
     assert runtime.load_voice(VoiceId.QWEN) is VoiceLoadOutcome.ACTIVATED
     failed.ready = False
 
@@ -1486,14 +1453,9 @@ def test_failed_active_reconciliation_excludes_retry_until_close_finishes(
     failed.retain_when_inactive = False
     replacement = FakeSpeaking()
     created = iter((failed, replacement))
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=lambda _voice: next(created),
-            artifact_checker=lambda _voice: True,
-        ),
+    runtime = _runtime_loading(
+        VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
+        lambda _voice: next(created),
     )
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
     failed.ready = False
