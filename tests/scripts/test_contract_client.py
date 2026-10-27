@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def _script(name: str) -> ModuleType:
-    path = Path(__file__).resolve().parents[1] / "scripts" / f"{name}.py"
+    path = Path(__file__).resolve().parents[2] / "scripts" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None
     assert spec.loader is not None
@@ -34,7 +34,7 @@ def _script(name: str) -> ModuleType:
 
 
 CLIENT = _script("contract_client")
-PROVE = _script("prove")
+PROVE = _script("prove_speech")
 SAMPLE_RATE = 16_000
 SENTENCE_START = "Die Kamera zeigt den Vortragenden"
 

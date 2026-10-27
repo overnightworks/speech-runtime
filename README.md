@@ -41,7 +41,7 @@ display processes. Qwen's source integration makes no joint-residency or
 latency claim before the target-machine proof.
 
 Measured on this RTX 3090 (24 GB), one German sentence (14 words) and one
-English sentence (15 words), `scripts/prove.py`, 5 repetitions each, median
+English sentence (15 words), `scripts/prove_speech.py`, 5 repetitions each, median
 reported, 08.09.2026. The operator's live speech process (Piper + Whisper,
 ~6.4 GB) was resident on the card throughout both runs and was not stopped.
 
@@ -78,7 +78,7 @@ implicit net both need `pkg_resources`, restored by pinning `setuptools`):
 | Card with Chatterbox + Whisper resident (before any `/speak` call) | 13465 MiB |
 | Chatterbox + hearing footprint together | ~7169 MiB GPU (Chatterbox itself ~3.5 GB, matching #70's inference for a 0.5B model beside Whisper's ~3.9 GB) |
 
-`scripts/prove.py` now fails the run the moment any single repetition, in
+`scripts/prove_speech.py` now fails the run the moment any single repetition, in
 either language, misses its first-byte limit — a passing run is the proof
 that every repetition held, not just the medians. All ten repetitions (5
 German, 5 English) stayed under the 1.0 s limit on this run; the worst single
@@ -86,7 +86,7 @@ repetition was 0.555 s. Constructing the real watermarker at load time cost no
 measurable per-request latency, because the streamed path never calls it.
 Load now synthesises a short German warmup so `ready` means the first real
 sentence is already in budget — a cold first request before that warmup
-existed took 1.362 s. `scripts/prove.py` writes the German WAV of the run it
+existed took 1.362 s. `scripts/prove_speech.py` writes the German WAV of the run it
 just proved to `/tmp/issue-83-voice/german.wav` for a listening judgment.
 
 CTranslate2 does not bundle CUDA. This project installs `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` and preloads them at start.
@@ -101,7 +101,7 @@ Weights stay in:
 
 ## CPU
 
-Hearing on the CPU with `scripts/prove.py --measure`, 26.10.2026: AMD Ryzen 5
+Hearing on the CPU with `scripts/prove_speech.py --measure`, 26.10.2026: AMD Ryzen 5
 5600X, 12 threads, 60 GB, `SPEECH_DEVICE=cpu`, `CUDA_VISIBLE_DEVICES` empty
 for speech and the client, Piper `de_DE-thorsten-medium`, the first sentence
 (14 words) five times on one socket, the same pacing loop and 0.9 s of client
@@ -214,7 +214,7 @@ large-v3) pass through; on `cpu` the card is hidden from speech with an empty
 `HF_HUB_OFFLINE=1` is the default and resolves `refs/main`:
 
 ```sh
-uv run python scripts/prove.py
+uv run python scripts/prove_speech.py
 ```
 
 Every run reports load to ready, the card's compute pids at health ready and
@@ -224,7 +224,7 @@ missed gates kept as values):
 
 ```sh
 SPEECH_DEVICE=cpu SPEECH_SPEAKING_MODEL=de_DE-thorsten-medium \
-  OMP_NUM_THREADS=4 uv run python scripts/prove.py --measure
+  OMP_NUM_THREADS=4 uv run python scripts/prove_speech.py --measure
 ```
 
 Checks:
