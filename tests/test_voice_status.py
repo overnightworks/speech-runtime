@@ -43,16 +43,16 @@ from presentator_speech.voices import (
     VoiceState,
     statuses,
 )
-from tests.conftest import FakeHearing, FakeSpeaking
-from tests.test_provider_process import _assert_reaped, _closed_provider, _observed
-from tests.test_speak import (
-    _ASGI_TIMEOUT_SECONDS,
-    _response_body,
-    _speak_once,
-    _speak_response,
-    _speak_scope,
-    _wav_body,
+from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.speak_support import (
+    ASGI_TIMEOUT_SECONDS,
+    response_body,
+    speak_once,
+    speak_response,
+    speak_scope,
+    wav_body,
 )
+from tests.support.worker_support import assert_reaped, closed_provider, observed
 
 
 def _captured_engine(runtime: Runtime) -> SpeakingEngine:
@@ -387,7 +387,7 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
 def test_magpie_catalogue_and_factory_import_no_provider_packages(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    provider_root, cache = _closed_provider(tmp_path, provider_name="magpie")
+    provider_root, cache = closed_provider(tmp_path, provider_name="magpie")
     _complete_magpie_snapshots(cache)
     settings = Settings(
         provider_root=provider_root,
@@ -472,19 +472,19 @@ async def _disconnect_after_child_receives_request(
                 pcm_sent.set()
                 await never.wait()
 
-    call = asyncio.create_task(app(_speak_scope(), receive, send))
+    call = asyncio.create_task(app(speak_scope(), receive, send))
     await asyncio.to_thread(
         _wait_for_request_count, request_ids, expected_request_count
     )
-    await asyncio.wait_for(pcm_sent.wait(), timeout=_ASGI_TIMEOUT_SECONDS)
+    await asyncio.wait_for(pcm_sent.wait(), timeout=ASGI_TIMEOUT_SECONDS)
     disconnect.set()
-    await asyncio.wait_for(delivered.wait(), timeout=_ASGI_TIMEOUT_SECONDS)
-    await asyncio.wait_for(call, timeout=_ASGI_TIMEOUT_SECONDS)
+    await asyncio.wait_for(delivered.wait(), timeout=ASGI_TIMEOUT_SECONDS)
+    await asyncio.wait_for(call, timeout=ASGI_TIMEOUT_SECONDS)
     return messages
 
 
 def _wait_for_request_count(request_ids: Path, expected_request_count: int) -> None:
-    deadline = time.monotonic() + _ASGI_TIMEOUT_SECONDS
+    deadline = time.monotonic() + ASGI_TIMEOUT_SECONDS
     while (
         not request_ids.exists()
         or len(request_ids.read_text().splitlines()) < expected_request_count
@@ -497,7 +497,7 @@ def _wait_for_request_count(request_ids: Path, expected_request_count: int) -> N
 def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
     tmp_path: Path,
 ) -> None:
-    provider_root, cache = _closed_provider(tmp_path, provider_name="voxcpm")
+    provider_root, cache = closed_provider(tmp_path, provider_name="voxcpm")
     _complete_voxcpm_snapshot(cache)
     settings = Settings(
         provider_root=provider_root,
@@ -552,8 +552,8 @@ def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
         assert any(message["type"] == "http.response.start" for message in disconnected)
         assert (cache / "cancel-observed").read_text().splitlines() == ["1"]
 
-        later = asyncio.run(_speak_once(public))
-        rate, pcm = pcm_from_wav(_wav_body(later))
+        later = asyncio.run(speak_once(public))
+        rate, pcm = pcm_from_wav(wav_body(later))
         assert rate == VOXCPM_SAMPLE_RATE
         assert pcm == b"\x00\x01"
         assert request_ids.read_text().splitlines() == ["1", "2", "1", "2"]
@@ -566,7 +566,7 @@ def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
 def test_magpie_load_restore_samples_public_speech_and_deselect_reap(
     tmp_path: Path,
 ) -> None:
-    provider_root, cache = _closed_provider(tmp_path, provider_name="magpie")
+    provider_root, cache = closed_provider(tmp_path, provider_name="magpie")
     model, codec = _complete_magpie_snapshots(cache)
     settings = Settings(
         provider_root=provider_root,
@@ -604,7 +604,7 @@ def test_magpie_load_restore_samples_public_speech_and_deselect_reap(
             assert response.status_code == 200
             assert rate == MAGPIE_SAMPLE_RATE
             assert pcm == b"\x00\x01"
-        _, _, process_id, _ = _observed(cache)
+        _, _, process_id, _ = observed(cache)
         assert selection.read() is VoiceId.MAGPIE
         initial.close()
 
@@ -618,15 +618,15 @@ def test_magpie_load_restore_samples_public_speech_and_deselect_reap(
         assert any(message["type"] == "http.response.start" for message in disconnected)
         assert (cache / "cancel-observed").read_text().splitlines() == ["1"]
 
-        later = asyncio.run(_speak_once(public))
-        rate, pcm = pcm_from_wav(_wav_body(later))
+        later = asyncio.run(speak_once(public))
+        rate, pcm = pcm_from_wav(wav_body(later))
         assert rate == MAGPIE_SAMPLE_RATE
         assert pcm == b"\x00\x01"
         assert model.is_file()
         assert codec.is_file()
 
         assert restored.load_voice(VoiceId.PIPER) is VoiceLoadOutcome.ACTIVATED
-        _assert_reaped(process_id)
+        assert_reaped(process_id)
         assert model.is_file()
         assert codec.is_file()
     finally:
@@ -903,7 +903,7 @@ def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speec
         target,
         ObservedSelection(tmp_path / "state", owner_uid=os.geteuid()),
     )
-    response = _speak_response(runtime)
+    response = speak_response(runtime)
     outcomes = []
     switching = threading.Thread(
         target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
@@ -912,11 +912,11 @@ def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speec
     assert committed.wait(timeout=5)
 
     with pytest.raises(HTTPException) as refused:
-        _speak_response(runtime)
+        speak_response(runtime)
     assert refused.value.status_code == 503
     assert switching.is_alive()
 
-    rate, pcm = pcm_from_wav(_response_body(response))
+    rate, pcm = pcm_from_wav(response_body(response))
     switching.join(timeout=5)
     assert not switching.is_alive()
     assert rate == 24_000
@@ -945,7 +945,7 @@ def test_shutdown_before_chatterbox_detach_transfers_old_and_pending_cleanup_onc
         target,
         ObservedSelection(tmp_path / "state", owner_uid=os.geteuid()),
     )
-    response = _speak_response(runtime)
+    response = speak_response(runtime)
     outcomes = []
     switching = threading.Thread(
         target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
@@ -956,7 +956,7 @@ def test_shutdown_before_chatterbox_detach_transfers_old_and_pending_cleanup_onc
     runtime.begin_shutdown()
     closing = threading.Thread(target=runtime.close)
     closing.start()
-    _response_body(response)
+    response_body(response)
     switching.join(timeout=5)
     closing.join(timeout=5)
 

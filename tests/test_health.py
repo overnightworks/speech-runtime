@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import FakeHearing, FakeSpeaking, an_app
+from tests.support.fakes_support import FakeHearing, FakeSpeaking, an_app
 
 
 def test_health_answers_while_models_are_not_ready() -> None:

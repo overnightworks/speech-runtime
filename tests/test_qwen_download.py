@@ -26,7 +26,7 @@ from presentator_speech.voices import (
     VoiceLoadOutcome,
     VoiceState,
 )
-from tests.conftest import FakeHearing, FakeSpeaking
+from tests.support.fakes_support import FakeHearing, FakeSpeaking
 
 
 class _TrackedSpeaking(FakeSpeaking):

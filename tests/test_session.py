@@ -10,7 +10,7 @@ from presentator_speech.hearing import (
     HearingSession,
 )
 from presentator_speech.pcm import BYTES_PER_SAMPLE
-from tests.conftest import sine_pcm
+from tests.support.fakes_support import sine_pcm
 
 
 def _silence(seconds: float) -> bytes:

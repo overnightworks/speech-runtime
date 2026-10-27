@@ -20,7 +20,7 @@ from presentator_speech.service import (
     failed_to_load_message,
 )
 from presentator_speech.voices import VoiceId
-from tests.conftest import FakeHearing, FakeSpeaking, an_app
+from tests.support.fakes_support import FakeHearing, FakeSpeaking, an_app
 
 
 @pytest.mark.parametrize(

@@ -12,8 +12,8 @@ import pytest
 
 from presentator_speech.pcm import pcm_from_wav
 from presentator_speech.service import Runtime
-from tests.conftest import SPEAK_SAMPLE_RATE, FakeHearing, FakeSpeaking
-from tests.test_private_socket import _serving
+from tests.support.fakes_support import SPEAK_SAMPLE_RATE, FakeHearing, FakeSpeaking
+from tests.support.private_server_support import serving_privately
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -59,7 +59,7 @@ def test_a_partial_arriving_after_the_last_frame_is_rejected_as_late() -> None:
 def test_both_proof_scripts_reach_a_running_speech_over_its_socket(tmp_path) -> None:
     async def scenario() -> tuple[object, object, bytes, bytes]:
         runtime = Runtime(FakeSpeaking(), FakeHearing(), memory_probe=lambda: 0)
-        async with _serving(tmp_path, runtime) as server:
+        async with serving_privately(tmp_path, runtime) as server:
             return (
                 await asyncio.to_thread(CLIENT._get_json, server.path, "/health"),  # noqa: SLF001
                 await asyncio.to_thread(PROVE._get_json, server.path, "/health"),  # noqa: SLF001

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import os
 import struct
 import subprocess
@@ -41,132 +40,12 @@ from presentator_speech.provider_process import (
 from presentator_speech.selection import VoiceSelectionStore
 from presentator_speech.service import Runtime, RuntimeDependencies
 from presentator_speech.voices import VoiceId, VoiceLoadOutcome, VoiceRecoveryKind
-from tests.conftest import FakeHearing, FakeSpeaking
-
-_WORKER = r"""#!{python}
-import argparse
-import os
-import signal
-import struct
-import time
-from pathlib import Path
-
-protocol_fd = os.dup(1)
-null = os.open(os.devnull, os.O_WRONLY)
-os.dup2(null, 1)
-os.close(null)
-print("provider print noise", flush=True)
-os.write(1, b"native provider noise\n")
-
-from presentator_speech_provider_contract import (
-    MAX_FRAME_LENGTH, Frame, FrameKind, ProviderFailure, read_frame, write_frame
-)
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--expected-parent-pid", required=True)
-parser.add_argument("--device", required=True)
-parser.add_argument("--cache", required=True)
-if {provider!r} in ("qwen", "magpie"):
-    parser.add_argument("--speaker", required=True)
-arguments = parser.parse_args()
-cache = Path(arguments.cache)
-cache.mkdir(parents=True, exist_ok=True)
-(cache / "worker-observed").write_text(
-    repr(os.getcwd()) + "\n" + repr(os.environ.copy()) + "\n" +
-    repr(os.getpid()) + "\n" + repr(arguments.__dict__), encoding="utf-8"
-)
-stream = os.fdopen(protocol_fd, "wb", buffering=0)
-behavior = {behavior!r}
-if behavior == "startup-exit":
-    raise SystemExit(1)
-if behavior == "startup-oversized":
-    stream.write(struct.pack("!I", MAX_FRAME_LENGTH + 1))
-    raise SystemExit(1)
-if behavior == "startup-failed":
-    write_frame(stream, Frame(FrameKind.FAILED, 0, b"\x01"))
-    raise SystemExit(1)
-if {provider!r} == "magpie":
-    rate = 22050
-elif {provider!r} == "voxcpm":
-    rate = 48000
-else:
-    rate = 24000
-write_frame(stream, Frame(FrameKind.READY, 0, bytes((0, 1)) + rate.to_bytes(4, "big")))
-if behavior == "idle-exit":
-    while not (cache / "exit-now").exists():
-        time.sleep(0.01)
-    raise SystemExit(1)
-if behavior == "term-resistant":
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-last_terminal = 0
-while True:
-    frame = read_frame(__import__("sys").stdin.buffer)
-    if frame.kind is FrameKind.CANCEL and frame.request_id == last_terminal:
-        continue
-    if frame.kind is not FrameKind.SYNTHESIZE:
-        write_frame(stream, Frame(FrameKind.FAILED, 0, b"\x01"))
-        raise SystemExit(1)
-    request_id = frame.request_id
-    text = frame.payload[1:].decode()
-    print("synthesis print noise", flush=True)
-    os.write(1, b"synthesis native noise\n")
-    with (cache / "request-ids").open("a", encoding="utf-8") as ids:
-        ids.write(f"{{request_id}}\n")
-    if text == "stale":
-        write_frame(stream, Frame(FrameKind.PCM, request_id + 1, b"\x00\x01"))
-        continue
-    if text == "wrong-direction":
-        write_frame(stream, Frame(FrameKind.READY, 0, b"\x00\x01\x00\x00]\xc0"))
-        continue
-    if text == "unexpected-cancelled":
-        write_frame(stream, Frame(FrameKind.CANCELLED, request_id, b""))
-        continue
-    if text == "failed":
-        write_frame(stream, Frame(FrameKind.FAILED, request_id, b"\x01"))
-        raise SystemExit(1)
-    write_frame(stream, Frame(FrameKind.PCM, request_id, b"\x00\x01"))
-    if text == "midstream-exit":
-        raise SystemExit(1)
-    if text == "wait-cancel":
-        cancel = read_frame(__import__("sys").stdin.buffer)
-        with (cache / "cancel-observed").open("a", encoding="utf-8") as observed:
-            observed.write(f"{{cancel.request_id}}\n")
-        write_frame(stream, Frame(FrameKind.CANCELLED, cancel.request_id, b""))
-        last_terminal = request_id
-        continue
-    if behavior == "partial-cancel":
-        read_frame(__import__("sys").stdin.buffer)
-        (cache / "cancel-observed").touch()
-        stream.write(struct.pack("!IBQ", 11, FrameKind.COMPLETE, request_id) + b"x")
-        time.sleep(30)
-    write_frame(stream, Frame(FrameKind.COMPLETE, request_id, b""))
-    if behavior == "duplicate-terminal":
-        write_frame(stream, Frame(FrameKind.COMPLETE, request_id, b""))
-    last_terminal = request_id
-"""
-
-
-def _closed_provider(
-    tmp_path: Path, behavior: str = "normal", provider_name: str = "chatterbox"
-) -> tuple[Path, Path]:
-    root = tmp_path / "providers"
-    provider = root / provider_name
-    entrypoint = provider / ".venv" / "bin" / f"presentator-{provider_name}-worker"
-    entrypoint.parent.mkdir(parents=True, exist_ok=True)
-    entrypoint.write_text(
-        _WORKER.format(
-            python=sys.executable,
-            behavior=behavior,
-            provider=provider_name,
-        ),
-        encoding="utf-8",
-    )
-    entrypoint.chmod(0o700)
-    return root, tmp_path / "cache"
+from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.worker_support import assert_reaped, closed_provider, observed
 
 
 def _engine(tmp_path: Path, behavior: str = "normal") -> ProviderProcess:
-    root, cache = _closed_provider(tmp_path, behavior)
+    root, cache = closed_provider(tmp_path, behavior)
     return _provider_process(root, cache)
 
 
@@ -200,21 +79,6 @@ def _provider_process(
     )
 
 
-def _observed(cache: Path) -> tuple[str, dict[str, str], int, dict[str, str]]:
-    lines = (cache / "worker-observed").read_text(encoding="utf-8").splitlines()
-    return (
-        ast.literal_eval(lines[0]),
-        ast.literal_eval(lines[1]),
-        ast.literal_eval(lines[2]),
-        ast.literal_eval(lines[3]),
-    )
-
-
-def _assert_reaped(pid: int) -> None:
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
-
-
 def test_protocol_round_trips_partial_reads_and_consecutive_frames() -> None:
     encoded = BytesIO()
     write_frame(encoded, Frame(FrameKind.PCM, 1, b"\x00\x01"))
@@ -245,7 +109,7 @@ def test_version_one_ready_encodes_the_declared_native_rate(sample_rate: int) ->
 
 
 def test_parent_rejects_a_worker_that_advertises_another_rate(tmp_path: Path) -> None:
-    root, cache = _closed_provider(tmp_path, provider_name="voxcpm")
+    root, cache = closed_provider(tmp_path, provider_name="voxcpm")
     engine = _provider_process(root, cache)
 
     with pytest.raises(RuntimeError, match="speech provider failed"):
@@ -281,7 +145,7 @@ def test_protocol_refuses_invalid_synthesis_payloads(payload: bytes) -> None:
 def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, cache = _closed_provider(tmp_path)
+    root, cache = closed_provider(tmp_path)
     cublas = root / "chatterbox/.venv/lib/python3.12/site-packages/nvidia/cublas/lib"
     cublas.mkdir(parents=True)
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
@@ -315,7 +179,7 @@ def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
     assert any(
         thread.name == "speech-provider-owner" for thread in threading.enumerate()
     )
-    cwd, environment, pid, arguments = _observed(cache)
+    cwd, environment, pid, arguments = observed(cache)
     assert list(engine.pcm_chunks("later", "en")) == [b"\x00\x01"]
     engine.close()
 
@@ -357,7 +221,7 @@ def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
         "close_fds": True,
         "start_new_session": True,
     }
-    _assert_reaped(pid)
+    assert_reaped(pid)
 
 
 @pytest.mark.parametrize("first", ["wait-cancel", "normal"])
@@ -412,9 +276,9 @@ def test_early_exit_and_oversized_handshake_fail_without_an_owned_process(
     engine = _engine(tmp_path, behavior)
     with pytest.raises(RuntimeError, match="speech provider failed"):
         engine.load()
-    _, _, pid, _ = _observed(tmp_path / "cache")
+    _, _, pid, _ = observed(tmp_path / "cache")
     engine.close()
-    _assert_reaped(pid)
+    assert_reaped(pid)
 
 
 def test_duplicate_terminal_is_rejected_before_a_later_request(tmp_path: Path) -> None:
@@ -442,10 +306,10 @@ def test_partial_cancel_frame_cannot_extend_the_single_drain_deadline(
     started = time.monotonic()
     chunks.close()
     assert time.monotonic() - started < 1
-    _, _, pid, _ = _observed(tmp_path / "cache")
+    _, _, pid, _ = observed(tmp_path / "cache")
     engine.close()
     assert engine.ready is False
-    _assert_reaped(pid)
+    assert_reaped(pid)
 
 
 def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
@@ -457,7 +321,7 @@ def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
     monkeypatch.setattr(
         "presentator_speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05
     )
-    root, cache = _closed_provider(tmp_path, "partial-cancel", "qwen")
+    root, cache = closed_provider(tmp_path, "partial-cancel", "qwen")
     constructed: list[ProviderProcess] = []
 
     def factory(_voice: VoiceId) -> ProviderProcess:
@@ -484,7 +348,7 @@ def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
     chunks = first.pcm_chunks("cancel", "de")
     assert next(chunks) == b"\x00\x01"
     chunks.close()
-    _, _, first_pid, _ = _observed(cache)
+    _, _, first_pid, _ = observed(cache)
 
     snapshot = runtime.snapshot(Settings(huggingface_cache=tmp_path))
 
@@ -493,9 +357,9 @@ def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
     assert snapshot.recovery.voice is VoiceId.QWEN
     assert store.read() is VoiceId.QWEN
     assert runtime.capture_speaking() is None
-    _assert_reaped(first_pid)
+    assert_reaped(first_pid)
 
-    _closed_provider(tmp_path, "normal", "qwen")
+    closed_provider(tmp_path, "normal", "qwen")
     assert runtime.load_voice(VoiceId.QWEN) is VoiceLoadOutcome.ACTIVATED
     assert len(constructed) == 2
     runtime.close()
@@ -543,8 +407,8 @@ def test_startup_provider_failure_preserves_piper_without_fatal_exit(
     assert admission.speaking is piper
     admission.close()
     assert fatal.is_set() is False
-    _, _, pid, _ = _observed(tmp_path / "cache")
-    _assert_reaped(pid)
+    _, _, pid, _ = observed(tmp_path / "cache")
+    assert_reaped(pid)
 
 
 def test_deselecting_chatterbox_reaps_provider_before_load_returns(
@@ -552,7 +416,7 @@ def test_deselecting_chatterbox_reaps_provider_before_load_returns(
 ) -> None:
     piper = FakeSpeaking()
     chatterboxes: list[ProviderProcess] = []
-    root, cache = _closed_provider(tmp_path)
+    root, cache = closed_provider(tmp_path)
 
     def factory(voice: VoiceId) -> FakeSpeaking | ProviderProcess:
         if voice is VoiceId.PIPER:
@@ -572,12 +436,12 @@ def test_deselecting_chatterbox_reaps_provider_before_load_returns(
     )
     try:
         assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
-        _, _, first_pid, _ = _observed(tmp_path / "cache")
+        _, _, first_pid, _ = observed(tmp_path / "cache")
 
         assert runtime.load_voice(VoiceId.PIPER) is VoiceLoadOutcome.ACTIVATED
-        _assert_reaped(first_pid)
+        assert_reaped(first_pid)
         assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
-        _, _, second_pid, _ = _observed(tmp_path / "cache")
+        _, _, second_pid, _ = observed(tmp_path / "cache")
 
         assert second_pid != first_pid
         assert len(chatterboxes) == 2
@@ -656,14 +520,14 @@ def test_close_allows_bounded_active_cancel_before_reaping(
     assert closed == [True]
     assert time.monotonic() - started < 1
     assert (tmp_path / "cache/cancel-observed").exists()
-    _, _, pid, _ = _observed(tmp_path / "cache")
-    _assert_reaped(pid)
+    _, _, pid, _ = observed(tmp_path / "cache")
+    assert_reaped(pid)
 
 
 def test_shutdown_during_handshake_closes_pending_without_publication(
     tmp_path: Path,
 ) -> None:
-    root, cache = _closed_provider(tmp_path, "term-resistant")
+    root, cache = closed_provider(tmp_path, "term-resistant")
     entrypoint = root / "chatterbox/.venv/bin/presentator-chatterbox-worker"
     source = entrypoint.read_text(encoding="utf-8")
     entrypoint.write_text(
@@ -697,8 +561,8 @@ def test_shutdown_during_handshake_closes_pending_without_publication(
     assert not activation.is_alive()
     assert runtime.capture_speaking() is None
     assert not store.path.exists()
-    _, _, pid, _ = _observed(cache)
-    _assert_reaped(pid)
+    _, _, pid, _ = observed(cache)
+    assert_reaped(pid)
 
 
 def test_missing_entrypoint_failed_exec_leaves_no_retained_engine(
@@ -761,7 +625,7 @@ def test_real_child_is_reaped_when_publication_setup_raises(
     assert fatal.wait(timeout=5)
     engine.close()
     assert len(started) == 1
-    _assert_reaped(started[0])
+    assert_reaped(started[0])
 
 
 def test_cleanup_failure_reaps_and_reports_fatal_lifecycle(
@@ -802,7 +666,7 @@ def test_cleanup_failure_reaps_and_reports_fatal_lifecycle(
 
     assert fatal.wait(timeout=5)
     assert len(started) == 1
-    _assert_reaped(started[0])
+    assert_reaped(started[0])
 
 
 def test_term_resistant_leader_reaches_kill_and_reap(
@@ -813,9 +677,9 @@ def test_term_resistant_leader_reaches_kill_and_reap(
     )
     engine = _engine(tmp_path, "term-resistant")
     engine.load()
-    _, _, pid, _ = _observed(tmp_path / "cache")
+    _, _, pid, _ = observed(tmp_path / "cache")
     engine.close()
-    _assert_reaped(pid)
+    assert_reaped(pid)
 
 
 def test_parent_death_signal_follows_the_real_creator_thread(tmp_path: Path) -> None:

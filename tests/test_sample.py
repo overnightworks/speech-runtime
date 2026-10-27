@@ -20,8 +20,8 @@ from presentator_speech.service import (
     RuntimeDependencies,
 )
 from presentator_speech.voices import VoiceId, VoiceLoadOutcome
-from tests.conftest import FakeHearing, FakeSpeaking
-from tests.test_speak import _ASGI_TIMEOUT_SECONDS, info_comment_before_data
+from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.speak_support import ASGI_TIMEOUT_SECONDS, info_comment_before_data
 
 
 class _ClientSendError(RuntimeError):
@@ -97,7 +97,7 @@ def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(tmp_path) 
             self.heard_text = text
             self.heard_language = language
             self.entered.set()
-            assert self.release.wait(timeout=_ASGI_TIMEOUT_SECONDS)
+            assert self.release.wait(timeout=ASGI_TIMEOUT_SECONDS)
             yield from super().pcm_chunks(text, language)
 
     speaking = GatedSpeaking()
@@ -141,12 +141,12 @@ def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(tmp_path) 
             "server": ("test", 80),
         }
         speaking_task = asyncio.create_task(public(scope, receive, send))
-        assert await asyncio.to_thread(speaking.entered.wait, _ASGI_TIMEOUT_SECONDS)
+        assert await asyncio.to_thread(speaking.entered.wait, ASGI_TIMEOUT_SECONDS)
         waiting = TestClient(create_control_app(settings, runtime)).post(
             "/voices/piper/sample/de"
         )
         speaking.release.set()
-        await asyncio.wait_for(speaking_task, timeout=_ASGI_TIMEOUT_SECONDS)
+        await asyncio.wait_for(speaking_task, timeout=ASGI_TIMEOUT_SECONDS)
         return waiting.status_code
 
     assert asyncio.run(scenario()) == 409
@@ -165,7 +165,7 @@ def test_second_sample_refuses_while_the_first_sample_streams(tmp_path) -> None:
 
         def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
             self.entered.set()
-            assert self.release.wait(timeout=_ASGI_TIMEOUT_SECONDS)
+            assert self.release.wait(timeout=ASGI_TIMEOUT_SECONDS)
             yield from super().pcm_chunks(text, language)
 
     speaking = GatedSpeaking()
@@ -205,10 +205,10 @@ def test_second_sample_refuses_while_the_first_sample_streams(tmp_path) -> None:
             "server": ("test", 80),
         }
         first = asyncio.create_task(app(scope, receive, send))
-        assert await asyncio.to_thread(speaking.entered.wait, _ASGI_TIMEOUT_SECONDS)
+        assert await asyncio.to_thread(speaking.entered.wait, ASGI_TIMEOUT_SECONDS)
         waiting = TestClient(app).post("/voices/piper/sample/de")
         speaking.release.set()
-        await asyncio.wait_for(first, timeout=_ASGI_TIMEOUT_SECONDS)
+        await asyncio.wait_for(first, timeout=ASGI_TIMEOUT_SECONDS)
         return waiting.status_code
 
     assert asyncio.run(scenario()) == 409
@@ -250,7 +250,7 @@ def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(tmp_path) -
 
         def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
             self.entered.set()
-            assert self.release.wait(timeout=_ASGI_TIMEOUT_SECONDS)
+            assert self.release.wait(timeout=ASGI_TIMEOUT_SECONDS)
             yield from super().pcm_chunks(text, language)
 
     first = HeldSpeaking()
@@ -289,7 +289,7 @@ def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(tmp_path) -
 
     request = threading.Thread(target=sample)
     request.start()
-    assert first.entered.wait(timeout=_ASGI_TIMEOUT_SECONDS)
+    assert first.entered.wait(timeout=ASGI_TIMEOUT_SECONDS)
     outcome: list[VoiceLoadOutcome | None] = []
     finished = threading.Event()
 
@@ -299,11 +299,11 @@ def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(tmp_path) -
 
     switching = threading.Thread(target=switch)
     switching.start()
-    assert committed.wait(timeout=_ASGI_TIMEOUT_SECONDS)
+    assert committed.wait(timeout=ASGI_TIMEOUT_SECONDS)
     assert not finished.wait(timeout=0.1)
     first.release.set()
-    request.join(timeout=_ASGI_TIMEOUT_SECONDS)
-    switching.join(timeout=_ASGI_TIMEOUT_SECONDS)
+    request.join(timeout=ASGI_TIMEOUT_SECONDS)
+    switching.join(timeout=ASGI_TIMEOUT_SECONDS)
     assert not request.is_alive()
     assert not switching.is_alive()
     assert outcome == [VoiceLoadOutcome.ACTIVATED]
@@ -355,7 +355,7 @@ def test_sample_response_construction_failure_releases_admission_for_deselection
         target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
     )
     switching.start()
-    switching.join(timeout=_ASGI_TIMEOUT_SECONDS)
+    switching.join(timeout=ASGI_TIMEOUT_SECONDS)
     assert not switching.is_alive()
     assert outcomes == [VoiceLoadOutcome.ACTIVATED]
     assert closed == [1]

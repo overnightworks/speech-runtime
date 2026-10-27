@@ -1,0 +1,63 @@
+"""A real private-socket speech server for tests."""
+
+import asyncio
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
+import uvicorn
+from starlette.types import Message, Receive, Scope, Send
+
+from presentator_speech.__main__ import PrivateSocket
+from presentator_speech.config import Settings
+from presentator_speech.control import create_control_app
+from presentator_speech.service import Runtime
+from tests.support.fakes_support import GATE_TIMEOUT_SECONDS
+
+
+@dataclass(frozen=True, slots=True)
+class PrivateServer:
+    path: Path
+    hear_handler_returned: asyncio.Event
+    speak_disconnect_received: asyncio.Event
+
+
+@asynccontextmanager
+async def serving_privately(
+    directory: Path, runtime: Runtime
+) -> AsyncIterator[PrivateServer]:
+    """Serve the private app on a real PrivateSocket and stop it on exit."""
+    settings = Settings(
+        private_directory=directory, PRESENTATOR_RUNTIME_UID=os.geteuid()
+    )
+    app = create_control_app(settings, runtime)
+    hear_handler_returned = asyncio.Event()
+    speak_disconnect_received = asyncio.Event()
+
+    async def observed(scope: Scope, receive: Receive, send: Send) -> None:
+        async def watched_receive() -> Message:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                speak_disconnect_received.set()
+            return message
+
+        try:
+            await app(scope, watched_receive, send)
+        finally:
+            if scope["type"] == "websocket":
+                hear_handler_returned.set()
+
+    server = uvicorn.Server(uvicorn.Config(observed, log_level="warning"))
+    with PrivateSocket(directory, runtime_uid=os.geteuid()) as listener:
+        serving = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            yield PrivateServer(
+                directory / "speech.sock",
+                hear_handler_returned,
+                speak_disconnect_received,
+            )
+        finally:
+            server.should_exit = True
+            await asyncio.wait_for(serving, timeout=GATE_TIMEOUT_SECONDS)

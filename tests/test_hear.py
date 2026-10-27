@@ -9,7 +9,7 @@ from presentator_speech.config import HEAR_SAMPLE_RATE
 from presentator_speech.hearing import MAX_FRAME_SECONDS, HearingSession
 from presentator_speech.pcm import BYTES_PER_SAMPLE
 from presentator_speech.service import FRAME_TOO_LARGE_REASON, HEARING_FAILED_REASON
-from tests.conftest import FakeHearing, an_app, sine_pcm
+from tests.support.fakes_support import FakeHearing, an_app, sine_pcm
 
 
 def _silence(seconds: float) -> bytes:

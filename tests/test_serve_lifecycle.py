@@ -17,7 +17,7 @@ from presentator_speech.config import Settings
 from presentator_speech.selection import VoiceSelectionStore
 from presentator_speech.service import Runtime, RuntimeDependencies
 from presentator_speech.voices import VoiceId
-from tests.conftest import FakeHearing, FakeSpeaking
+from tests.support.fakes_support import FakeHearing, FakeSpeaking
 
 if TYPE_CHECKING:
     import threading
@@ -35,7 +35,7 @@ from presentator_speech.config import Settings
 from presentator_speech.selection import VoiceSelectionStore
 from presentator_speech.service import Runtime, RuntimeDependencies
 from presentator_speech.voices import VoiceId
-from tests.conftest import FakeHearing, FakeSpeaking
+from tests.support.fakes_support import FakeHearing, FakeSpeaking
 
 directory = Path(os.environ["SPEECH_TEST_DIRECTORY"])
 __main__.prepare_cuda_libraries = lambda: None

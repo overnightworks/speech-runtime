@@ -1,7 +1,6 @@
 """POST /speak streams 16-bit mono WAV that is not silence."""
 
 import asyncio
-import json
 import os
 import sys
 import threading
@@ -9,7 +8,6 @@ from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
 from starlette.responses import StreamingResponse
@@ -20,42 +18,31 @@ from starlette.status import (
 )
 
 from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
-from presentator_speech.control import create_control_app
 from presentator_speech.pcm import AI_MARK, is_silence, pcm_from_wav
 from presentator_speech.selection import VoiceSelectionStore
 from presentator_speech.service import (
     Runtime,
     RuntimeDependencies,
-    SpeakRequest,
 )
 from presentator_speech.speaking import PiperSpeaking, speaking_for_voice
 from presentator_speech.voices import VoiceId, VoiceLoadOutcome
-from tests.conftest import (
+from tests.support.fakes_support import (
     SPEAK_SAMPLE_RATE,
     FakeHearing,
     FakeSpeaking,
     GatedSpeaking,
     an_app,
 )
-
-
-def info_comment_before_data(wav: bytes) -> str | None:
-    """The RIFF INFO ICMT text, found by walking the chunks up to `data`."""
-    position = 12
-    while position + 8 <= len(wav):
-        chunk_id = wav[position : position + 4]
-        size = int.from_bytes(wav[position + 4 : position + 8], "little")
-        body = wav[position + 8 : position + 8 + size]
-        if chunk_id == b"data":
-            return None
-        if chunk_id == b"LIST" and body[:4] == b"INFO":
-            assert size % 2 == 0
-            assert body[4:8] == b"ICMT"
-            comment_size = int.from_bytes(body[8:12], "little")
-            assert body[12 : 12 + comment_size].endswith(b"\0")
-            return body[12 : 12 + comment_size - 1].decode("ascii")
-        position += 8 + size + size % 2
-    return None
+from tests.support.speak_support import (
+    ASGI_TIMEOUT_SECONDS,
+    info_comment_before_data,
+    response_body,
+    speak_body,
+    speak_once,
+    speak_response,
+    speak_scope,
+    wav_body,
+)
 
 
 def test_speak_streams_wav_that_plays_as_tone() -> None:
@@ -179,60 +166,9 @@ def test_piper_load_requires_local_onnx_and_metadata(tmp_path, monkeypatch) -> N
 # TestClient's ASGITransport never delivers a mid-stream `http.disconnect`, so the
 # regressions below drive the real ASGI 2.3 `/speak` boundary directly.
 
-_ASGI_TIMEOUT_SECONDS = 5.0
-
 
 class _ResponseBoundaryError(RuntimeError):
     """A test-controlled response construction, synthesis, or send failure."""
-
-
-def _speak_response(runtime: Runtime) -> StreamingResponse:
-    app = create_control_app(Settings(), runtime)
-    route = next(
-        route for route in app.routes if getattr(route, "path", None) == "/speak"
-    )
-    return route.endpoint(SpeakRequest(text="Hallo", language="de"))
-
-
-def _response_body(response: StreamingResponse) -> bytes:
-    async def deliver() -> bytes:
-        messages: list[dict[str, object]] = []
-        never = asyncio.Event()
-
-        async def receive() -> dict[str, object]:
-            await never.wait()
-            return {"type": "http.disconnect"}
-
-        async def send(message: dict[str, object]) -> None:
-            messages.append(message)
-
-        await response(
-            {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.3"}},
-            receive,
-            send,
-        )
-        return _wav_body(messages)
-
-    return asyncio.run(deliver())
-
-
-def _speak_scope() -> dict[str, object]:
-    return {
-        "type": "http",
-        "asgi": {"version": "3.0", "spec_version": "2.3"},
-        "http_version": "1.1",
-        "method": "POST",
-        "path": "/speak",
-        "raw_path": b"/speak",
-        "query_string": b"",
-        "headers": [(b"content-type", b"application/json")],
-        "client": ("test", 123),
-        "server": ("test", 80),
-    }
-
-
-def _speak_body() -> bytes:
-    return json.dumps({"text": "Hallo", "language": "de"}).encode()
 
 
 class _DisconnectingReceive:
@@ -254,7 +190,7 @@ class _DisconnectingReceive:
     async def __call__(self) -> dict[str, object]:
         if not self._sent_body:
             self._sent_body = True
-            return {"type": "http.request", "body": _speak_body(), "more_body": False}
+            return {"type": "http.request", "body": speak_body(), "more_body": False}
         await self._disconnect.wait()
         self.delivered.set()
         return {"type": "http.disconnect"}
@@ -283,14 +219,6 @@ class _HoldingSend:
             await self._release.wait()
 
 
-def _wav_body(messages: list[dict[str, object]]) -> bytes:
-    return b"".join(
-        message["body"]
-        for message in messages
-        if message["type"] == "http.response.body"
-    )
-
-
 def _status(messages: list[dict[str, object]]) -> int:
     return next(
         message["status"]
@@ -299,34 +227,11 @@ def _status(messages: list[dict[str, object]]) -> int:
     )
 
 
-async def _speak_once(app: FastAPI) -> list[dict[str, object]]:
-    """One full, undisturbed request through the raw ASGI boundary."""
-    messages: list[dict[str, object]] = []
-    sent = False
-    no_disconnect = asyncio.Event()  # never set: this request is never disturbed
-
-    async def receive() -> dict[str, object]:
-        nonlocal sent
-        if not sent:
-            sent = True
-            return {"type": "http.request", "body": _speak_body(), "more_body": False}
-        await no_disconnect.wait()
-        return {"type": "http.disconnect"}
-
-    async def send(message: dict[str, object]) -> None:
-        messages.append(message)
-
-    await asyncio.wait_for(
-        app(_speak_scope(), receive, send), timeout=_ASGI_TIMEOUT_SECONDS
-    )
-    return messages
-
-
 def test_speak_streams_a_full_response_through_the_raw_asgi_boundary() -> None:
-    messages = asyncio.run(_speak_once(an_app()))
+    messages = asyncio.run(speak_once(an_app()))
 
     assert _status(messages) == HTTP_200_OK
-    rate, pcm = pcm_from_wav(_wav_body(messages))
+    rate, pcm = pcm_from_wav(wav_body(messages))
     assert rate == SPEAK_SAMPLE_RATE
     assert len(pcm) > 0
     assert not is_silence(pcm)
@@ -342,12 +247,12 @@ def test_speak_disconnect_between_chunks_frees_the_voice_for_the_next_request() 
         send = _HoldingSend(hold_after_first_chunk=True)
         voice.release_first_step.set()  # synthesis proceeds straight to the first chunk
 
-        call = asyncio.create_task(app(_speak_scope(), receive, send))
-        await asyncio.wait_for(send.entered_hold.wait(), timeout=_ASGI_TIMEOUT_SECONDS)
+        call = asyncio.create_task(app(speak_scope(), receive, send))
+        await asyncio.wait_for(send.entered_hold.wait(), timeout=ASGI_TIMEOUT_SECONDS)
         receive.disconnect()
-        await asyncio.wait_for(call, timeout=_ASGI_TIMEOUT_SECONDS)
+        await asyncio.wait_for(call, timeout=ASGI_TIMEOUT_SECONDS)
 
-        later = await _speak_once(app)
+        later = await speak_once(app)
         return send.messages, later
 
     disconnected, later = asyncio.run(scenario())
@@ -357,7 +262,7 @@ def test_speak_disconnect_between_chunks_frees_the_voice_for_the_next_request() 
         "http.response.body",
     ]
     assert _status(later) == HTTP_200_OK
-    rate, pcm = pcm_from_wav(_wav_body(later))
+    rate, pcm = pcm_from_wav(wav_body(later))
     assert rate == SPEAK_SAMPLE_RATE
     assert len(pcm) > 0
 
@@ -371,19 +276,19 @@ def test_speak_disconnect_during_synthesis_frees_the_voice() -> None:
         receive = _DisconnectingReceive()
         send = _HoldingSend()
 
-        call = asyncio.create_task(app(_speak_scope(), receive, send))
-        await asyncio.to_thread(voice.entered_first_step.wait, _ASGI_TIMEOUT_SECONDS)
+        call = asyncio.create_task(app(speak_scope(), receive, send))
+        await asyncio.to_thread(voice.entered_first_step.wait, ASGI_TIMEOUT_SECONDS)
         receive.disconnect()
-        await asyncio.wait_for(receive.delivered.wait(), timeout=_ASGI_TIMEOUT_SECONDS)
+        await asyncio.wait_for(receive.delivered.wait(), timeout=ASGI_TIMEOUT_SECONDS)
         voice.release_first_step.set()  # the in-flight step now returns normally
-        await asyncio.wait_for(call, timeout=_ASGI_TIMEOUT_SECONDS)
+        await asyncio.wait_for(call, timeout=ASGI_TIMEOUT_SECONDS)
 
-        return await _speak_once(app)
+        return await speak_once(app)
 
     later = asyncio.run(scenario())
 
     assert _status(later) == HTTP_200_OK
-    rate, pcm = pcm_from_wav(_wav_body(later))
+    rate, pcm = pcm_from_wav(wav_body(later))
     assert rate == SPEAK_SAMPLE_RATE
     assert len(pcm) > 0
 
@@ -419,14 +324,14 @@ def test_speak_response_construction_failure_releases_admission_for_deselection(
 
     monkeypatch.setattr(StreamingResponse, "__init__", fail_response_construction)
     with pytest.raises(_ResponseBoundaryError):
-        _speak_response(runtime)
+        speak_response(runtime)
 
     outcomes: list[VoiceLoadOutcome | None] = []
     switching = threading.Thread(
         target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
     )
     switching.start()
-    switching.join(timeout=_ASGI_TIMEOUT_SECONDS)
+    switching.join(timeout=ASGI_TIMEOUT_SECONDS)
     assert not switching.is_alive()
     assert outcomes == [VoiceLoadOutcome.ACTIVATED]
     assert closed == [1]
@@ -446,10 +351,10 @@ def test_speak_close_paths_release_admission_for_deselection(
             yield from super().pcm_chunks(text, language)
 
     runtime, closed = _runtime_for_deselection(tmp_path, ClosingPathVoice())
-    response = _speak_response(runtime)
+    response = speak_response(runtime)
 
     if close_path == "normal":
-        _response_body(response)
+        response_body(response)
     elif close_path in {"send-failure", "synthesis-error"}:
         with pytest.raises(_ResponseBoundaryError):
             asyncio.run(
@@ -465,7 +370,7 @@ def test_speak_close_paths_release_admission_for_deselection(
         target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
     )
     switching.start()
-    switching.join(timeout=_ASGI_TIMEOUT_SECONDS)
+    switching.join(timeout=ASGI_TIMEOUT_SECONDS)
     assert not switching.is_alive()
     assert outcomes == [VoiceLoadOutcome.ACTIVATED]
     assert closed == [1]

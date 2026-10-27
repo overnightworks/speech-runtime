@@ -26,7 +26,7 @@ from presentator_speech.provider_process import ProviderLaunch, ProviderProcess
 from presentator_speech.selection import VoiceSelectionStore
 from presentator_speech.service import Runtime, RuntimeDependencies
 from presentator_speech.voices import VoiceId
-from tests.conftest import FakeHearing, FakeSpeaking
+from tests.support.fakes_support import FakeHearing, FakeSpeaking
 
 
 class _BlockedSpeaking(FakeSpeaking):

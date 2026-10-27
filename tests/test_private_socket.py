@@ -7,74 +7,25 @@ import stat
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import httpx2
 import pytest
-import uvicorn
-from starlette.types import Message, Receive, Scope, Send
 from websockets.asyncio.client import ClientConnection, unix_connect
 
-from presentator_speech.__main__ import PrivateSocket
-from presentator_speech.config import HEAR_SAMPLE_RATE, Settings
-from presentator_speech.control import create_control_app
+from presentator_speech.config import HEAR_SAMPLE_RATE
 from presentator_speech.pcm import BYTES_PER_SAMPLE, WAV_HEADER_BYTES, pcm_from_wav
 from presentator_speech.service import Runtime
-from tests.conftest import (
+from tests.support.fakes_support import (
     GATE_TIMEOUT_SECONDS,
     SPEAK_SAMPLE_RATE,
     FakeHearing,
     GatedSpeaking,
     sine_pcm,
 )
+from tests.support.private_server_support import PrivateServer, serving_privately
 
 _SPEAK_BODY = {"text": "Hallo", "language": "de"}
-
-
-@dataclass(frozen=True, slots=True)
-class _PrivateServer:
-    path: Path
-    hear_handler_returned: asyncio.Event
-    speak_disconnect_received: asyncio.Event
-
-
-@asynccontextmanager
-async def _serving(directory: Path, runtime: Runtime) -> AsyncIterator[_PrivateServer]:
-    """Serve the private app on a real PrivateSocket and stop it on exit."""
-    settings = Settings(
-        private_directory=directory, PRESENTATOR_RUNTIME_UID=os.geteuid()
-    )
-    app = create_control_app(settings, runtime)
-    hear_handler_returned = asyncio.Event()
-    speak_disconnect_received = asyncio.Event()
-
-    async def observed(scope: Scope, receive: Receive, send: Send) -> None:
-        async def watched_receive() -> Message:
-            message = await receive()
-            if message["type"] == "http.disconnect":
-                speak_disconnect_received.set()
-            return message
-
-        try:
-            await app(scope, watched_receive, send)
-        finally:
-            if scope["type"] == "websocket":
-                hear_handler_returned.set()
-
-    server = uvicorn.Server(uvicorn.Config(observed, log_level="warning"))
-    with PrivateSocket(directory, runtime_uid=os.geteuid()) as listener:
-        serving = asyncio.create_task(server.serve(sockets=[listener]))
-        try:
-            yield _PrivateServer(
-                directory / "speech.sock",
-                hear_handler_returned,
-                speak_disconnect_received,
-            )
-        finally:
-            server.should_exit = True
-            await asyncio.wait_for(serving, timeout=GATE_TIMEOUT_SECONDS)
 
 
 @asynccontextmanager
@@ -86,7 +37,7 @@ async def _gates_released(voice: GatedSpeaking) -> AsyncIterator[None]:
         voice.release_all()
 
 
-def _socket_client(server: _PrivateServer) -> httpx2.AsyncClient:
+def _socket_client(server: PrivateServer) -> httpx2.AsyncClient:
     return httpx2.AsyncClient(
         transport=httpx2.AsyncHTTPTransport(uds=str(server.path)),
         base_url="http://speech",
@@ -139,7 +90,7 @@ def test_socket_streams_speak_while_the_voice_is_still_synthesizing(tmp_path) ->
         voice = GatedSpeaking(hold_last_chunk=True)
         voice.release_first_step.set()
         async with (
-            _serving(tmp_path, _gated_runtime(voice)) as server,
+            serving_privately(tmp_path, _gated_runtime(voice)) as server,
             _socket_client(server) as client,
             _gates_released(voice),
             client.stream("POST", "/speak", json=_SPEAK_BODY) as response,
@@ -172,7 +123,7 @@ def test_socket_speak_disconnect_frees_the_voice_for_the_next_caller(tmp_path) -
         voice = GatedSpeaking(hold_last_chunk=True)
         voice.release_first_step.set()
         async with (
-            _serving(tmp_path, _gated_runtime(voice)) as server,
+            serving_privately(tmp_path, _gated_runtime(voice)) as server,
             _socket_client(server) as client,
             _gates_released(voice),
         ):
@@ -197,7 +148,7 @@ def test_a_speak_holds_the_one_synthesis_gate(tmp_path) -> None:
         voice = GatedSpeaking()
         runtime = _gated_runtime(voice)
         async with (
-            _serving(tmp_path, runtime) as server,
+            serving_privately(tmp_path, runtime) as server,
             _socket_client(server) as socket_client,
             _gates_released(voice),
         ):
@@ -223,7 +174,7 @@ def test_socket_hear_sends_partials_then_a_final_and_a_second_utterance(
     async def scenario() -> dict[str, Any]:
         runtime = _gated_runtime(GatedSpeaking())
         async with (
-            _serving(tmp_path, runtime) as server,
+            serving_privately(tmp_path, runtime) as server,
             unix_connect(str(server.path), uri=_hear_uri()) as connection,
         ):
             await _speak_then_pause(connection)
@@ -242,7 +193,7 @@ def test_socket_hear_disconnect_runs_no_decode_and_frees_the_next_session(
     async def scenario() -> tuple[int, int]:
         hearing = FakeHearing()
         runtime = _gated_runtime(GatedSpeaking(), hearing)
-        async with _serving(tmp_path, runtime) as server:
+        async with serving_privately(tmp_path, runtime) as server:
             async with unix_connect(str(server.path), uri=_hear_uri()) as leaving:
                 await leaving.send(sine_pcm(0.5))
                 assert (await _receive_event(leaving))["final"] is False
@@ -266,7 +217,7 @@ def test_socket_hear_disconnect_runs_no_decode_and_frees_the_next_session(
 def test_socket_serves_no_api_documentation(tmp_path, path: str) -> None:
     async def scenario() -> httpx2.Response:
         async with (
-            _serving(tmp_path, _gated_runtime(GatedSpeaking())) as server,
+            serving_privately(tmp_path, _gated_runtime(GatedSpeaking())) as server,
             _socket_client(server) as client,
         ):
             return await client.get(path)
