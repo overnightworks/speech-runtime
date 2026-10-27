@@ -14,15 +14,25 @@ WAV_HEADER_BYTES: Final = 44
 # Streaming WAV: the length is not known when the first byte leaves.
 STREAMING_DATA_SIZE: Final = 0xFFFFFFFF
 SILENCE_RMS: Final = 0.015
+# The IPTC term id for synthetic audio; never fetched (AI Act Art. 50(2)).
+AI_MARK: Final = (
+    "DigitalSourceType=http://cv.iptc.org/newscodes/"  # NOSONAR(S5332) id, not fetched
+    "digitalsourcetype/trainedAlgorithmicMedia"
+)
 
 
 def wav_header(sample_rate: int, data_bytes: int = STREAMING_DATA_SIZE) -> bytes:
-    """A 44-byte PCM WAV header for 16-bit mono at `sample_rate`."""
+    """A PCM WAV header for 16-bit mono at `sample_rate`, with the AI mark.
+
+    The mark is a RIFF INFO comment between `fmt ` and `data`; `fmt ` stays at
+    offset 12.
+    """
     byte_rate = sample_rate * CHANNELS * BYTES_PER_SAMPLE
     block_align = CHANNELS * BYTES_PER_SAMPLE
-    riff_size = (36 + data_bytes) & 0xFFFFFFFF
-    return struct.pack(
-        "<4sI4s4sIHHIIHH4sI",
+    mark = _ai_mark_chunk()
+    riff_size = (36 + len(mark) + data_bytes) & 0xFFFFFFFF
+    format_chunk = struct.pack(
+        "<4sI4s4sIHHIIHH",
         b"RIFF",
         riff_size,
         b"WAVE",
@@ -34,8 +44,16 @@ def wav_header(sample_rate: int, data_bytes: int = STREAMING_DATA_SIZE) -> bytes
         byte_rate,
         block_align,
         BITS_PER_SAMPLE,
-        b"data",
-        data_bytes & 0xFFFFFFFF,
+    )
+    return format_chunk + mark + struct.pack("<4sI", b"data", data_bytes & 0xFFFFFFFF)
+
+
+def _ai_mark_chunk() -> bytes:
+    comment = AI_MARK.encode("ascii") + b"\0"
+    comment += b"\0" * (len(comment) % 2)
+    comment_chunk = struct.pack("<4sI", b"ICMT", len(AI_MARK) + 1) + comment
+    return (
+        struct.pack("<4sI4s", b"LIST", 4 + len(comment_chunk), b"INFO") + comment_chunk
     )
 
 

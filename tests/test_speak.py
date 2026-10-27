@@ -21,7 +21,7 @@ from starlette.status import (
 
 from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
 from presentator_speech.control import create_control_app
-from presentator_speech.pcm import is_silence, pcm_from_wav
+from presentator_speech.pcm import AI_MARK, is_silence, pcm_from_wav
 from presentator_speech.selection import VoiceSelectionStore
 from presentator_speech.service import (
     Runtime,
@@ -39,6 +39,25 @@ from tests.conftest import (
 )
 
 
+def info_comment_before_data(wav: bytes) -> str | None:
+    """The RIFF INFO ICMT text, found by walking the chunks up to `data`."""
+    position = 12
+    while position + 8 <= len(wav):
+        chunk_id = wav[position : position + 4]
+        size = int.from_bytes(wav[position + 4 : position + 8], "little")
+        body = wav[position + 8 : position + 8 + size]
+        if chunk_id == b"data":
+            return None
+        if chunk_id == b"LIST" and body[:4] == b"INFO":
+            assert size % 2 == 0
+            assert body[4:8] == b"ICMT"
+            comment_size = int.from_bytes(body[8:12], "little")
+            assert body[12 : 12 + comment_size].endswith(b"\0")
+            return body[12 : 12 + comment_size - 1].decode("ascii")
+        position += 8 + size + size % 2
+    return None
+
+
 def test_speak_streams_wav_that_plays_as_tone() -> None:
     response = TestClient(an_app()).post(
         "/speak",
@@ -52,6 +71,16 @@ def test_speak_streams_wav_that_plays_as_tone() -> None:
     assert rate == 22_050
     assert len(pcm) > 0
     assert not is_silence(pcm)
+
+
+def test_speak_wav_carries_the_ai_mark_before_its_data() -> None:
+    """#293 E9 (a): a /speak WAV carries the IPTC mark in LIST/INFO/ICMT before data."""
+    response = TestClient(an_app()).post(
+        "/speak",
+        json={"text": "Guten Morgen", "language": "de"},
+    )
+
+    assert info_comment_before_data(response.content) == AI_MARK
 
 
 def test_speak_refuses_an_empty_sentence() -> None:

@@ -13,7 +13,7 @@ from starlette.responses import StreamingResponse
 
 from presentator_speech.config import Settings
 from presentator_speech.control import SampleLanguage, create_control_app
-from presentator_speech.pcm import pcm_from_wav
+from presentator_speech.pcm import AI_MARK, pcm_from_wav
 from presentator_speech.selection import VoiceSelectionStore
 from presentator_speech.service import (
     Runtime,
@@ -21,7 +21,7 @@ from presentator_speech.service import (
 )
 from presentator_speech.voices import VoiceId, VoiceLoadOutcome
 from tests.conftest import FakeHearing, FakeSpeaking
-from tests.test_speak import _ASGI_TIMEOUT_SECONDS
+from tests.test_speak import _ASGI_TIMEOUT_SECONDS, info_comment_before_data
 
 
 class _ClientSendError(RuntimeError):
@@ -64,6 +64,7 @@ def test_private_sample_uses_its_fixed_phrase_and_native_rate(
     rate, pcm = pcm_from_wav(private.content)
     assert rate == sample_rate
     assert pcm
+    assert info_comment_before_data(private.content) == AI_MARK
     assert speaking.heard_text == phrase
     assert speaking.heard_language == language
 
