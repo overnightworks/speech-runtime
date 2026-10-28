@@ -8,16 +8,16 @@ version = "0.0.0"
 description = "Local speaking and hearing, one process on the card."
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastapi==0.141.1",
+    "fastapi==0.162.0",
     "faster-whisper==1.2.1",
-    "huggingface-hub==2.2.0",
+    "huggingface-hub==2.3.0",
     "numpy==2.5.4",
     "nvidia-cublas-cu12==12.4.5.8",
     "nvidia-cudnn-cu12==9.1.0.70",
     "piper-tts==1.8.0",
-    "pydantic-settings==2.15.0",
+    "pydantic-settings==2.16.1",
     "uvicorn==0.54.0",
-    "websockets==17.2",
+    "websockets==17.3",
     "overnightworks-presentator-speech-provider-contract",
 ]
 
@@ -26,9 +26,9 @@ presentator-speech = "presentator_speech.__main__:main"
 
 [dependency-groups]
 dev = [
-    "httpx2==2.13.1",
+    "httpx2==2.16.0",
     "pytest==9.1.1",
-    "ruff==0.17.1",
+    "ruff==0.17.2",
 ]
 
 [tool.hatch.build.targets.wheel]
