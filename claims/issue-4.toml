@@ -1,0 +1,8 @@
+claim_id = "544950c558574c9299e27f14f5a2c8b3"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "5964fb7d4ff0ce7b0b747b32c12f06770dd4c09b"
+branch = "claude/issue-4-n2-quality-gate"
+scope = [".github", "AGENTS.md", "CLAUDE.md", "LICENSE", "quality", "sonar-project.properties"]
+opened_commit = "73689c78c617ea78bf4208d00e2d65b4ce78b389"
+whole_reason = "Adopting the gate is one change: the CI jobs, the gate's config naming them, the baseline and the guidance only work together."
