@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        update-types: [minor, patch]
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      uv-speech:
+        update-types: [minor, patch]
+        # GPU/model-coupled pins stay single PRs so each lands with its own speech/GPU proof
+        exclude-patterns:
+          - "nvidia-*"
+          - "numpy"
+          - "faster-whisper"
+          - "piper-tts"

@@ -1,0 +1,1423 @@
+[gate]
+mandatory_jobs = ["Speech: lint, tests", "Speech: Chatterbox provider", "Speech: Qwen provider", "Speech: VoxCPM provider", "Speech: Magpie provider"]
+
+[[root.allow]]
+entry = "providers/"
+reason = "the GPU and CPU speech providers, each its own uv project with its own lock"
+
+[[layout.allow]]
+path = "providers/chatterbox/tests/test_worker.py"
+rule = "test-layout"
+reason = "it tests the provider contract, a sibling project with no tests of its own"
+
+# providers/chatterbox/uv.lock: advisories no relock reaches
+[[advisories.allow]]
+id = "PYSEC-2026-2446"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "diffusers 0.29.0: diffusers==0.29.0 is pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-40"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "diffusers 0.29.0: diffusers==0.29.0 is pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-41"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "diffusers 0.29.0: diffusers==0.29.0 is pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-211"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "gradio 6.8.0: chatterbox-tts 0.1.7 pins gradio==6.8.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2178"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "gradio 6.8.0: chatterbox-tts 0.1.7 pins gradio==6.8.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2179"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "gradio 6.8.0: chatterbox-tts 0.1.7 pins gradio==6.8.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-462x-pgg6-55fp"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-58r4-6rv3-gfh8"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-65qm-jvmh-6pqg"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-8g5g-8vmr-9782"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-c6hw-5grf-ff96"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-p4wg-p73j-c528"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-pchr-8j38-3x4p"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-q45j-58j2-45rg"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-vx6w-vv9f-6gvg"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-3447"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "setuptools 81.0.0: setuptools==81.0.0 is pinned because resemble-perth needs pkg_resources, gone at setuptools 82; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-161"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "starlette 0.52.1: gradio 6.8.0 requires starlette<1.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2280"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "starlette 0.52.1: gradio 6.8.0 requires starlette<1.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2281"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "starlette 0.52.1: gradio 6.8.0 requires starlette<1.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-248"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "starlette 0.52.1: gradio 6.8.0 requires starlette<1.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-249"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "starlette 0.52.1: gradio 6.8.0 requires starlette<1.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-191"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-198"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-199"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-200"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-201"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-202"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-203"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-204"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-205"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-206"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-207"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-208"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-209"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-139"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-1970"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2286"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-c678-jfcj-6jmf"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-f4hp-rmr7-r7v8"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-qfhq-4f3w-5fph"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-rrmf-rvhw-rf47"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-vgrw-7cvw-pwgx"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-x3gm-94wq-g975"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2289"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 5.2.0: transformers==5.2.0 is pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2290"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 5.2.0: transformers==5.2.0 is pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-3929"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 5.2.0: transformers==5.2.0 is pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-4174"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 5.2.0: transformers==5.2.0 is pinned; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-22hg-r758-rrw9"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-254f-3936-288h"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-27h8-gf7j-v5hc"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-332p-7hrc-92wf"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-4558-3h8r-v8xp"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-4rr5-89j8-mwwm"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-5xm2-6676-qcp9"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-74r2-7ff9-mjj2"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-7mwm-ghpf-9vrm"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-cp9v-662q-vvx9"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-f2g6-542v-9j58"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-fc9g-5qg7-mf45"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-gg2r-wvfm-q9rx"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-j4m9-6w36-pw47"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-jg86-v3jv-hrpm"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-rfgq-q3w2-pmv2"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-w889-685w-c8fh"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-xgh8-jp6q-p5x8"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-xvh5-g6gv-559v"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-24rc-8hj2-v98c"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-3j72-p6qg-6xp7"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-4rm8-3hmm-39fg"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-78g4-xqwv-q3g8"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-9v9v-9qvf-h2hj"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-g4qv-2jxx-769h"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-g7cr-3p24-7wf7"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-g842-9rc4-69pw"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-mrfp-p49p-3hf2"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-p8hx-v2p6-rp84"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-v9pv-5gc8-w2m6"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-5x8w-8jj5-q52h"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-24
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-654x-cwwv-5j9c"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-24
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.8.0 requires pillow<13.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-xmj3-9gf7-h52w"
+lock = "providers/chatterbox/uv.lock"
+until = 2027-01-31
+date = 2026-10-24
+item = "overnightworks/speech-runtime#2"
+reason = "setuptools 81.0.0: setuptools==81.0.0 is pinned because resemble-perth needs pkg_resources, gone at setuptools 82; local TTS worker, text over a local socket"
+
+# providers/magpie/uv.lock: advisories no relock reaches
+[[advisories.allow]]
+id = "PYSEC-2026-4217"
+lock = "providers/magpie/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "fsspec 2025.12.0: lightning 2.4.0 requires fsspec<2026.0, and nemo-toolkit 3.0.0 caps lightning<=2.4.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-3850"
+lock = "providers/magpie/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "hydra-core 1.3.2: nemo-toolkit 3.0.0 requires hydra-core<=1.3.2; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-4221"
+lock = "providers/magpie/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "hydra-core 1.3.2: nemo-toolkit 3.0.0 requires hydra-core<=1.3.2; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-3624"
+lock = "providers/magpie/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "lightning 2.4.0: nemo-toolkit 3.0.0 requires lightning<=2.4.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-3972"
+lock = "providers/magpie/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "lightning 2.4.0: nemo-toolkit 3.0.0 requires lightning<=2.4.0; local TTS worker, text over a local socket"
+
+# providers/qwen/uv.lock: advisories no relock reaches
+[[advisories.allow]]
+id = "PYSEC-2026-3804"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "accelerate 1.12.0: qwen-tts pins accelerate==1.12.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-462x-pgg6-55fp"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-58r4-6rv3-gfh8"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-65qm-jvmh-6pqg"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-8g5g-8vmr-9782"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-c6hw-5grf-ff96"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-p4wg-p73j-c528"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-pchr-8j38-3x4p"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-q45j-58j2-45rg"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-vx6w-vv9f-6gvg"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2025-217"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 4.57.3: qwen-tts pins transformers==4.57.3, the fix needs a 5.x major; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2288"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 4.57.3: qwen-tts pins transformers==4.57.3, the fix needs a 5.x major; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2289"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 4.57.3: qwen-tts pins transformers==4.57.3, the fix needs a 5.x major; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-2290"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 4.57.3: qwen-tts pins transformers==4.57.3, the fix needs a 5.x major; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-3929"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 4.57.3: qwen-tts pins transformers==4.57.3, the fix needs a 5.x major; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-4174"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "transformers 4.57.3: qwen-tts pins transformers==4.57.3, the fix needs a 5.x major; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-22hg-r758-rrw9"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-254f-3936-288h"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-27h8-gf7j-v5hc"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-332p-7hrc-92wf"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-4558-3h8r-v8xp"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-4rr5-89j8-mwwm"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-5xm2-6676-qcp9"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-74r2-7ff9-mjj2"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-7mwm-ghpf-9vrm"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-cp9v-662q-vvx9"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-f2g6-542v-9j58"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-fc9g-5qg7-mf45"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-gg2r-wvfm-q9rx"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-j4m9-6w36-pw47"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-jg86-v3jv-hrpm"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-rfgq-q3w2-pmv2"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-w889-685w-c8fh"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-xgh8-jp6q-p5x8"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-xvh5-g6gv-559v"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, even its latest 6.30.0; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-24rc-8hj2-v98c"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-3j72-p6qg-6xp7"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-4rm8-3hmm-39fg"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-78g4-xqwv-q3g8"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-9v9v-9qvf-h2hj"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-g4qv-2jxx-769h"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-g7cr-3p24-7wf7"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-g842-9rc4-69pw"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-mrfp-p49p-3hf2"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-p8hx-v2p6-rp84"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-v9pv-5gc8-w2m6"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0, held by the qwen-tts gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-5x8w-8jj5-q52h"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-24
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0 and the newest gradio (6.30.0) still does; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-654x-cwwv-5j9c"
+lock = "providers/qwen/uv.lock"
+until = 2027-01-31
+date = 2026-10-24
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.17.3 requires pillow<13.0 and the newest gradio (6.30.0) still does; local TTS worker, text over a local socket"
+
+# providers/voxcpm/uv.lock: advisories no relock reaches
+[[advisories.allow]]
+id = "PYSEC-2026-3716"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "datasets 3.6.0: voxcpm 2.0.3 requires datasets<4; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "PYSEC-2026-4217"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "fsspec 2025.3.0: datasets 3.6.0 requires fsspec<=2025.3.0, held by the voxcpm datasets cap; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-462x-pgg6-55fp"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-58r4-6rv3-gfh8"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-65qm-jvmh-6pqg"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-8g5g-8vmr-9782"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-c6hw-5grf-ff96"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-p4wg-p73j-c528"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-pchr-8j38-3x4p"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-q45j-58j2-45rg"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-vx6w-vv9f-6gvg"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-22hg-r758-rrw9"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-254f-3936-288h"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-27h8-gf7j-v5hc"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-332p-7hrc-92wf"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-4558-3h8r-v8xp"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-4rr5-89j8-mwwm"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-5xm2-6676-qcp9"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-74r2-7ff9-mjj2"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-7mwm-ghpf-9vrm"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-cp9v-662q-vvx9"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-f2g6-542v-9j58"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-fc9g-5qg7-mf45"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-gg2r-wvfm-q9rx"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-j4m9-6w36-pw47"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-jg86-v3jv-hrpm"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-rfgq-q3w2-pmv2"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-w889-685w-c8fh"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-xgh8-jp6q-p5x8"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-xvh5-g6gv-559v"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-21
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio requires pillow<13.0, and voxcpm needs gradio>=6; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-24rc-8hj2-v98c"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-3j72-p6qg-6xp7"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-4rm8-3hmm-39fg"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-78g4-xqwv-q3g8"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-9v9v-9qvf-h2hj"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-g4qv-2jxx-769h"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-g7cr-3p24-7wf7"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-g842-9rc4-69pw"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-mrfp-p49p-3hf2"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-p8hx-v2p6-rp84"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-v9pv-5gc8-w2m6"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-22
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0, held by the voxcpm gradio pin; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-5x8w-8jj5-q52h"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-24
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0 and the newest gradio (6.30.0) still does; local TTS worker, text over a local socket"
+
+[[advisories.allow]]
+id = "GHSA-654x-cwwv-5j9c"
+lock = "providers/voxcpm/uv.lock"
+until = 2027-01-31
+date = 2026-10-24
+item = "overnightworks/speech-runtime#2"
+reason = "pillow 12.3.0: gradio 6.27.0 requires pillow<13.0 and the newest gradio (6.30.0) still does; local TTS worker, text over a local socket"

@@ -1,0 +1,212 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# A pull request collapses onto its newest push, but every push to main keeps a
+# group of its own so no landing is ever cancelled by the next one.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  speech:
+    name: "Speech: lint, tests"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            providers/chatterbox/uv.lock
+          version: "0.10.9"
+
+      - name: Verify the dependency lock
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Check source
+        run: uv run --locked ruff check
+
+      - name: Check formatting
+        run: uv run --locked ruff format --check
+
+      - name: Test
+        run: uv run --locked pytest -q
+
+  chatterbox-provider:
+    name: "Speech: Chatterbox provider"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: providers/chatterbox
+    steps:
+      - name: Check out the event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            providers/chatterbox/uv.lock
+          version: "0.10.9"
+
+      - name: Verify the dependency lock
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Check source
+        run: uv run --locked ruff check src tests ../provider-contract/src
+
+      - name: Check formatting
+        run: uv run --locked ruff format --check src tests ../provider-contract/src
+
+      - name: Test
+        run: uv run --locked pytest -q tests
+
+  qwen-provider:
+    name: "Speech: Qwen provider"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: providers/qwen
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - name: Check out the event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: providers/qwen/uv.lock
+          version: "0.10.9"
+
+      - name: Verify the dependency lock
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Check source
+        run: uv run --locked ruff check src tests ../provider-contract/src
+
+      - name: Check formatting
+        run: uv run --locked ruff format --check src tests ../provider-contract/src
+
+      - name: Test
+        run: uv run --locked pytest -q tests/test_main.py tests/test_model.py
+
+  voxcpm-provider:
+    name: "Speech: VoxCPM provider"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: providers/voxcpm
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - name: Check out the event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: providers/voxcpm/uv.lock
+          version: "0.10.9"
+
+      - name: Verify the dependency lock
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Check source
+        run: uv run --locked ruff check src tests ../provider-contract/src
+
+      - name: Check formatting
+        run: uv run --locked ruff format --check src tests ../provider-contract/src
+
+      - name: Test
+        run: uv run --locked pytest -q tests/test_main.py tests/test_model.py
+
+  magpie-provider:
+    name: "Speech: Magpie provider"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: providers/magpie
+    env:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - name: Check out the event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: providers/magpie/uv.lock
+          version: "0.10.9"
+      - name: Verify the dependency lock
+        run: uv lock --check
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Check source
+        run: uv run --locked ruff check src tests ../provider-contract/src
+      - name: Check formatting
+        run: uv run --locked ruff format --check src tests ../provider-contract/src
+      - name: Test
+        run: uv run --locked pytest -q tests/test_main.py tests/test_model.py
+
+  quality:
+    name: quality
+    needs:
+      - speech
+      - chatterbox-provider
+      - qwen-provider
+      - voxcpm-provider
+      - magpie-provider
+    if: always()
+    uses: overnightworks/quality/.github/workflows/gate.yml@7b39c6307d3df21b5803a2e0ec2c61f0509e0455 # v0.7.0
+    permissions:
+      contents: read
+      actions: read
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
