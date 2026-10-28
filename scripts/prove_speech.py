@@ -82,19 +82,9 @@ def _wait_for_load() -> None:
 
 
 def _acquire_lock(lock: TextIO) -> None:
-    while True:
-        try:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print(
-                "waiting_for_lock",
-                LOCK_PATH,
-                f"load_1min={_load_1min():.2f}",
-            )
-            time.sleep(20)
-            continue
-        print("lock_acquired", LOCK_PATH)
-        return
+    print("waiting_for_lock", LOCK_PATH)
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    print("lock_acquired", LOCK_PATH)
 
 
 def _get_json(socket_path: Path, target: str) -> dict[str, object]:
@@ -570,11 +560,10 @@ def main() -> None:
     options = parse_arguments(sys.argv[1:])
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
-    _wait_for_load()
     LOCK_PATH.touch()
     with LOCK_PATH.open("a", encoding="utf-8") as lock:
-        print("waiting_for_lock", LOCK_PATH)
         _acquire_lock(lock)
+        _wait_for_load()
         print("gpu_before", _nvidia_memory())
         private_directory = Path(tempfile.mkdtemp(prefix="speech-"))
         socket_path = private_directory / "speech.sock"
