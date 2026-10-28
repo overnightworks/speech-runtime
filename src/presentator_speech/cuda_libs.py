@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import logging
 import os
 from pathlib import Path
@@ -18,16 +19,23 @@ _LIBRARIES = (
 
 
 def cuda_library_dirs() -> list[Path]:
-    """Directories that hold the bundled NVIDIA CUDA 12 libraries."""
+    """Directories that hold the bundled NVIDIA CUDA 12 libraries.
+
+    The wheels may ship regular or namespace packages, so locations come from
+    the import spec rather than from a module file.
+    """
     found: list[Path] = []
     for package in _PACKAGES:
         try:
-            module = __import__(package, fromlist=["*"])
+            spec = importlib.util.find_spec(package)
         except ImportError:
             continue
-        lib = Path(module.__file__).resolve().parent / "lib"
-        if lib.is_dir():
-            found.append(lib)
+        if spec is None:
+            continue
+        for location in spec.submodule_search_locations or ():
+            lib = Path(location).resolve() / "lib"
+            if lib.is_dir():
+                found.append(lib)
     return found
 
 
