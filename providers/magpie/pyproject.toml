@@ -22,7 +22,7 @@ presentator-magpie-worker = "presentator_magpie.__main__:main"
 overnightworks-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
 
 [dependency-groups]
-dev = ["pytest==9.1.1", "ruff==0.17.1"]
+dev = ["pytest==9.1.1", "ruff==0.17.2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/presentator_magpie"]
