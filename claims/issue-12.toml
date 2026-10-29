@@ -3,6 +3,6 @@ agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
 role = "builder"
 base = "9305a633f241f73e90178f11f826361b41cdc3c2"
 branch = "claude/issue-12-python-314"
-scope = [".github/workflows", ".python-version", "providers/chatterbox/uv.lock", "providers/magpie/uv.lock", "providers/provider-contract/pyproject.toml", "providers/qwen", "providers/voxcpm", "pyproject.toml", "quality/config.toml", "sonar-project.properties", "src", "tests", "uv.lock"]
+scope = [".github/workflows", ".python-version", "providers/chatterbox/uv.lock", "providers/magpie/uv.lock", "providers/provider-contract/pyproject.toml", "providers/qwen", "providers/voxcpm", "pyproject.toml", "quality/baseline.toml", "quality/config.toml", "scripts", "sonar-project.properties", "src", "tests", "uv.lock"]
 opened_commit = "21d55f296b317cf3aaf51d0f9da0b6e7c62b0ebf"
 whole_reason = "The Python floor, the gate release that judges it, and the interpreter-version path in the provider lifecycle only turn green together."
