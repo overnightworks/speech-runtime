@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from speech_runtime_provider_contract import (
-    QWEN_SAMPLE_RATE,
+    CHATTERBOX_SAMPLE_RATE,
 )
 from starlette.status import (
     HTTP_409_CONFLICT,
@@ -110,7 +110,7 @@ def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speec
             if voice is VoiceId.PIPER:
                 committed.set()
 
-    old_voice_rate = QWEN_SAMPLE_RATE
+    old_voice_rate = CHATTERBOX_SAMPLE_RATE
     old = _TrackedSpeaking(sample_rate=old_voice_rate)
     target = _TrackedSpeaking()
     runtime, _store = _switching_runtime(
