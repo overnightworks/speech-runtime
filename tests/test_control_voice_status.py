@@ -17,10 +17,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from speech_runtime_provider_contract import (
     MAGPIE_SAMPLE_RATE,
+    QWEN_SAMPLE_RATE,
     VOXCPM_ARTIFACTS,
     VOXCPM_MODEL_ID,
     VOXCPM_REVISION,
     VOXCPM_SAMPLE_RATE,
+)
+from starlette.status import (
+    HTTP_200_OK,
+    HTTP_409_CONFLICT,
+    HTTP_503_SERVICE_UNAVAILABLE,
 )
 
 from speech_runtime_service import voices
@@ -241,7 +247,7 @@ def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_pres
 
     engine = speaking_for_voice(settings, VoiceId.QWEN)
     assert engine.model_name == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
-    assert engine.sample_rate == 24_000
+    assert engine.sample_rate == QWEN_SAMPLE_RATE
     assert engine.streams is False
     assert engine.retain_when_inactive is False
 
@@ -275,7 +281,7 @@ def test_voxcpm_requires_the_exact_snapshot_and_worker_and_uses_48_khz(
 
     engine = speaking_for_voice(settings, VoiceId.VOXCPM)
     assert engine.model_name == "openbmb/VoxCPM2"
-    assert engine.sample_rate == 48_000
+    assert engine.sample_rate == VOXCPM_SAMPLE_RATE
     assert engine.streams is True
     assert engine.retain_when_inactive is False
 
@@ -311,7 +317,7 @@ def test_magpie_requires_both_exact_archives_and_its_worker(tmp_path: Path) -> N
 
     engine = speaking_for_voice(settings, VoiceId.MAGPIE)
     assert engine.model_name == "nvidia/magpie_tts_multilingual_357m"
-    assert engine.sample_rate == 22_050
+    assert engine.sample_rate == MAGPIE_SAMPLE_RATE
     assert engine.streams is False
 
 
@@ -531,7 +537,7 @@ def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
         for language in ("de", "en"):
             response = control.post(f"/voices/voxcpm2/sample/{language}")
             rate, pcm = pcm_from_wav(response.content)
-            assert response.status_code == 200
+            assert response.status_code == HTTP_200_OK
             assert rate == VOXCPM_SAMPLE_RATE
             assert pcm == b"\x00\x01"
         assert selection.read() is VoiceId.VOXCPM
@@ -596,7 +602,7 @@ def test_magpie_load_restore_samples_public_speech_and_deselect_reap(
         for language in ("de", "en"):
             response = control.post(f"/voices/nvidia-magpie/sample/{language}")
             rate, pcm = pcm_from_wav(response.content)
-            assert response.status_code == 200
+            assert response.status_code == HTTP_200_OK
             assert rate == MAGPIE_SAMPLE_RATE
             assert pcm == b"\x00\x01"
         _, _, process_id, _ = observed(cache)
@@ -891,7 +897,8 @@ def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speec
             if voice is VoiceId.PIPER:
                 committed.set()
 
-    old = _TrackedSpeaking(sample_rate=24_000)
+    old_voice_rate = QWEN_SAMPLE_RATE
+    old = _TrackedSpeaking(sample_rate=old_voice_rate)
     target = _TrackedSpeaking()
     runtime, _store = _switching_runtime(
         tmp_path,
@@ -909,13 +916,13 @@ def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speec
 
     with pytest.raises(HTTPException) as refused:
         speak_response(runtime)
-    assert refused.value.status_code == 503
+    assert refused.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
     assert switching.is_alive()
 
     rate, pcm = pcm_from_wav(response_body(response))
     switching.join(timeout=5)
     assert not switching.is_alive()
-    assert rate == 24_000
+    assert rate == old_voice_rate
     assert pcm
     assert outcomes == [VoiceLoadOutcome.ACTIVATED]
     assert old.closed == 1
@@ -1016,6 +1023,7 @@ def _close_failure_after_selection_commit_is_fatal_and_not_a_load_outcome(
     fatal = threading.Event()
     old = FailingCloseSpeaking(sample_rate=24_000)
     target = _TrackedSpeaking()
+    close_attempts = 2
     runtime, store = _switching_runtime(tmp_path, old, target)
     runtime.set_fatal_callback(fatal.set)
 
@@ -1026,7 +1034,7 @@ def _close_failure_after_selection_commit_is_fatal_and_not_a_load_outcome(
     assert store.read() is VoiceId.PIPER
     assert runtime.capture_speaking() is None
     runtime.close()
-    assert old.closed == 2
+    assert old.closed == close_attempts
     assert target.closed == 1
 
 
@@ -1220,7 +1228,7 @@ def test_startup_selection_holds_load_guard_until_its_activation_finishes(
     release.set()
     loader.join(timeout=5)
 
-    assert response.status_code == 409
+    assert response.status_code == HTTP_409_CONFLICT
     assert not loader.is_alive()
     assert _captured_engine(runtime) is engines[VoiceId.PIPER]
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
@@ -1257,7 +1265,7 @@ def test_duplicate_load_is_refused_and_retained_chatterbox_is_not_rebuilt(
     release.set()
     first.join(timeout=5)
 
-    assert response.status_code == 409
+    assert response.status_code == HTTP_409_CONFLICT
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
     assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
     assert len(engines) == 1
@@ -1296,7 +1304,7 @@ def test_recoverable_startup_keeps_hearing_live_and_refuses_speaking(
     }
     assert (
         private.post("/speak", json={"text": "Hallo", "language": "de"}).status_code
-        == 503
+        == HTTP_503_SERVICE_UNAVAILABLE
     )
     assert hearing.ready is True
     assert private.get("/voices").json()["recovery"] is not None

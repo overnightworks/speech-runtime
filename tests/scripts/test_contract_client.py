@@ -216,9 +216,11 @@ def test_the_summary_gives_median_worst_and_count_of_completed_repetitions() -> 
         for value, partial in ((7.0, 1.0), (8.0, 2.0), (12.0, 4.0), (None, 20.0))
     ]
 
+    completed_repetitions = 3
+
     summary = CLIENT.summarize(repetitions)
 
-    assert summary["completed"] == 3
+    assert summary["completed"] == completed_repetitions
     assert summary["sending_to_final_s"] == (8.0, 12.0)
     assert summary["speech_end_to_final_s"] == (2.0, 6.0)
     assert summary["partial_s"] == (2.0, 4.0)

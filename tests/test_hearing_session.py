@@ -18,11 +18,14 @@ def _silence(seconds: float) -> bytes:
 
 
 def test_session_partial_then_final_then_a_second_utterance() -> None:
+    silent_below_seconds = 0.2
+    partial_below_seconds = 0.9
+
     def transcribe(pcm: bytes) -> str:
         duration = len(pcm) / (HEAR_SAMPLE_RATE * BYTES_PER_SAMPLE)
-        if duration < 0.2:
+        if duration < silent_below_seconds:
             return ""
-        if duration < 0.9:
+        if duration < partial_below_seconds:
             return "eins"
         return "eins zwei"
 

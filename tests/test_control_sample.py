@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from fastapi.testclient import TestClient
 from starlette.responses import StreamingResponse
+from starlette.status import HTTP_200_OK, HTTP_404_NOT_FOUND, HTTP_409_CONFLICT
 
 from speech_runtime_service.config import Settings
 from speech_runtime_service.control import SampleLanguage, create_control_app
@@ -62,7 +63,7 @@ def test_private_sample_uses_its_fixed_phrase_and_native_rate(
         f"/voices/piper/sample/{language}"
     )
 
-    assert private.status_code == 200
+    assert private.status_code == HTTP_200_OK
     assert private.headers["content-type"] == "audio/wav"
     rate, pcm = pcm_from_wav(private.content)
     assert rate == sample_rate
@@ -85,7 +86,7 @@ def test_sample_refuses_a_stale_voice_without_synthesising(tmp_path: Path) -> No
         f"/voices/{VoiceId.CHATTERBOX}/sample/en"
     )
 
-    assert response.status_code == 404
+    assert response.status_code == HTTP_404_NOT_FOUND
     assert speaking.heard_text == ""
 
 
@@ -154,11 +155,11 @@ def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(
         await asyncio.wait_for(speaking_task, timeout=ASGI_TIMEOUT_SECONDS)
         return waiting.status_code
 
-    assert asyncio.run(scenario()) == 409
+    assert asyncio.run(scenario()) == HTTP_409_CONFLICT
     later = TestClient(create_control_app(settings, runtime)).post(
         "/voices/piper/sample/de"
     )
-    assert later.status_code == 200
+    assert later.status_code == HTTP_200_OK
 
 
 def test_second_sample_refuses_while_the_first_sample_streams(tmp_path: Path) -> None:
@@ -216,7 +217,7 @@ def test_second_sample_refuses_while_the_first_sample_streams(tmp_path: Path) ->
         await asyncio.wait_for(first, timeout=ASGI_TIMEOUT_SECONDS)
         return waiting.status_code
 
-    assert asyncio.run(scenario()) == 409
+    assert asyncio.run(scenario()) == HTTP_409_CONFLICT
 
 
 def test_sample_synthesis_error_releases_the_next_sample(tmp_path: Path) -> None:
@@ -243,7 +244,7 @@ def test_sample_synthesis_error_releases_the_next_sample(tmp_path: Path) -> None
         client.post("/voices/piper/sample/de")
     speaking.fails = False
 
-    assert client.post("/voices/piper/sample/de").status_code == 200
+    assert client.post("/voices/piper/sample/de").status_code == HTTP_200_OK
 
 
 def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(
@@ -370,7 +371,7 @@ def test_sample_response_construction_failure_releases_admission_for_deselection
     monkeypatch.undo()
     client = TestClient(create_control_app(Settings(voice_cache=tmp_path), runtime))
     response = client.post("/voices/piper/sample/de")
-    assert response.status_code == 200
+    assert response.status_code == HTTP_200_OK
 
 
 def test_sample_send_failure_before_pcm_releases_the_admitted_voice(
@@ -414,7 +415,7 @@ def test_sample_send_failure_before_pcm_releases_the_admitted_voice(
             await app(scope, receive, send)
         return TestClient(app).post("/voices/piper/sample/de").status_code
 
-    assert asyncio.run(scenario()) == 200
+    assert asyncio.run(scenario()) == HTTP_200_OK
 
 
 def test_sample_pre_body_disconnect_releases_the_voice(tmp_path: Path) -> None:
@@ -448,4 +449,4 @@ def test_sample_pre_body_disconnect_releases_the_voice(tmp_path: Path) -> None:
         await app(scope, receive, send)
         return TestClient(app).post("/voices/piper/sample/de").status_code
 
-    assert asyncio.run(scenario()) == 200
+    assert asyncio.run(scenario()) == HTTP_200_OK

@@ -20,13 +20,15 @@ if TYPE_CHECKING:
 def test_selection_creates_private_state_and_atomically_restores_a_voice(
     tmp_path: Path,
 ) -> None:
+    owner_only_file = 0o600
+    owner_only_directory = 0o700
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
 
     assert store.read() is None
     assert store.write(VoiceId.CHATTERBOX) is True
     assert store.read() is VoiceId.CHATTERBOX
-    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(store.path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(store.path.stat().st_mode) == owner_only_file
+    assert stat.S_IMODE(store.path.parent.stat().st_mode) == owner_only_directory
 
 
 def test_selection_refuses_a_present_invalid_token_without_rewriting_it(

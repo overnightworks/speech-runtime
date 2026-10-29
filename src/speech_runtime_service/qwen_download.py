@@ -86,7 +86,7 @@ class _QwenDownload:
     def _run(self) -> None:
         callback_failed = True
         try:
-            # A traceback would carry the upstream URL and token, so no handler logs it.
+            # A traceback would carry the upstream URL, so no handler logs it.
             with contextlib.suppress(Exception):
                 if self.download is not None:
                     self.download()

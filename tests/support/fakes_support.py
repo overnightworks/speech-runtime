@@ -156,13 +156,15 @@ class FakeHearing:
         del language
         self.sessions += 1
         spoken = "eins"
+        silent_below_seconds = 0.2
+        partial_below_seconds = 0.8
 
         def transcribe(pcm: bytes) -> str:
             self.transcriptions += 1
             duration = len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
-            if duration < 0.2:
+            if duration < silent_below_seconds:
                 return ""
-            if duration < 0.8:
+            if duration < partial_below_seconds:
                 return spoken
             return f"{spoken} zwei"
 

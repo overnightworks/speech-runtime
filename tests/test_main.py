@@ -173,10 +173,11 @@ class _HealthServer:
 
 
 def test_private_socket_removes_only_the_inode_it_bound(tmp_path: Path) -> None:
+    owner_only_file = 0o600
     with PrivateSocket(tmp_path, runtime_uid=os.geteuid()) as listener:
         socket_path = tmp_path / "speech.sock"
         inode = socket_path.stat().st_ino
-        assert stat.S_IMODE(socket_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(socket_path.stat().st_mode) == owner_only_file
         assert listener.fileno() >= 0
 
     assert not (tmp_path / "speech.sock").exists()
@@ -559,11 +560,12 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
     started = threading.Event()
     release = threading.Event()
     observed: dict[str, object] = {}
+    card_memory_mb = 42
 
     runtime = Runtime(
         None,
         FakeHearing(ready=False),
-        memory_probe=lambda: 42,
+        memory_probe=lambda: card_memory_mb,
         dependencies=RuntimeDependencies(
             selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
             engine_factory=lambda _voice: _BlockedSpeaking(started, release),
@@ -598,7 +600,7 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
         "sample_rate": 0,
     }
     assert observed["hearing"] == {"model": "fake-ears", "ready": False}
-    assert observed["card_memory_mb"] == 42
+    assert observed["card_memory_mb"] == card_memory_mb
 
 
 def test_signal_handler_stops_the_runtime_loader_and_async_orchestrator(

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
+from starlette.status import HTTP_200_OK, HTTP_404_NOT_FOUND
 from websockets.asyncio.client import ClientConnection, unix_connect
 
 from speech_runtime_service.config import HEAR_SAMPLE_RATE
@@ -64,7 +65,7 @@ async def _wait_for(event: threading.Event) -> None:
 
 
 def _assert_whole_wav(status_code: int, body: bytes, voice: GatedSpeaking) -> None:
-    assert status_code == 200
+    assert status_code == HTTP_200_OK
     rate, pcm = pcm_from_wav(body)
     assert rate == SPEAK_SAMPLE_RATE
     assert pcm == voice.audio
@@ -88,6 +89,15 @@ def _hear_uri() -> str:
     return "ws://speech/hear?language=de"
 
 
+def _modes_and_owners(directory: Path, socket_path: Path) -> list[int]:
+    return [
+        stat.S_IMODE(directory.stat().st_mode),
+        stat.S_IMODE(socket_path.stat().st_mode),
+        directory.stat().st_uid,
+        socket_path.stat().st_uid,
+    ]
+
+
 def test_socket_streams_speak_while_the_voice_is_still_synthesizing(
     tmp_path: Path,
 ) -> None:
@@ -104,12 +114,7 @@ def test_socket_streams_speak_while_the_voice_is_still_synthesizing(
             chunks = response.aiter_bytes()
             first = await _first_chunk(chunks)
             assert not voice.release_last_chunk.is_set()
-            modes = [
-                stat.S_IMODE(tmp_path.stat().st_mode),
-                stat.S_IMODE(server.path.stat().st_mode),
-                tmp_path.stat().st_uid,
-                server.path.stat().st_uid,
-            ]
+            modes = await asyncio.to_thread(_modes_and_owners, tmp_path, server.path)
             voice.release_last_chunk.set()
             rest = b"".join([chunk async for chunk in chunks])
         return voice, response.status_code, first, first + rest, modes
@@ -229,4 +234,4 @@ def test_socket_serves_no_api_documentation(tmp_path: Path, path: str) -> None:
         ):
             return await client.get(path)
 
-    assert asyncio.run(scenario()).status_code == 404
+    assert asyncio.run(scenario()).status_code == HTTP_404_NOT_FOUND

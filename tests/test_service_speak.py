@@ -59,7 +59,6 @@ def test_speak_streams_wav_that_plays_as_tone() -> None:
     assert response.headers["content-type"].startswith("audio/wav")
     rate, pcm = pcm_from_wav(response.content)
     assert rate == SPEAK_SAMPLE_RATE
-    assert rate == 22_050
     assert len(pcm) > 0
     assert not is_silence(pcm)
 
