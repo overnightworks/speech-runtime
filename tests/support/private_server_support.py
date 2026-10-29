@@ -10,10 +10,10 @@ from pathlib import Path
 import uvicorn
 from starlette.types import Message, Receive, Scope, Send
 
-from presentator_speech.__main__ import PrivateSocket
-from presentator_speech.config import Settings
-from presentator_speech.control import create_control_app
-from presentator_speech.service import Runtime
+from speech_runtime_service.__main__ import PrivateSocket
+from speech_runtime_service.config import Settings
+from speech_runtime_service.control import create_control_app
+from speech_runtime_service.service import Runtime
 from tests.support.fakes_support import GATE_TIMEOUT_SECONDS
 
 

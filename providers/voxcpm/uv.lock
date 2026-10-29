@@ -1441,17 +1441,17 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/df/b5/f2cb1950dda46ac2284d6c950489fdacd0e743c2d79a347924d3cc44b86f/oss2-2.19.1.tar.gz", hash = "sha256:a8ab9ee7eb99e88a7e1382edc6ea641d219d585a7e074e3776e9dec9473e59c1", size = 298845, upload-time = "2024-10-25T11:37:46.638Z" }
 
 [[package]]
-name = "overnightworks-presentator-speech-provider-contract"
+name = "overnightworks-speech-runtime-provider-contract"
 version = "0.0.0"
 source = { editable = "../provider-contract" }
 
 [[package]]
-name = "overnightworks-presentator-voxcpm-provider"
+name = "overnightworks-speech-runtime-voxcpm-provider"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
-    { name = "overnightworks-presentator-speech-provider-contract" },
+    { name = "overnightworks-speech-runtime-provider-contract" },
     { name = "voxcpm" },
 ]
 
@@ -1465,7 +1465,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = "==2.5.4" },
-    { name = "overnightworks-presentator-speech-provider-contract", editable = "../provider-contract" },
+    { name = "overnightworks-speech-runtime-provider-contract", editable = "../provider-contract" },
     { name = "voxcpm", specifier = "==2.0.3" },
 ]
 

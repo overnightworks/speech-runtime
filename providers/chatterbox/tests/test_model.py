@@ -8,12 +8,12 @@ import numpy as np
 import perth
 import pytest
 import torch
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     CHATTERBOX_ARTIFACTS,
     CHATTERBOX_REVISION,
 )
 
-from presentator_chatterbox import model
+from speech_runtime_chatterbox import model
 
 
 def test_the_real_watermarker_is_importable() -> None:

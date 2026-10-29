@@ -22,7 +22,7 @@ os.close(null)
 print("provider print noise", flush=True)
 os.write(1, b"native provider noise\n")
 
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     MAX_FRAME_LENGTH, Frame, FrameKind, ProviderFailure, read_frame, write_frame
 )
 
@@ -115,7 +115,7 @@ def closed_provider(
 ) -> tuple[Path, Path]:
     root = tmp_path / "providers"
     provider = root / provider_name
-    entrypoint = provider / ".venv" / "bin" / f"presentator-{provider_name}-worker"
+    entrypoint = provider / ".venv" / "bin" / f"speech-runtime-{provider_name}-worker"
     entrypoint.parent.mkdir(parents=True, exist_ok=True)
     entrypoint.write_text(
         _WORKER.format(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from types import ModuleType, SimpleNamespace
 
-from presentator_magpie import __main__ as entrypoint
+from speech_runtime_magpie import __main__ as entrypoint
 
 
 def test_entrypoint_reserves_stdout_before_importing_the_provider(monkeypatch) -> None:
@@ -58,24 +58,24 @@ def test_entrypoint_reserves_stdout_before_importing_the_provider(monkeypatch) -
     )
     monkeypatch.setitem(
         sys.modules,
-        "presentator_magpie.model",
+        "speech_runtime_magpie.model",
         RecordingModule(
-            "presentator_magpie.model",
+            "speech_runtime_magpie.model",
             {"load_model": "model:load", "pcm_chunks": "model:pcm"},
         ),
     )
-    model_module = sys.modules["presentator_magpie.model"]
+    model_module = sys.modules["speech_runtime_magpie.model"]
     model_module.load_model = lambda *_args: object()
     model_module.pcm_chunks = lambda *_args: ()
     monkeypatch.setitem(
         sys.modules,
-        "presentator_speech_provider_contract",
+        "speech_runtime_provider_contract",
         RecordingModule(
-            "presentator_speech_provider_contract",
+            "speech_runtime_provider_contract",
             {"MAGPIE_SAMPLE_RATE": "contract:rate", "serve_provider": "contract:serve"},
         ),
     )
-    contract_module = sys.modules["presentator_speech_provider_contract"]
+    contract_module = sys.modules["speech_runtime_provider_contract"]
     contract_module.MAGPIE_SAMPLE_RATE = 22_050
     contract_module.ProviderFunctions = provider_functions
     contract_module.serve_provider = serve_provider

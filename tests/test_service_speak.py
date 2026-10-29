@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
+from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 from starlette.responses import StreamingResponse
 from starlette.status import (
     HTTP_200_OK,
@@ -17,15 +17,15 @@ from starlette.status import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
-from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
-from presentator_speech.pcm import AI_MARK, is_silence, pcm_from_wav
-from presentator_speech.selection import VoiceSelectionStore
-from presentator_speech.service import (
+from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from speech_runtime_service.pcm import AI_MARK, is_silence, pcm_from_wav
+from speech_runtime_service.selection import VoiceSelectionStore
+from speech_runtime_service.service import (
     Runtime,
     RuntimeDependencies,
 )
-from presentator_speech.speaking import PiperSpeaking, speaking_for_voice
-from presentator_speech.voices import VoiceId, VoiceLoadOutcome
+from speech_runtime_service.speaking import PiperSpeaking, speaking_for_voice
+from speech_runtime_service.voices import VoiceId, VoiceLoadOutcome
 from tests.support.fakes_support import (
     SPEAK_SAMPLE_RATE,
     FakeHearing,

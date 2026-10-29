@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from anyio import run, run_process
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     CHATTERBOX_SAMPLE_RATE,
     MAGPIE_MODEL_ID,
     MAGPIE_SAMPLE_RATE,
@@ -31,15 +31,15 @@ from presentator_speech_provider_contract import (
     write_frame,
 )
 
-from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
-from presentator_speech.provider_process import (
+from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from speech_runtime_service.provider_process import (
     ProviderLaunch,
     ProviderProcess,
     ProviderProtocolError,
 )
-from presentator_speech.selection import VoiceSelectionStore
-from presentator_speech.service import Runtime, RuntimeDependencies
-from presentator_speech.voices import VoiceId, VoiceLoadOutcome, VoiceRecoveryKind
+from speech_runtime_service.selection import VoiceSelectionStore
+from speech_runtime_service.service import Runtime, RuntimeDependencies
+from speech_runtime_service.voices import VoiceId, VoiceLoadOutcome, VoiceRecoveryKind
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
 from tests.support.worker_support import assert_reaped, closed_provider, observed
 
@@ -73,7 +73,7 @@ def _provider_process(
             / provider_name
             / ".venv"
             / "bin"
-            / f"presentator-{provider_name}-worker",
+            / f"speech-runtime-{provider_name}-worker",
             arguments=tuple(arguments),
         )
     )
@@ -163,7 +163,7 @@ def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
         return real_popen(arguments, **keywords)
 
     monkeypatch.setattr(
-        "presentator_speech.provider_process.subprocess.Popen", recording_popen
+        "speech_runtime_service.provider_process.subprocess.Popen", recording_popen
     )
     engine = _provider_process(root, cache)
     loaded = threading.Thread(target=engine.load)
@@ -205,7 +205,7 @@ def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
     assert len(launches) == 1
     launch_arguments, launch = launches[0]
     assert launch_arguments == [
-        str(root / "chatterbox/.venv/bin/presentator-chatterbox-worker"),
+        str(root / "chatterbox/.venv/bin/speech-runtime-chatterbox-worker"),
         "--expected-parent-pid",
         str(os.getpid()),
         "--device",
@@ -297,10 +297,10 @@ def test_partial_cancel_frame_cannot_extend_the_single_drain_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "presentator_speech.provider_process.CANCEL_DRAIN_SECONDS", 0.05
+        "speech_runtime_service.provider_process.CANCEL_DRAIN_SECONDS", 0.05
     )
     monkeypatch.setattr(
-        "presentator_speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05
+        "speech_runtime_service.provider_process.TERMINATE_GRACE_SECONDS", 0.05
     )
     engine = _engine(tmp_path, "partial-cancel")
     engine.load()
@@ -319,10 +319,10 @@ def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "presentator_speech.provider_process.CANCEL_DRAIN_SECONDS", 0.05
+        "speech_runtime_service.provider_process.CANCEL_DRAIN_SECONDS", 0.05
     )
     monkeypatch.setattr(
-        "presentator_speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05
+        "speech_runtime_service.provider_process.TERMINATE_GRACE_SECONDS", 0.05
     )
     root, cache = closed_provider(tmp_path, "partial-cancel", "qwen")
     constructed: list[ProviderProcess] = []
@@ -497,9 +497,11 @@ def test_close_allows_bounded_active_cancel_before_reaping(
     behavior: str,
     text: str,
 ) -> None:
-    monkeypatch.setattr("presentator_speech.provider_process.CANCEL_DRAIN_SECONDS", 0.2)
     monkeypatch.setattr(
-        "presentator_speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05
+        "speech_runtime_service.provider_process.CANCEL_DRAIN_SECONDS", 0.2
+    )
+    monkeypatch.setattr(
+        "speech_runtime_service.provider_process.TERMINATE_GRACE_SECONDS", 0.05
     )
     engine = _engine(tmp_path, behavior)
     engine.load()
@@ -531,7 +533,7 @@ def test_shutdown_during_handshake_closes_pending_without_publication(
     tmp_path: Path,
 ) -> None:
     root, cache = closed_provider(tmp_path, "term-resistant")
-    entrypoint = root / "chatterbox/.venv/bin/presentator-chatterbox-worker"
+    entrypoint = root / "chatterbox/.venv/bin/speech-runtime-chatterbox-worker"
     source = entrypoint.read_text(encoding="utf-8")
     entrypoint.write_text(
         source.replace(
@@ -618,10 +620,10 @@ def test_real_child_is_reaped_when_publication_setup_raises(
             raise RuntimeError
 
     monkeypatch.setattr(
-        "presentator_speech.provider_process.FrameDecoder", BrokenDecoder
+        "speech_runtime_service.provider_process.FrameDecoder", BrokenDecoder
     )
     monkeypatch.setattr(
-        "presentator_speech.provider_process.subprocess.Popen", recording_popen
+        "speech_runtime_service.provider_process.subprocess.Popen", recording_popen
     )
     with pytest.raises(RuntimeError, match="speech provider failed"):
         engine.load()
@@ -658,7 +660,8 @@ def test_cleanup_failure_reaps_and_reports_fatal_lifecycle(
         return FailingCleanupProcess(process)
 
     monkeypatch.setattr(
-        "presentator_speech.provider_process.subprocess.Popen", failing_cleanup_popen
+        "speech_runtime_service.provider_process.subprocess.Popen",
+        failing_cleanup_popen,
     )
     engine = _engine(tmp_path)
     engine.set_fatal_callback(fatal.set)
@@ -676,7 +679,7 @@ def test_term_resistant_leader_reaches_kill_and_reap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "presentator_speech.provider_process.TERMINATE_GRACE_SECONDS", 0.05
+        "speech_runtime_service.provider_process.TERMINATE_GRACE_SECONDS", 0.05
     )
     engine = _engine(tmp_path, "term-resistant")
     engine.load()
@@ -699,7 +702,7 @@ ready = Path(sys.argv[1])
 child_code = """
 import os, sys, time
 from pathlib import Path
-from presentator_chatterbox.__main__ import install_parent_death_signal
+from speech_runtime_chatterbox.__main__ import install_parent_death_signal
 install_parent_death_signal(int(sys.argv[1]))
 Path(sys.argv[2]).write_text(str(os.getpid()))
 while True: time.sleep(1)

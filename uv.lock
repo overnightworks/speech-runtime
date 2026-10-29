@@ -360,7 +360,7 @@ wheels = [
 ]
 
 [[package]]
-name = "overnightworks-presentator-speech"
+name = "overnightworks-speech-runtime-service"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
@@ -370,7 +370,7 @@ dependencies = [
     { name = "numpy" },
     { name = "nvidia-cublas-cu12" },
     { name = "nvidia-cudnn-cu12" },
-    { name = "overnightworks-presentator-speech-provider-contract" },
+    { name = "overnightworks-speech-runtime-provider-contract" },
     { name = "piper-tts" },
     { name = "pydantic-settings" },
     { name = "uvicorn" },
@@ -393,7 +393,7 @@ requires-dist = [
     { name = "numpy", specifier = "==2.5.4" },
     { name = "nvidia-cublas-cu12", specifier = "==12.9.2.10" },
     { name = "nvidia-cudnn-cu12", specifier = "==9.27.0.42" },
-    { name = "overnightworks-presentator-speech-provider-contract", editable = "providers/provider-contract" },
+    { name = "overnightworks-speech-runtime-provider-contract", editable = "providers/provider-contract" },
     { name = "piper-tts", specifier = "==1.8.0" },
     { name = "pydantic-settings", specifier = "==2.16.1" },
     { name = "uvicorn", specifier = "==0.54.0" },
@@ -409,7 +409,7 @@ dev = [
 ]
 
 [[package]]
-name = "overnightworks-presentator-speech-provider-contract"
+name = "overnightworks-speech-runtime-provider-contract"
 version = "0.0.0"
 source = { editable = "providers/provider-contract" }
 

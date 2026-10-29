@@ -14,9 +14,9 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
-import presentator_speech_provider_contract as worker
 import pytest
-from presentator_speech_provider_contract import (
+import speech_runtime_provider_contract as worker
+from speech_runtime_provider_contract import (
     Frame,
     FrameKind,
     ProviderFailure,
@@ -450,7 +450,7 @@ def _run_bootstrap(write_fd: int) -> None:
     os.dup2(write_fd, 1)
     os.close(write_fd)
     sys.argv = [
-        "presentator-chatterbox-worker",
+        "speech-runtime-chatterbox-worker",
         "--expected-parent-pid",
         str(os.getppid()),
         "--device",
@@ -458,7 +458,7 @@ def _run_bootstrap(write_fd: int) -> None:
         "--cache",
         "/closed/cache",
     ]
-    from presentator_chatterbox import __main__ as bootstrap
+    from speech_runtime_chatterbox import __main__ as bootstrap
 
     installed = False
     install = bootstrap.install_parent_death_signal
@@ -472,7 +472,7 @@ def _run_bootstrap(write_fd: int) -> None:
     real_import = builtins.__import__
 
     def importing(name: str, *args: object, **kwargs: object) -> object:
-        if name == "presentator_chatterbox.model":
+        if name == "speech_runtime_chatterbox.model":
             assert installed
             vars(builtins)["print"]("import print noise", flush=True)
             os.write(1, b"import native noise\n")
@@ -480,7 +480,7 @@ def _run_bootstrap(write_fd: int) -> None:
             return SimpleNamespace(
                 load_model=lambda *_args: object(), pcm_chunks=lambda *_args: ()
             )
-        if name == "presentator_speech_provider_contract":
+        if name == "speech_runtime_provider_contract":
 
             def fake_serve_provider(**arguments: object) -> int:
                 protocol = int(arguments["protocol_stdout"])

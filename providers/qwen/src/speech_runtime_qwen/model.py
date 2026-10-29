@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     MAX_PCM_BYTES,
     QWEN_ARTIFACTS,
     QWEN_MODEL_ID,

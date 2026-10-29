@@ -3,13 +3,13 @@
 from pathlib import Path
 
 from huggingface_hub import constants as huggingface_hub_constants
-from presentator_speech_provider_contract import (
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from speech_runtime_provider_contract import (
     QWEN_MODEL_ID,
     MagpieSpeaker,
     QwenSpeaker,
 )
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_SPEAKING_MODEL = "de_DE-thorsten-medium"
 CHATTERBOX_SPEAKING_MODEL = "ResembleAI/chatterbox"
@@ -36,9 +36,9 @@ class Settings(BaseSettings):
     provider_root: Path | None = None
     qwen_speaker: QwenSpeaker = QwenSpeaker.RYAN
     magpie_speaker: MagpieSpeaker = MagpieSpeaker.SOFIA
-    private_directory: Path = Path("/run/presentator-speech")
+    private_directory: Path = Path("/run/speech-runtime")
     state_directory: Path = Field(
-        default_factory=lambda: Path.home() / ".local/state/presentator-speech"
+        default_factory=lambda: Path.home() / ".local/state/speech-runtime"
     )
     runtime_uid: int | None = Field(
         default=None,

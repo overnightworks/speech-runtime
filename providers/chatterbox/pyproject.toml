@@ -3,22 +3,22 @@ requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
-name = "overnightworks-presentator-chatterbox-provider"
+name = "overnightworks-speech-runtime-chatterbox-provider"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["chatterbox-tts==0.1.7", "numpy==1.26.4", "overnightworks-presentator-speech-provider-contract", "setuptools==81.0.0"]
+dependencies = ["chatterbox-tts==0.1.7", "numpy==1.26.4", "overnightworks-speech-runtime-provider-contract", "setuptools==81.0.0"]
 
 [project.scripts]
-presentator-chatterbox-worker = "presentator_chatterbox.__main__:main"
+speech-runtime-chatterbox-worker = "speech_runtime_chatterbox.__main__:main"
 
 [tool.uv.sources]
-overnightworks-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
+overnightworks-speech-runtime-provider-contract = { path = "../provider-contract", editable = true }
 
 [dependency-groups]
 dev = ["pytest==9.1.1", "pytest-cov==7.1.0", "ruff==0.17.1"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/presentator_chatterbox"]
+packages = ["src/speech_runtime_chatterbox"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
@@ -37,5 +37,5 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
-"src/presentator_chatterbox/__main__.py" = ["PLC0415"]
-"src/presentator_chatterbox/model.py" = ["PLC0415", "TC003"]
+"src/speech_runtime_chatterbox/__main__.py" = ["PLC0415"]
+"src/speech_runtime_chatterbox/model.py" = ["PLC0415", "TC003"]

@@ -3,7 +3,7 @@ requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
-name = "overnightworks-presentator-magpie-provider"
+name = "overnightworks-speech-runtime-magpie-provider"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -11,21 +11,21 @@ dependencies = [
     "nemo-toolkit[tts]==3.0.0",
     "numpy",
     "omegaconf",
-    "overnightworks-presentator-speech-provider-contract",
+    "overnightworks-speech-runtime-provider-contract",
     "torch",
 ]
 
 [project.scripts]
-presentator-magpie-worker = "presentator_magpie.__main__:main"
+speech-runtime-magpie-worker = "speech_runtime_magpie.__main__:main"
 
 [tool.uv.sources]
-overnightworks-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
+overnightworks-speech-runtime-provider-contract = { path = "../provider-contract", editable = true }
 
 [dependency-groups]
 dev = ["pytest==9.1.1", "pytest-cov==7.1.0", "ruff==0.17.2"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/presentator_magpie"]
+packages = ["src/speech_runtime_magpie"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
@@ -41,5 +41,5 @@ ignore = ["COM812", "CPY001", "D103", "INP001", "PLC0415", "S101", "TC003"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
-"src/presentator_magpie/__main__.py" = ["PLC0415"]
-"src/presentator_magpie/model.py" = ["PLC0415", "TC003"]
+"src/speech_runtime_magpie/__main__.py" = ["PLC0415"]
+"src/speech_runtime_magpie/model.py" = ["PLC0415", "TC003"]

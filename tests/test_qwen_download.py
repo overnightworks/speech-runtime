@@ -9,18 +9,18 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     QWEN_ARTIFACTS,
     QWEN_MODEL_ID,
     QWEN_REVISION,
 )
 
-from presentator_speech import qwen_download, voices
-from presentator_speech.config import Settings
-from presentator_speech.control import create_control_app
-from presentator_speech.selection import VoiceSelectionStore
-from presentator_speech.service import Runtime, RuntimeDependencies
-from presentator_speech.voices import (
+from speech_runtime_service import qwen_download, voices
+from speech_runtime_service.config import Settings
+from speech_runtime_service.control import create_control_app
+from speech_runtime_service.selection import VoiceSelectionStore
+from speech_runtime_service.service import Runtime, RuntimeDependencies
+from speech_runtime_service.voices import (
     VoiceDownloadOutcome,
     VoiceId,
     VoiceLoadOutcome,

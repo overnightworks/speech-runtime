@@ -5,10 +5,10 @@ from fastapi.testclient import TestClient
 from starlette.status import WS_1009_MESSAGE_TOO_BIG, WS_1011_INTERNAL_ERROR
 from starlette.websockets import WebSocketDisconnect
 
-from presentator_speech.config import HEAR_SAMPLE_RATE
-from presentator_speech.hearing import MAX_FRAME_SECONDS, HearingSession
-from presentator_speech.pcm import BYTES_PER_SAMPLE
-from presentator_speech.service import FRAME_TOO_LARGE_REASON, HEARING_FAILED_REASON
+from speech_runtime_service.config import HEAR_SAMPLE_RATE
+from speech_runtime_service.hearing import MAX_FRAME_SECONDS, HearingSession
+from speech_runtime_service.pcm import BYTES_PER_SAMPLE
+from speech_runtime_service.service import FRAME_TOO_LARGE_REASON, HEARING_FAILED_REASON
 from tests.support.fakes_support import FakeHearing, an_app, sine_pcm
 
 

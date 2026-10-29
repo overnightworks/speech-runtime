@@ -7,18 +7,18 @@ import struct
 import threading
 from typing import TYPE_CHECKING
 
-from presentator_speech.config import HEAR_SAMPLE_RATE, Settings
-from presentator_speech.control import create_control_app
-from presentator_speech.hearing import HearingSession
-from presentator_speech.pcm import BYTES_PER_SAMPLE
-from presentator_speech.service import Runtime
+from speech_runtime_service.config import HEAR_SAMPLE_RATE, Settings
+from speech_runtime_service.control import create_control_app
+from speech_runtime_service.hearing import HearingSession
+from speech_runtime_service.pcm import BYTES_PER_SAMPLE
+from speech_runtime_service.service import Runtime
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from fastapi import FastAPI
 
-    from presentator_speech.service import HearingEngine, SpeakingEngine
+    from speech_runtime_service.service import HearingEngine, SpeakingEngine
 
 SAMPLE_RATE = HEAR_SAMPLE_RATE
 SPEAK_SAMPLE_RATE = 22_050

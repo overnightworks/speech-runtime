@@ -16,16 +16,16 @@ from pathlib import Path
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
-from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
+from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
-from presentator_speech import __main__
-from presentator_speech.__main__ import PrivateSocket
-from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, Settings
-from presentator_speech.control import create_control_app
-from presentator_speech.provider_process import ProviderLaunch, ProviderProcess
-from presentator_speech.selection import VoiceSelectionStore
-from presentator_speech.service import Runtime, RuntimeDependencies
-from presentator_speech.voices import VoiceId
+from speech_runtime_service import __main__
+from speech_runtime_service.__main__ import PrivateSocket
+from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from speech_runtime_service.control import create_control_app
+from speech_runtime_service.provider_process import ProviderLaunch, ProviderProcess
+from speech_runtime_service.selection import VoiceSelectionStore
+from speech_runtime_service.service import Runtime, RuntimeDependencies
+from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
 
 
@@ -367,7 +367,7 @@ def test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "providers"
-    entrypoint = root / "chatterbox/.venv/bin/presentator-chatterbox-worker"
+    entrypoint = root / "chatterbox/.venv/bin/speech-runtime-chatterbox-worker"
     entrypoint.parent.mkdir(parents=True)
     entrypoint.write_text(
         f"""#!{sys.executable}
@@ -381,7 +381,7 @@ os.close(null)
 cache = Path(__import__("sys").argv[-1])
 while not (cache / "allow-ready").exists():
     time.sleep(0.01)
-from presentator_speech_provider_contract import Frame, FrameKind, write_frame
+from speech_runtime_provider_contract import Frame, FrameKind, write_frame
 write_frame(protocol, Frame(FrameKind.READY, 0, b"\\x00\\x01\\x00\\x00]\\xc0"))
 while True:
     time.sleep(1)
@@ -445,7 +445,7 @@ while True:
     monkeypatch.setattr(__main__, "_server", lambda _app: server)
     monkeypatch.setattr(__main__, "_install_signal_handlers", install)
     monkeypatch.setattr(
-        "presentator_speech.provider_process.subprocess.Popen", observed_popen
+        "speech_runtime_service.provider_process.subprocess.Popen", observed_popen
     )
 
     outcome = asyncio.run(

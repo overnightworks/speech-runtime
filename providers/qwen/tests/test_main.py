@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
-from presentator_qwen import __main__ as entrypoint
+from speech_runtime_qwen import __main__ as entrypoint
 
 
 def test_entrypoint_loads_without_synthesis_before_ready(monkeypatch) -> None:
@@ -32,14 +32,14 @@ def test_entrypoint_loads_without_synthesis_before_ready(monkeypatch) -> None:
     monkeypatch.setattr(entrypoint.os, "close", lambda *_args: None)
     monkeypatch.setitem(
         sys.modules,
-        "presentator_qwen.model",
+        "speech_runtime_qwen.model",
         SimpleNamespace(
             load_model=lambda *_args: object(), pcm_chunks=lambda *_args: ()
         ),
     )
     monkeypatch.setitem(
         sys.modules,
-        "presentator_speech_provider_contract",
+        "speech_runtime_provider_contract",
         SimpleNamespace(
             QWEN_SAMPLE_RATE=24_000,
             ProviderFunctions=lambda load, synthesize: SimpleNamespace(

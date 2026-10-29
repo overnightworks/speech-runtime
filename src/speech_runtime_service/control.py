@@ -4,15 +4,19 @@ from enum import StrEnum
 
 from fastapi import FastAPI, HTTPException
 
-from presentator_speech.config import Settings
-from presentator_speech.service import Runtime, SynthesisBusyError, mount_speech_routes
-from presentator_speech.voices import (
+from speech_runtime_service.config import Settings
+from speech_runtime_service.service import (
+    Runtime,
+    SynthesisBusyError,
+    mount_speech_routes,
+)
+from speech_runtime_service.voices import (
     VoiceDownloadOutcome,
     VoiceId,
     VoiceLoadOutcome,
     VoiceSnapshot,
 )
-from presentator_speech.wav_response import ClosingWavResponse
+from speech_runtime_service.wav_response import ClosingWavResponse
 
 
 class SampleLanguage(StrEnum):
@@ -31,7 +35,7 @@ _SAMPLE_TEXT: dict[SampleLanguage, str] = {
 def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
     """Build the private app: the speech routes and the voice controls, no docs."""
     app = FastAPI(
-        title="presentator-speech-private",
+        title="speech-runtime-private",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,

@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     CHATTERBOX_ARTIFACTS,
     CHATTERBOX_REVISION,
 )

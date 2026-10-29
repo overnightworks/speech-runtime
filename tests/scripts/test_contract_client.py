@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from presentator_speech.pcm import pcm_from_wav
-from presentator_speech.service import Runtime
+from speech_runtime_service.pcm import pcm_from_wav
+from speech_runtime_service.service import Runtime
 from tests.support.fakes_support import SPEAK_SAMPLE_RATE, FakeHearing, FakeSpeaking
 from tests.support.private_server_support import serving_privately
 

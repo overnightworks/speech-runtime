@@ -6,9 +6,9 @@ import json
 from fastapi import FastAPI
 from starlette.responses import StreamingResponse
 
-from presentator_speech.config import Settings
-from presentator_speech.control import create_control_app
-from presentator_speech.service import Runtime, SpeakRequest
+from speech_runtime_service.config import Settings
+from speech_runtime_service.control import create_control_app
+from speech_runtime_service.service import Runtime, SpeakRequest
 
 
 def info_comment_before_data(wav: bytes) -> str | None:

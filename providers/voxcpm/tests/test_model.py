@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from presentator_speech_provider_contract import MAX_PCM_BYTES
+from speech_runtime_provider_contract import MAX_PCM_BYTES
 
-from presentator_voxcpm import model
+from speech_runtime_voxcpm import model
 
 
 @pytest.mark.parametrize("sample_rate", [48_000, 24_000])

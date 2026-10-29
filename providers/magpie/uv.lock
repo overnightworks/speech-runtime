@@ -1650,7 +1650,7 @@ wheels = [
 ]
 
 [[package]]
-name = "overnightworks-presentator-magpie-provider"
+name = "overnightworks-speech-runtime-magpie-provider"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
@@ -1658,7 +1658,7 @@ dependencies = [
     { name = "nemo-toolkit", extra = ["tts"] },
     { name = "numpy" },
     { name = "omegaconf" },
-    { name = "overnightworks-presentator-speech-provider-contract" },
+    { name = "overnightworks-speech-runtime-provider-contract" },
     { name = "torch" },
 ]
 
@@ -1675,7 +1675,7 @@ requires-dist = [
     { name = "nemo-toolkit", extras = ["tts"], specifier = "==3.0.0" },
     { name = "numpy" },
     { name = "omegaconf" },
-    { name = "overnightworks-presentator-speech-provider-contract", editable = "../provider-contract" },
+    { name = "overnightworks-speech-runtime-provider-contract", editable = "../provider-contract" },
     { name = "torch" },
 ]
 
@@ -1687,7 +1687,7 @@ dev = [
 ]
 
 [[package]]
-name = "overnightworks-presentator-speech-provider-contract"
+name = "overnightworks-speech-runtime-provider-contract"
 version = "0.0.0"
 source = { editable = "../provider-contract" }
 

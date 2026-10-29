@@ -1,9 +1,9 @@
 # Measured by `quality baseline write`. Entries only ever go down.
 
 [file_lines]
-"tests/test_control_voice_status.py" = 1471
+"tests/test_control_voice_status.py" = 1469
 
-[function_lines."providers/chatterbox/src/presentator_chatterbox/model.py"]
+[function_lines."providers/chatterbox/src/speech_runtime_chatterbox/model.py"]
 "speech_token_chunks" = 83
 
 [function_lines."providers/magpie/tests/test_main.py"]
@@ -15,7 +15,7 @@
 [function_lines."scripts/contract_client.py"]
 "_run" = 75
 
-[function_lines."src/presentator_speech/speaking.py"]
+[function_lines."src/speech_runtime_service/speaking.py"]
 "speaking_for_voice" = 77
 
 [function_lines."tests/test_main.py"]
@@ -30,5 +30,5 @@
 
 [function_lines."tests/test_control_voice_status.py"]
 "test_magpie_load_restore_samples_public_speech_and_deselect_reap" = 70
-"test_voxcpm_catalogue_and_factory_import_no_provider_packages" = 66
+"test_voxcpm_catalogue_and_factory_import_no_provider_packages" = 64
 "test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child" = 67

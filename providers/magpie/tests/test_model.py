@@ -10,7 +10,7 @@ from unittest.mock import create_autospec
 import pytest
 import torch
 from omegaconf import OmegaConf
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     MAX_PCM_BYTES,
     Frame,
     FrameKind,
@@ -19,7 +19,7 @@ from presentator_speech_provider_contract import (
     serve_commands,
 )
 
-from presentator_magpie import model
+from speech_runtime_magpie import model
 
 
 def test_load_resolves_exact_local_archives_before_overriding_the_codec(

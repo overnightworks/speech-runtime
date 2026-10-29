@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from huggingface_hub import try_to_load_from_cache
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     CHATTERBOX_ARTIFACTS,
     CHATTERBOX_REVISION,
     MAGPIE_CODEC_FILENAME,
@@ -24,8 +24,11 @@ from presentator_speech_provider_contract import (
     VOXCPM_REVISION,
 )
 
-from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, DEFAULT_SPEAKING_MODEL
-from presentator_speech.provider_process import (
+from speech_runtime_service.config import (
+    CHATTERBOX_SPEAKING_MODEL,
+    DEFAULT_SPEAKING_MODEL,
+)
+from speech_runtime_service.provider_process import (
     ProviderId,
     provider_entrypoint_is_usable,
 )
@@ -33,7 +36,7 @@ from presentator_speech.provider_process import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from presentator_speech.config import Settings
+    from speech_runtime_service.config import Settings
 
 
 class VoiceId(StrEnum):
