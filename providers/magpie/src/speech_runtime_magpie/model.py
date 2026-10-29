@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -21,6 +21,9 @@ from speech_runtime_provider_contract import (
     MAX_PCM_BYTES,
     MagpieSpeaker,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _SPEAKER_INDICES = {
     MagpieSpeaker.ARIA: 0,

@@ -37,8 +37,16 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["COM812", "CPY001", "TC003"]
+ignore = [
+    "COM812", # conflicts with ruff format
+    "CPY001", # the copyright header is not used here
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "D103", "ANN001", "PLR2004"]
-"src/speech_runtime_magpie/__main__.py" = ["PLC0415"]
+"tests/**" = [
+    "S101", # pytest checks with assert
+    "D103", # the test name states the behaviour
+]
+"src/speech_runtime_magpie/__main__.py" = [
+    "PLC0415", # the stdout redirect precedes the provider import, and the tests pin that order
+]

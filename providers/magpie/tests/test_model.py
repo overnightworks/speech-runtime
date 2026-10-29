@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import queue
 from io import BytesIO
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import create_autospec
 
 import pytest
@@ -20,6 +20,9 @@ from speech_runtime_provider_contract import (
 )
 
 from speech_runtime_magpie import model
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_load_resolves_exact_local_archives_before_overriding_the_codec(
