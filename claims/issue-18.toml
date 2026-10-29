@@ -1,0 +1,8 @@
+claim_id = "0fff0203568d42b7b1eb6a3247dd9cce"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "87362e2be3b87337b61a8dda0fa51f7bc2ae727e"
+branch = "claude/issue-18-c2d-qwen-voxcpm-magpie-lint"
+scope = ["providers/magpie/pyproject.toml", "providers/magpie/src", "providers/magpie/tests", "providers/qwen/pyproject.toml", "providers/qwen/src", "providers/qwen/tests", "providers/voxcpm/pyproject.toml", "providers/voxcpm/src", "providers/voxcpm/tests"]
+opened_commit = "126e37989ada32725c58b0b983b6065dd19bd74b"
+whole_reason = "Three providers of the same shape bundled in one lane; each card alone is a small lint pass."
