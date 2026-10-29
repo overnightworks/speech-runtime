@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -11,10 +10,16 @@ import numpy as np
 import pytest
 from speech_runtime_provider_contract import MAX_PCM_BYTES
 
-model = importlib.import_module("speech_runtime_qwen.model")
-
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import ModuleType
+
+
+@pytest.fixture
+def model() -> ModuleType:
+    from speech_runtime_qwen import model as module
+
+    return module
 
 
 class _GeneratedModel:
@@ -31,7 +36,7 @@ class _GeneratedModel:
 
 
 def test_load_uses_the_pinned_local_snapshot_and_closed_cuda_mapping(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    model: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     observed: dict[str, object] = {}
     checkpoint = tmp_path / "snapshot"
@@ -76,7 +81,7 @@ def test_load_uses_the_pinned_local_snapshot_and_closed_cuda_mapping(
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:1", "mps"])
 def test_load_rejects_unsupported_devices_before_sdk_import(
-    tmp_path: Path, device: str, monkeypatch: pytest.MonkeyPatch
+    model: ModuleType, tmp_path: Path, device: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delitem(sys.modules, "qwen_tts", raising=False)
 
@@ -86,7 +91,9 @@ def test_load_rejects_unsupported_devices_before_sdk_import(
     assert "qwen_tts" not in sys.modules
 
 
-def test_complete_waveform_is_clipped_and_split_into_even_bounded_pcm() -> None:
+def test_complete_waveform_is_clipped_and_split_into_even_bounded_pcm(
+    model: ModuleType,
+) -> None:
     waveform = np.linspace(-2.0, 2.0, (MAX_PCM_BYTES // 2) + 17)
     generated = _GeneratedModel(waveform)
 
@@ -101,7 +108,7 @@ def test_complete_waveform_is_clipped_and_split_into_even_bounded_pcm() -> None:
     assert b"".join(chunks) == expected
 
 
-def test_english_is_explicit_and_instruction_is_absent() -> None:
+def test_english_is_explicit_and_instruction_is_absent(model: ModuleType) -> None:
     generated = _GeneratedModel(np.array([0.25]))
 
     assert list(model.pcm_chunks(generated, "Hello", "en", speaker="Sohee"))
@@ -111,7 +118,7 @@ def test_english_is_explicit_and_instruction_is_absent() -> None:
     ]
 
 
-def test_generation_rejects_an_unexpected_sample_rate() -> None:
+def test_generation_rejects_an_unexpected_sample_rate(model: ModuleType) -> None:
     generated = _GeneratedModel(np.array([0.25]), rate=16_000)
 
     with pytest.raises(ValueError, match="Qwen sample rate"):

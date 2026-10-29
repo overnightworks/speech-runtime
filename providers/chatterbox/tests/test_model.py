@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -13,12 +12,18 @@ from speech_runtime_provider_contract import (
     CHATTERBOX_REVISION,
 )
 
-model = importlib.import_module("speech_runtime_chatterbox.model")
-
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import ModuleType
 
     import torch
+
+
+@pytest.fixture
+def model() -> ModuleType:
+    from speech_runtime_chatterbox import model as module
+
+    return module
 
 
 def test_the_real_watermarker_is_importable() -> None:
@@ -30,7 +35,7 @@ class _SnapshotObservedError(RuntimeError):
 
 
 def test_model_load_asks_only_for_the_pinned_local_snapshot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    model: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     observed: dict[str, object] = {}
 
@@ -114,6 +119,7 @@ class _FakeModel:
 
 
 def test_speech_tokens_stream_in_order_with_a_short_trailing_chunk(
+    model: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import torch
@@ -136,7 +142,7 @@ def test_speech_tokens_stream_in_order_with_a_short_trailing_chunk(
     assert torch.cat(chunks).tolist() == [10, 11, 12, 13, 14, 15, 16]
 
 
-def test_float_audio_is_clipped_to_signed_little_endian_pcm() -> None:
+def test_float_audio_is_clipped_to_signed_little_endian_pcm(model: ModuleType) -> None:
     pcm = model.float_to_pcm(np.array([-2.0, -1.0, 0.0, 1.0, 2.0]))
     assert np.frombuffer(pcm, dtype="<i2").tolist() == [
         -32768,
