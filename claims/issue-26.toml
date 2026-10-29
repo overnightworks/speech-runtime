@@ -3,6 +3,6 @@ agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
 role = "builder"
 base = "c80151e9e885e6c2cce6d8b4b104dda2157bad9c"
 branch = "claude/issue-26-c2g-provider-lifecycle-lint"
-scope = ["pyproject.toml", "src/speech_runtime_service/provider_process.py", "tests/test_main_serve_lifecycle.py", "tests/test_provider_process.py", "tests/test_provider_process_environment.py"]
+scope = ["pyproject.toml", "quality/baseline.toml", "src/speech_runtime_service/provider_process.py", "tests/test_main_serve_lifecycle.py", "tests/test_provider_process.py", "tests/test_provider_process_environment.py"]
 opened_commit = "6c6c0d32ccf56621dae3e448d17891987a3a86e4"
 whole_reason = "One ruled deselection and the one file it mostly serves; the test files change only where a message they assert moves."
