@@ -178,8 +178,9 @@ def test_failed_hub_transfer_retains_its_resumable_partial(
         qwen_download.voices, "qwen_worker_is_usable", lambda _settings: True
     )
 
+    settings = Settings(huggingface_cache=tmp_path)
     with pytest.raises(RuntimeError, match="transfer failed"):
-        qwen_download.download_qwen(Settings(huggingface_cache=tmp_path))
+        qwen_download.download_qwen(settings)
 
     assert partial.read_bytes() == b"resume me"
 
@@ -323,8 +324,9 @@ def test_worker_disappearance_before_hub_access_makes_no_network_write(
     )
     monkeypatch.setattr(qwen_download, "snapshot_download", snapshot_download)
 
+    settings = Settings(huggingface_cache=tmp_path)
     with pytest.raises(RuntimeError):
-        qwen_download.download_qwen(Settings(huggingface_cache=tmp_path))
+        qwen_download.download_qwen(settings)
 
     assert hub_calls == 0
 

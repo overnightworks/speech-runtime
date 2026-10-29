@@ -356,12 +356,13 @@ def test_speak_close_paths_release_admission_for_deselection(
     if close_path == "normal":
         response_body(response)
     elif close_path in {"send-failure", "synthesis-error"}:
+        delivery = (
+            _interrupt(response, close_path)
+            if close_path == "send-failure"
+            else _deliver(response)
+        )
         with pytest.raises(_ResponseBoundaryError):
-            asyncio.run(
-                _interrupt(response, close_path)
-                if close_path == "send-failure"
-                else _deliver(response)
-            )
+            asyncio.run(delivery)
     else:
         asyncio.run(_interrupt(response, close_path))
 

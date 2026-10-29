@@ -1,5 +1,7 @@
 """The narrow binary protocol and worker loop shared by local providers."""
 
+import contextlib
+import functools
 import os
 import queue
 import struct
@@ -318,33 +320,51 @@ def serve_commands(
         ):
             _failed(stream, 0)
             return 1
-        request_id = command.request_id
-        language = {1: "de", 2: "en"}[command.payload[0]]
-        text = command.payload[1:].decode("utf-8")
-        iterator: Iterable[bytes] | None = None
-        try:
-            cancelled = False
-            iterator = iter(synthesize(model, text, language))
-            for pcm in iterator:
-                cancelled = _consume_cancellation(
-                    commands, request_id, previous_terminal
-                )
-                if cancelled:
-                    break
-                write_frame(stream, Frame(FrameKind.PCM, request_id, pcm))
-            if not cancelled:
-                cancelled = _consume_cancellation(
-                    commands, request_id, previous_terminal
-                )
-            terminal = FrameKind.CANCELLED if cancelled else FrameKind.COMPLETE
-        except Exception:
-            return _fail_request(stream, request_id, iterator)
-        try:
-            _close_iterator(iterator)
-        except Exception:
-            return _fail_request(stream, request_id, None)
-        write_frame(stream, Frame(terminal, request_id, b""))
-        previous_terminal = request_id
+        terminal = _synthesize_request(
+            commands,
+            stream,
+            functools.partial(synthesize, model),
+            command,
+            previous_terminal,
+        )
+        if terminal is None:
+            return 1
+        write_frame(stream, Frame(terminal, command.request_id, b""))
+        previous_terminal = command.request_id
+
+
+def _synthesize_request(
+    commands: queue.Queue[Frame | BaseException],
+    stream: BinaryIO,
+    synthesize: Callable[[str, str], Iterable[bytes]],
+    command: Frame,
+    previous_terminal: int,
+) -> FrameKind | None:
+    """Stream one request; return its terminal kind, or None after FAILED."""
+    request_id = command.request_id
+    language = {1: "de", 2: "en"}[command.payload[0]]
+    text = command.payload[1:].decode("utf-8")
+    iterator: Iterable[bytes] | None = None
+    try:
+        cancelled = False
+        iterator = iter(synthesize(text, language))
+        for pcm in iterator:
+            cancelled = _consume_cancellation(commands, request_id, previous_terminal)
+            if cancelled:
+                break
+            write_frame(stream, Frame(FrameKind.PCM, request_id, pcm))
+        if not cancelled:
+            cancelled = _consume_cancellation(commands, request_id, previous_terminal)
+        terminal = FrameKind.CANCELLED if cancelled else FrameKind.COMPLETE
+    except Exception:
+        _fail_request(stream, request_id, iterator)
+        return None
+    try:
+        _close_iterator(iterator)
+    except Exception:
+        _fail_request(stream, request_id, None)
+        return None
+    return terminal
 
 
 def _consume_cancellation(
@@ -399,14 +419,10 @@ def _close_iterator(iterator: Iterable[bytes] | None) -> None:
 
 def _fail_request(
     stream: BinaryIO, request_id: int, iterator: Iterable[bytes] | None
-) -> int:
-    try:
+) -> None:
+    with contextlib.suppress(Exception):
         _close_iterator(iterator)
-    except Exception:
-        _failed(stream, request_id)
-        return 1
     _failed(stream, request_id)
-    return 1
 
 
 def _failed(stream: BinaryIO, request_id: int) -> None:
