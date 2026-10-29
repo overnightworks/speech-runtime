@@ -21,7 +21,11 @@ from speech_runtime_service.service import (
 )
 from speech_runtime_service.voices import VoiceId, VoiceLoadOutcome
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
-from tests.support.speak_support import ASGI_TIMEOUT_SECONDS, info_comment_before_data
+from tests.support.speak_support import (
+    ASGI_TIMEOUT_SECONDS,
+    info_comment_before_data,
+    speak_scope,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -134,18 +138,7 @@ def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(
         async def send(_message: dict[str, Any]) -> None:
             return None
 
-        scope: dict[str, Any] = {
-            "type": "http",
-            "asgi": {"version": "3.0", "spec_version": "2.3"},
-            "http_version": "1.1",
-            "method": "POST",
-            "path": "/speak",
-            "raw_path": b"/speak",
-            "query_string": b"",
-            "headers": [(b"content-type", b"application/json")],
-            "client": ("test", 123),
-            "server": ("test", 80),
-        }
+        scope = speak_scope()
         speaking_task = asyncio.create_task(public(scope, receive, send))
         assert await asyncio.to_thread(speaking.entered.wait, ASGI_TIMEOUT_SECONDS)
         waiting = TestClient(create_control_app(settings, runtime)).post(
@@ -289,11 +282,8 @@ def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(
     result: list[bytes] = []
 
     def sample() -> None:
-        result.append(
-            TestClient(create_control_app(settings, runtime))
-            .post("/voices/piper/sample/de")
-            .content
-        )
+        client = TestClient(create_control_app(settings, runtime))
+        result.append(client.post("/voices/piper/sample/de").content)
 
     request = threading.Thread(target=sample)
     request.start()
