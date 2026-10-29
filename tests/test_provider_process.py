@@ -33,9 +33,12 @@ from speech_runtime_provider_contract import (
 
 from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL, Settings
 from speech_runtime_service.provider_process import (
+    ProviderFailedError,
     ProviderLaunch,
+    ProviderNotReadyError,
     ProviderProcess,
     ProviderProtocolError,
+    UnsupportedLanguageError,
 )
 from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
@@ -287,6 +290,30 @@ def test_early_exit_and_oversized_handshake_fail_without_an_owned_process(
     _, _, pid, _ = observed(tmp_path / "cache")
     engine.close()
     assert_reaped(pid)
+
+
+def test_load_after_a_failed_startup_is_refused(tmp_path: Path) -> None:
+    engine = _engine(tmp_path, "startup-exit")
+    with pytest.raises(ProviderFailedError):
+        engine.load()
+    with pytest.raises(ProviderFailedError):
+        engine.load()
+    engine.close()
+
+
+def test_unsupported_language_is_refused_before_any_request(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    engine.load()
+    with pytest.raises(UnsupportedLanguageError):
+        list(engine.pcm_chunks("hello", "fr"))
+    assert engine.ready is True
+    engine.close()
+
+
+def test_request_before_load_is_refused_as_not_ready(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    with pytest.raises(ProviderNotReadyError):
+        list(engine.pcm_chunks("hello", "de"))
 
 
 def test_duplicate_terminal_is_rejected_before_a_later_request(tmp_path: Path) -> None:
