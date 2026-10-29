@@ -189,7 +189,7 @@ async def serve(settings: Settings) -> int:
     fatal = asyncio.Event()
     runtime = Runtime.from_settings(settings)
     runtime.set_fatal_callback(lambda: loop.call_soon_threadsafe(fatal.set))
-    server = _server(create_control_app(settings, runtime))
+    server = build_server(create_control_app(settings, runtime))
     stopping = asyncio.Event()
     loading_stop = threading.Event()
     _install_signal_handlers(stopping, loading_stop)
@@ -236,7 +236,8 @@ async def serve(settings: Settings) -> int:
         return result
 
 
-def _server(app: object) -> uvicorn.Server:
+def build_server(app: object) -> uvicorn.Server:
+    """Build the uvicorn server for the control application."""
     return uvicorn.Server(uvicorn.Config(app, log_level="info"))
 
 

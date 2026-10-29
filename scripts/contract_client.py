@@ -66,7 +66,8 @@ def _request(
     return data
 
 
-def _get_json(path: Path, target: str) -> dict[str, object]:
+def get_json(path: Path, target: str) -> dict[str, object]:
+    """GET a path over the speech socket and decode the JSON body."""
     return json.loads(_request(path, "GET", target, None, 30).decode("utf-8"))
 
 
@@ -106,7 +107,8 @@ def _resample(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
     return out.tobytes()
 
 
-def _speak(path: Path, text: str) -> bytes:
+def speak(path: Path, text: str) -> bytes:
+    """POST German text to the speech socket and return the WAV bytes."""
     body = json.dumps({"text": text, "language": "de"}).encode("utf-8")
     return _request(path, "POST", "/speak", body, 60)
 
@@ -351,9 +353,9 @@ async def _measure_utterance(
 
 async def _run_measure(path: Path) -> None:
     """Repeat the first sentence on one socket and print what each repetition cost."""
-    health = _get_json(path, "/health")
+    health = get_json(path, "/health")
     sample_rate = int(health["sample_rate"])
-    rate, pcm = _pcm_from_wav(_speak(path, SENTENCE))
+    rate, pcm = _pcm_from_wav(speak(path, SENTENCE))
     pcm = _resample(pcm, rate, sample_rate)
     repetitions: list[Repetition] = []
     async with unix_connect(
@@ -379,7 +381,7 @@ async def _run_measure(path: Path) -> None:
 
 
 async def _run(path: Path) -> None:
-    health = _get_json(path, "/health")
+    health = get_json(path, "/health")
     print("contract_health", json.dumps(health, sort_keys=True))
     speaking = health["speaking"]
     hearing = health["hearing"]
@@ -391,7 +393,7 @@ async def _run(path: Path) -> None:
         raise SystemExit(message)
     sample_rate = int(health["sample_rate"])
 
-    wav = _speak(path, SENTENCE)
+    wav = speak(path, SENTENCE)
     rate, pcm = _pcm_from_wav(wav)
     pcm = _resample(pcm, rate, sample_rate)
     print(
@@ -433,7 +435,7 @@ async def _run(path: Path) -> None:
             f"t={time.perf_counter() - first_started:.3f}s",
             json.dumps(first_final, ensure_ascii=False),
         )
-        second_wav = _speak(path, SECOND)
+        second_wav = speak(path, SECOND)
         rate2, pcm2 = _pcm_from_wav(second_wav)
         pcm2 = _resample(pcm2, rate2, sample_rate)
         second_started = time.perf_counter()
