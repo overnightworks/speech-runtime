@@ -1,8 +1,0 @@
-claim_id = "e93ce30b262a4dd4859a552b45b2c018"
-agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
-role = "builder"
-base = "b603d49c06fbf99f1c5216e20df85040ea4ff71d"
-branch = "claude/issue-6-n3-rename"
-scope = ["README.md", "providers", "pyproject.toml", "quality/baseline.toml", "scripts", "src", "tests", "uv.lock"]
-opened_commit = "c4ccc6b2474932f35a91d22f3190b0e1b7802f43"
-whole_reason = "A rename is atomic: the package directories, every import, the locks and the baseline keys must change together or nothing imports."
