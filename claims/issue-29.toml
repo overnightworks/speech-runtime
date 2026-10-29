@@ -1,8 +1,0 @@
-claim_id = "86c87811be8c433f8e92ee163c277957"
-agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
-role = "builder"
-base = "c80151e9e885e6c2cce6d8b4b104dda2157bad9c"
-branch = "claude/issue-29-c2k-provider-bootstraps"
-scope = ["providers/chatterbox/pyproject.toml", "providers/chatterbox/src", "providers/chatterbox/tests", "providers/magpie/pyproject.toml", "providers/magpie/src", "providers/magpie/tests", "providers/qwen/pyproject.toml", "providers/qwen/src", "providers/qwen/tests", "providers/voxcpm/pyproject.toml", "providers/voxcpm/src", "providers/voxcpm/tests", "quality/baseline.toml"]
-opened_commit = "5e1cf1ba3df6ff3baf6a9f3f2942eb9e297a2b87"
-whole_reason = "The same bootstrap shape in four providers; one rule, four small cards."
