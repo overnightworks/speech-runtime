@@ -1,13 +1,18 @@
 """The Chatterbox V3 model adapter, local-cache only."""
 
-from collections.abc import Iterator
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from speech_runtime_provider_contract import (
     CHATTERBOX_ARTIFACTS,
     CHATTERBOX_REVISION,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 STREAM_TOKEN_CHUNK = 12
 MAX_NEW_TOKENS = 1000
