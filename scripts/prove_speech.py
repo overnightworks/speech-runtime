@@ -11,6 +11,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import logging
 import os
 import shutil
 import socket
@@ -54,6 +55,10 @@ CONTRACT_MARKERS = {
     ),
     True: ("measure_rep1", "measure_summary"),
 }
+LOGGER = logging.getLogger(__name__)
+BYTES_PER_SAMPLE = 2
+SILENCE_RMS = 0.01
+MIN_SPEECH_SECONDS = 0.4
 LOAD_CEILING = 18.0
 READY_TIMEOUT_SECONDS = 300.0
 PIPER_FIRST_BYTE_LIMIT_S = 0.5
@@ -138,10 +143,10 @@ def _pcm_from_wav(data: bytes) -> tuple[int, bytes]:
 
 
 def _rms(pcm: bytes) -> float:
-    if len(pcm) < 2:
+    if len(pcm) < BYTES_PER_SAMPLE:
         return 0.0
     samples = array("h")
-    samples.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    samples.frombytes(pcm[: len(pcm) - (len(pcm) % BYTES_PER_SAMPLE)])
     total = sum(sample * sample for sample in samples)
     return (total / len(samples)) ** 0.5 / 32768.0
 
@@ -364,7 +369,7 @@ def _prove_one_speak(
 ) -> tuple[bytes, float, float]:
     wav, ttfa, total = speak_measured(socket_path, text, language=language)
     rate, pcm = _pcm_from_wav(wav)
-    duration = (len(pcm) / 2) / rate
+    duration = (len(pcm) / BYTES_PER_SAMPLE) / rate
     rtf = duration / total if total else 0.0
     print(
         label,
@@ -377,7 +382,7 @@ def _prove_one_speak(
         f"rate={rate}",
         f"bytes={len(wav)}",
     )
-    if _rms(pcm) < 0.01:
+    if _rms(pcm) < SILENCE_RMS:
         message = f"{label} produced silence"
         raise SystemExit(message)
     if duration < 1.0:
@@ -452,6 +457,7 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
         try:
             results[key] = speak_measured(socket_path, text, language="de")
         except Exception as error:
+            LOGGER.exception("concurrent speak %s failed", key)
             errors.append(f"{key}: {error}")
 
     first = threading.Thread(target=run, args=("first", SENTENCE), daemon=True)
@@ -467,7 +473,7 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
         raise SystemExit(message)
     for key, (wav, ttfa, total) in results.items():
         rate, pcm = _pcm_from_wav(wav)
-        duration = (len(pcm) / 2) / rate
+        duration = (len(pcm) / BYTES_PER_SAMPLE) / rate
         print(
             f"speak_concurrent_{key}",
             f"first_byte_s={ttfa:.3f}",
@@ -476,10 +482,10 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
             f"rms={_rms(pcm):.4f}",
             f"rate={rate}",
         )
-        if _rms(pcm) < 0.01:
+        if _rms(pcm) < SILENCE_RMS:
             message = f"concurrent {key} produced silence"
             raise SystemExit(message)
-        if duration < 0.4:
+        if duration < MIN_SPEECH_SECONDS:
             message = f"concurrent {key} produced too little audio"
             raise SystemExit(message)
         if ttfa > limit + 8.0:
@@ -489,7 +495,8 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
             )
             raise SystemExit(message)
     if results["first"][0] == results["second"][0]:
-        raise SystemExit("concurrent speak returned identical bodies")
+        message = "concurrent speak returned identical bodies"
+        raise SystemExit(message)
 
 
 def _prove_contract(
