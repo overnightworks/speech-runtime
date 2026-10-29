@@ -354,7 +354,7 @@ def test_failed_loader_stops_the_server_and_cleans_the_owned_socket(
 
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
-    monkeypatch.setattr(__main__, "_server", lambda _app: Server())
+    monkeypatch.setattr(__main__, "build_server", lambda _app: Server())
     monkeypatch.setattr(
         __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
     )
@@ -445,7 +445,7 @@ while True:
 
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
-    monkeypatch.setattr(__main__, "_server", lambda _app: server)
+    monkeypatch.setattr(__main__, "build_server", lambda _app: server)
     monkeypatch.setattr(__main__, "_install_signal_handlers", install)
     monkeypatch.setattr(
         "speech_runtime_service.provider_process.subprocess.Popen", observed_popen
@@ -506,7 +506,7 @@ def test_owned_speaking_failure_stops_the_server_and_returns_failure(
     server = Server()
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
-    monkeypatch.setattr(__main__, "_server", lambda _app: server)
+    monkeypatch.setattr(__main__, "build_server", lambda _app: server)
     monkeypatch.setattr(
         __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
     )
@@ -568,14 +568,14 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
         ),
     )
 
-    def build_server(app: object) -> _HealthServer:
+    def healthy_server(app: object) -> _HealthServer:
         server = _HealthServer(started=started, release=release, observed=observed)
         server.use(app)
         return server
 
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
-    monkeypatch.setattr(__main__, "_server", build_server)
+    monkeypatch.setattr(__main__, "build_server", healthy_server)
     monkeypatch.setattr(
         __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
     )
@@ -649,7 +649,7 @@ def test_signal_exit_is_zero_and_cleans_the_owned_socket(
 
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
-    monkeypatch.setattr(__main__, "_server", lambda _app: Server())
+    monkeypatch.setattr(__main__, "build_server", lambda _app: Server())
     monkeypatch.setattr(
         __main__,
         "_install_signal_handlers",
@@ -679,7 +679,7 @@ def test_server_ending_on_its_own_returns_failure_and_cleans_the_owned_socket(
 
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
-    monkeypatch.setattr(__main__, "_server", lambda _app: Server())
+    monkeypatch.setattr(__main__, "build_server", lambda _app: Server())
     monkeypatch.setattr(
         __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
     )
