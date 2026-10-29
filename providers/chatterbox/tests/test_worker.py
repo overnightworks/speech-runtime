@@ -9,10 +9,10 @@ import queue
 import struct
 import sys
 import threading
-from collections.abc import Iterator
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 import speech_runtime_provider_contract as worker
@@ -24,6 +24,11 @@ from speech_runtime_provider_contract import (
     read_frame,
     write_frame,
 )
+
+from speech_runtime_chatterbox import __main__ as bootstrap
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 
 def _encoded(*frames: Frame) -> bytes:
@@ -44,8 +49,8 @@ def _frames(encoded: bytes) -> list[Frame]:
 def _run_worker(
     monkeypatch: pytest.MonkeyPatch,
     input_bytes: bytes,
-    loader,
-    synthesizer,
+    loader: Callable[[str, Path], object],
+    synthesizer: Callable[..., Iterator[bytes]],
 ) -> tuple[int, list[Frame], list[tuple[str, Path]]]:
     observed: list[tuple[str, Path]] = []
 
@@ -458,8 +463,6 @@ def _run_bootstrap(write_fd: int) -> None:
         "--cache",
         "/closed/cache",
     ]
-    from speech_runtime_chatterbox import __main__ as bootstrap
-
     installed = False
     install = bootstrap.install_parent_death_signal
 

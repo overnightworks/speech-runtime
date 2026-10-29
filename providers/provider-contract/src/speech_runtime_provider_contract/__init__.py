@@ -2,6 +2,7 @@
 
 import contextlib
 import functools
+import logging
 import os
 import queue
 import struct
@@ -13,6 +14,8 @@ from enum import IntEnum, StrEnum
 from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO
+
+logger = logging.getLogger(__name__)
 
 CHATTERBOX_SAMPLE_RATE = 24_000
 CHATTERBOX_REVISION = "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18"
@@ -267,6 +270,7 @@ def _load_model_and_signal_ready(
             functions.prepare(model)
         write_frame(stream, Frame(FrameKind.READY, 0, ready_payload(sample_rate)))
     except Exception:
+        logger.exception("provider failed to load or prepare the model")
         _failed(stream, 0)
         return None
     return model
@@ -379,11 +383,13 @@ def _synthesize_request(
             cancelled = _consume_cancellation(commands, request_id, previous_terminal)
         terminal = FrameKind.CANCELLED if cancelled else FrameKind.COMPLETE
     except Exception:
+        logger.exception("provider failed while streaming request %d", request_id)
         _fail_request(stream, request_id, iterator)
         return None
     try:
         _close_iterator(iterator)
     except Exception:
+        logger.exception("provider failed to close request %d", request_id)
         _fail_request(stream, request_id, None)
         return None
     return terminal
@@ -448,12 +454,10 @@ def _fail_request(
 
 
 def _failed(stream: BinaryIO, request_id: int) -> None:
-    try:
+    with contextlib.suppress(OSError, ProtocolError):
         write_frame(
             stream,
             Frame(
                 FrameKind.FAILED, request_id, bytes([ProviderFailure.PROVIDER_FAILURE])
             ),
         )
-    except (OSError, ProtocolError):
-        pass
