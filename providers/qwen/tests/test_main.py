@@ -46,19 +46,17 @@ def test_entrypoint_loads_without_synthesis_before_ready(
             load_model=lambda *_args: object(), pcm_chunks=lambda *_args: ()
         ),
     )
-    monkeypatch.setitem(
-        sys.modules,
-        "speech_runtime_provider_contract",
-        SimpleNamespace(
-            QWEN_SAMPLE_RATE=sample_rate,
-            ProviderFunctions=lambda load, synthesize: SimpleNamespace(
-                load=load,
-                synthesize=synthesize,
-                prepare=None,
-            ),
-            serve_provider=serve_provider,
+    monkeypatch.setattr(entrypoint, "QWEN_SAMPLE_RATE", sample_rate)
+    monkeypatch.setattr(
+        entrypoint,
+        "ProviderFunctions",
+        lambda load, synthesize: SimpleNamespace(
+            load=load,
+            synthesize=synthesize,
+            prepare=None,
         ),
     )
+    monkeypatch.setattr(entrypoint, "serve_provider", serve_provider)
 
     assert entrypoint.main() == exit_code
 

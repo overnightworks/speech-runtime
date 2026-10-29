@@ -19,7 +19,7 @@ from speech_runtime_provider_contract import (
     serve_commands,
 )
 
-from speech_runtime_magpie import model
+from speech_runtime_magpie import model  # noqa: TID253 - the model tests import the module under test
 
 if TYPE_CHECKING:
     from pathlib import Path

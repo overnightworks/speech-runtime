@@ -12,7 +12,7 @@ from speech_runtime_provider_contract import (
     CHATTERBOX_REVISION,
 )
 
-from speech_runtime_chatterbox import model
+from speech_runtime_chatterbox import model  # noqa: TID253 - the model tests import the module under test
 
 if TYPE_CHECKING:
     from pathlib import Path

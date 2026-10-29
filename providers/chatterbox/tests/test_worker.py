@@ -483,21 +483,16 @@ def _run_bootstrap(write_fd: int) -> None:
             return SimpleNamespace(
                 load_model=lambda *_args: object(), pcm_chunks=lambda *_args: ()
             )
-        if name == "speech_runtime_provider_contract":
-
-            def fake_serve_provider(**arguments: object) -> int:
-                protocol = int(arguments["protocol_stdout"])
-                os.write(protocol, b"protocol-only")
-                os.close(protocol)
-                return 0
-
-            return SimpleNamespace(
-                CHATTERBOX_SAMPLE_RATE=24_000,
-                ProviderFunctions=lambda *functions: functions,
-                serve_provider=fake_serve_provider,
-            )
         return real_import(name, *args, **kwargs)
 
+    def fake_serve_provider(**arguments: object) -> int:
+        protocol = int(arguments["protocol_stdout"])
+        os.write(protocol, b"protocol-only")
+        os.close(protocol)
+        return 0
+
+    bootstrap.serve_provider = fake_serve_provider
+    bootstrap.ProviderFunctions = lambda *functions: functions
     builtins.__import__ = importing
     raise SystemExit(bootstrap.main())
 

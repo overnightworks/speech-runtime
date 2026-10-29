@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from speech_runtime_provider_contract import MAX_PCM_BYTES
 
-from speech_runtime_qwen import model
+from speech_runtime_qwen import model  # noqa: TID253 - the model tests import the module under test
 
 if TYPE_CHECKING:
     from pathlib import Path

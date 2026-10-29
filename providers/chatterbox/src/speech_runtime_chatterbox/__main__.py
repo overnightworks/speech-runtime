@@ -6,6 +6,12 @@ import ctypes
 import os
 import signal
 
+from speech_runtime_provider_contract import (
+    CHATTERBOX_SAMPLE_RATE,
+    ProviderFunctions,
+    serve_provider,
+)
+
 
 def main() -> int:
     """Redirect ordinary stdout, then import and run the provider worker."""
@@ -18,12 +24,6 @@ def main() -> int:
         install_parent_death_signal(arguments.expected_parent_pid)
     except RuntimeError:
         return 1
-    from speech_runtime_provider_contract import (
-        CHATTERBOX_SAMPLE_RATE,
-        ProviderFunctions,
-        serve_provider,
-    )
-
     from speech_runtime_chatterbox.model import load_model, pcm_chunks
 
     return serve_provider(
