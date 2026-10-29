@@ -252,6 +252,26 @@ class ProviderFunctions:
     prepare: Callable[[object], None] | None = None
 
 
+def _load_model_and_signal_ready(
+    *,
+    device: str,
+    cache: str,
+    stream: BinaryIO,
+    sample_rate: int,
+    functions: ProviderFunctions,
+) -> object | None:
+    """Load and prepare the model, then announce readiness; None on failure."""
+    try:
+        model = functions.load(device, Path(cache))
+        if functions.prepare is not None:
+            functions.prepare(model)
+        write_frame(stream, Frame(FrameKind.READY, 0, ready_payload(sample_rate)))
+    except Exception:
+        _failed(stream, 0)
+        return None
+    return model
+
+
 def serve_provider(
     *,
     device: str,
@@ -262,29 +282,30 @@ def serve_provider(
 ) -> int:
     """Load once, optionally prepare, then process serialized commands."""
     stream = os.fdopen(protocol_stdout, "wb", buffering=0)
-    try:
-        model = functions.load(device, Path(cache))
-        if functions.prepare is not None:
-            functions.prepare(model)
-        write_frame(stream, Frame(FrameKind.READY, 0, ready_payload(sample_rate)))
-    except Exception:
-        _failed(stream, 0)
-        stream.close()
-        return 1
-    commands: queue.Queue[Frame | BaseException] = queue.Queue()
-    reader_stopped = threading.Event()
-    reader = threading.Thread(
-        target=_read_commands,
-        args=(commands, reader_stopped),
-        name="speech-provider-input",
-        daemon=True,
+    model = _load_model_and_signal_ready(
+        device=device,
+        cache=cache,
+        stream=stream,
+        sample_rate=sample_rate,
+        functions=functions,
     )
-    reader.start()
     try:
-        serve_commands(commands, stream, functions.synthesize, model)
+        if model is not None:
+            commands: queue.Queue[Frame | BaseException] = queue.Queue()
+            reader_stopped = threading.Event()
+            reader = threading.Thread(
+                target=_read_commands,
+                args=(commands, reader_stopped),
+                name="speech-provider-input",
+                daemon=True,
+            )
+            reader.start()
+            try:
+                serve_commands(commands, stream, functions.synthesize, model)
+            finally:
+                if reader_stopped.is_set():
+                    reader.join()
     finally:
-        if reader_stopped.is_set():
-            reader.join()
         stream.close()
     return 1
 
