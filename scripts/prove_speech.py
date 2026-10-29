@@ -44,7 +44,6 @@ ENGLISH = (
 )
 SECOND = "Die nächste Folie bitte."
 LOCK_PATH = Path("/tmp/probe-stack.lock")
-GERMAN_WAV_PATH = Path("/tmp/issue-83-voice/german.wav")
 MEASURE_REPETITIONS = 5
 MEASURE_FLAG = {False: [], True: ["--measure"]}
 CONTRACT_MARKERS = {
@@ -242,14 +241,13 @@ def _speak_measured(
     return body, first_byte_at - start, end - start
 
 
-def _nvidia_memory() -> str:
+def _query_nvidia(*arguments: str) -> str:
+    nvidia = shutil.which("nvidia-smi")
+    if nvidia is None:
+        return "unavailable: nvidia-smi not found"
     try:
         completed = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=memory.used,memory.total",
-                "--format=csv,noheader",
-            ],
+            [nvidia, *arguments],
             check=True,
             capture_output=True,
             text=True,
@@ -259,17 +257,17 @@ def _nvidia_memory() -> str:
     return completed.stdout.strip()
 
 
+def _nvidia_memory() -> str:
+    return _query_nvidia(
+        "--query-gpu=memory.used,memory.total", "--format=csv,noheader"
+    )
+
+
 def _nvidia_compute_pids() -> str:
-    try:
-        completed = subprocess.run(
-            ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
-        return f"unavailable: {error}"
-    return " ".join(completed.stdout.split()) or "none"
+    pids = _query_nvidia("--query-compute-apps=pid", "--format=csv,noheader")
+    if pids.startswith("unavailable:"):
+        return pids
+    return " ".join(pids.split()) or "none"
 
 
 def peak_rss_mib(status: str) -> float:
@@ -493,14 +491,19 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
 
 
 def _prove_contract(
-    project: Path, socket_path: Path, env: dict[str, str], *, measure: bool
+    project: Path,
+    socket_path: Path,
+    private_directory: Path,
+    env: dict[str, str],
+    *,
+    measure: bool,
 ) -> None:
     client = project / "scripts" / "contract_client.py"
     print("contract_client_start")
     completed = subprocess.run(
         [sys.executable, str(client), *MEASURE_FLAG[measure], str(socket_path)],
         check=False,
-        cwd="/tmp",
+        cwd=private_directory,
         env=env,
         capture_output=True,
         text=True,
@@ -588,11 +591,19 @@ def main() -> None:
                 print("chatterbox_cache", CHATTERBOX_CACHE)
                 print("piper_cache", PIPER_CACHE)
                 german = _prove_speak(socket_path, speaking_model)
-                GERMAN_WAV_PATH.parent.mkdir(parents=True, exist_ok=True)
-                GERMAN_WAV_PATH.write_bytes(german)
-                print("german_wav", GERMAN_WAV_PATH)
+                german_wav = (
+                    Path(tempfile.mkdtemp(prefix="speech-proof-")) / "german.wav"
+                )
+                german_wav.write_bytes(german)
+                print("german_wav", german_wav)
                 _prove_concurrent_speak(socket_path, speaking_model)
-                _prove_contract(project, socket_path, env, measure=options.measure)
+                _prove_contract(
+                    project,
+                    socket_path,
+                    private_directory,
+                    env,
+                    measure=options.measure,
+                )
                 print("peak_rss_mib", f"{running.peak_rss_mib():.0f}")
             print("gpu_after", _nvidia_memory())
             print("caches_kept")
