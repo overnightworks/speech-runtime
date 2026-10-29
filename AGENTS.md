@@ -20,6 +20,10 @@ for it, so a new mandatory CI job is added there by its display name. Secret
 scanning and the SonarCloud scan run inside the gate, and
 `sonar-project.properties` may carry only the keys the gate allows.
 
+Each speech job writes a Cobertura report (`coverage-<job>.xml`, paths relative
+to the repository root, set by `[tool.coverage.run]` in the root `pyproject.toml`);
+the `coverage` job gathers the five into the artifact the gate hands to SonarCloud.
+
 The gate's root-layout rule holds the root entries: a new root entry is declared
 in `quality/config.toml` with a reason, or lives in its owner's directory.
 
