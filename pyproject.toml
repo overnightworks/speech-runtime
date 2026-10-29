@@ -51,6 +51,8 @@ include = ["src/*", "providers/*/src/*"]
 [tool.ruff]
 target-version = "py314"
 src = [".", "src", "tests"]
+# The gate's layout rules forbid package markers in these directories.
+namespace-packages = ["scripts", "tests/scripts", "tests/support"]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -61,15 +63,14 @@ ignore = [
 
 [tool.ruff.lint.flake8-type-checking]
 # FastAPI evaluates the route handlers' annotations when it builds the app.
-exempt-modules = ["typing", "speech_runtime_service.voices"]
+runtime-evaluated-decorators = ["fastapi.FastAPI.get", "fastapi.FastAPI.post"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004", "INP001"]
+"tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
 "scripts/**" = [
-    "INP001",
     "T201",
     "S603",
     "S108",
