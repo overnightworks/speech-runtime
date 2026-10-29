@@ -58,7 +58,7 @@ raise SystemExit(asyncio.run(__main__.serve(settings)))
 
 
 def test_sigterm_stops_the_real_server_and_exits_zero_with_the_socket_removed(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     socket_path = tmp_path / "speech.sock"
     speech_root = Path(__file__).resolve().parents[1]
@@ -84,7 +84,7 @@ def test_sigterm_stops_the_real_server_and_exits_zero_with_the_socket_removed(
     assert not socket_path.exists()
 
 
-def test_python_dash_m_starts_the_service_on_its_private_socket(tmp_path) -> None:
+def test_python_dash_m_starts_the_service_on_its_private_socket(tmp_path: Path) -> None:
     socket_path = tmp_path / "speech.sock"
     speech_root = Path(__file__).resolve().parents[1]
     environment = {
@@ -118,7 +118,7 @@ def _accepts_connections(path: Path) -> bool:
 
 
 def test_serve_listens_only_on_the_private_socket(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     built: list[uvicorn.Server] = []
     stopping: list[asyncio.Event] = []

@@ -70,7 +70,7 @@ def _captured_engine(runtime: Runtime) -> SpeakingEngine:
 
 
 def test_status_requires_both_piper_artifacts_and_keeps_unimplemented_rows_unavailable(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     settings = Settings(
         voice_cache=tmp_path,
@@ -101,7 +101,7 @@ def test_status_requires_both_piper_artifacts_and_keeps_unimplemented_rows_unava
 
 
 def test_chatterbox_weights_need_the_exact_executable_but_active_survives_its_removal(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(voices, "try_to_load_from_cache", lambda *_args, **_kwargs: "x")
     provider_root = tmp_path / "providers"
@@ -203,7 +203,7 @@ def _complete_magpie_snapshots(cache: Path) -> tuple[Path, Path]:
 
 
 def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_preset(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     provider_root = tmp_path / "providers"
     cache = tmp_path / "hub"
@@ -760,7 +760,7 @@ class _StatusScenario:
     ],
 )
 def test_catalogue_preserves_runtime_precedence_before_download_evidence(
-    tmp_path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     scenario: _StatusScenario,
 ) -> None:
@@ -789,7 +789,7 @@ def test_catalogue_preserves_runtime_precedence_before_download_evidence(
 
 
 def test_private_endpoint_reports_loading_and_active_from_the_shared_runtime(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     settings = Settings(
         voice_cache=tmp_path,
@@ -810,7 +810,7 @@ def test_private_endpoint_reports_loading_and_active_from_the_shared_runtime(
 
 
 def test_status_refuses_the_whole_snapshot_when_cache_lookup_fails(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = Settings(
         speaking_model="ResembleAI/chatterbox",
@@ -859,7 +859,10 @@ def _runtime_loading(
 
 
 def _switching_runtime(
-    tmp_path, old, target, selection: VoiceSelectionStore | None = None
+    tmp_path: Path,
+    old: FakeSpeaking,
+    target: FakeSpeaking,
+    selection: VoiceSelectionStore | None = None,
 ) -> tuple[Runtime, VoiceSelectionStore]:
     old.retain_when_inactive = False
     store = selection or VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
@@ -878,7 +881,7 @@ def _switching_runtime(
 
 
 def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speech(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     committed = threading.Event()
 
@@ -920,7 +923,7 @@ def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speec
 
 
 def test_shutdown_before_chatterbox_detach_transfers_old_and_pending_cleanup_once(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     committed = threading.Event()
 
@@ -963,7 +966,7 @@ def test_shutdown_before_chatterbox_detach_transfers_old_and_pending_cleanup_onc
 
 
 def test_shutdown_during_chatterbox_close_never_publishes_or_loses_an_engine(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     close_started = threading.Event()
     release_close = threading.Event()
@@ -1001,7 +1004,7 @@ def test_shutdown_during_chatterbox_close_never_publishes_or_loses_an_engine(
 
 
 def _close_failure_after_selection_commit_is_fatal_and_not_a_load_outcome(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     class FailingCloseSpeaking(_TrackedSpeaking):
         def close(self) -> None:
@@ -1032,7 +1035,9 @@ test_chatterbox_close_failure_after_selection_commit_is_fatal_and_not_a_load_out
 )
 
 
-def test_pre_replace_failure_preserves_active_and_stored_chatterbox(tmp_path) -> None:
+def test_pre_replace_failure_preserves_active_and_stored_chatterbox(
+    tmp_path: Path,
+) -> None:
     settings = Settings(
         voice_cache=tmp_path,
         huggingface_cache=tmp_path,
@@ -1049,7 +1054,9 @@ def test_pre_replace_failure_preserves_active_and_stored_chatterbox(tmp_path) ->
     assert runtime.snapshot(settings).voices[1].state is VoiceState.ACTIVE
 
 
-def test_startup_selects_the_default_then_restores_a_saved_voice(tmp_path) -> None:
+def test_startup_selects_the_default_then_restores_a_saved_voice(
+    tmp_path: Path,
+) -> None:
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     engines = {VoiceId.PIPER: FakeSpeaking(), VoiceId.CHATTERBOX: FakeSpeaking()}
 
@@ -1076,7 +1083,7 @@ def test_startup_selects_the_default_then_restores_a_saved_voice(tmp_path) -> No
 
 
 def test_a_failed_load_preserves_the_active_engine_and_records_recovery(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     active = FakeSpeaking()
     runtime = _runtime_loading(
@@ -1094,7 +1101,7 @@ def test_a_failed_load_preserves_the_active_engine_and_records_recovery(
     assert recovery.voice is VoiceId.CHATTERBOX
 
 
-def test_a_failed_voice_can_be_loaded_again(tmp_path) -> None:
+def test_a_failed_voice_can_be_loaded_again(tmp_path: Path) -> None:
     ready = False
 
     def factory(_voice: VoiceId) -> FakeSpeaking:
@@ -1112,7 +1119,7 @@ def test_a_failed_voice_can_be_loaded_again(tmp_path) -> None:
 
 
 def test_directory_sync_failure_activates_the_visible_choice_with_a_notice(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     selection = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     engine = FakeSpeaking()
@@ -1133,7 +1140,7 @@ def test_directory_sync_failure_activates_the_visible_choice_with_a_notice(
 
 
 def test_failed_voice_load_logs_the_voice_without_request_content(
-    tmp_path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     runtime = _runtime_loading(
         VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
@@ -1148,7 +1155,7 @@ def test_failed_voice_load_logs_the_voice_without_request_content(
 
 
 def test_artifact_check_failure_returns_a_logged_typed_outcome(
-    tmp_path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     runtime = _runtime_loading(
         VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
@@ -1165,7 +1172,9 @@ def test_artifact_check_failure_returns_a_logged_typed_outcome(
     assert "voice chatterbox failed to load" in caplog.text
 
 
-def test_unsafe_state_store_refuses_before_constructing_an_engine(tmp_path) -> None:
+def test_unsafe_state_store_refuses_before_constructing_an_engine(
+    tmp_path: Path,
+) -> None:
     directory = tmp_path / "state"
     directory.mkdir(mode=0o700)
     directory.chmod(0o755)
@@ -1184,7 +1193,7 @@ def test_unsafe_state_store_refuses_before_constructing_an_engine(tmp_path) -> N
 
 
 def test_startup_selection_holds_load_guard_until_its_activation_finishes(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     entered = threading.Event()
     release = threading.Event()
@@ -1220,7 +1229,7 @@ def test_startup_selection_holds_load_guard_until_its_activation_finishes(
 
 
 def test_duplicate_load_is_refused_and_retained_chatterbox_is_not_rebuilt(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     engines: list[FakeSpeaking] = []
@@ -1256,7 +1265,7 @@ def test_duplicate_load_is_refused_and_retained_chatterbox_is_not_rebuilt(
 
 @pytest.mark.parametrize("stored", ["unknown", "chatterbox"])
 def test_recoverable_startup_keeps_hearing_live_and_refuses_speaking(
-    tmp_path, stored: str
+    tmp_path: Path, stored: str
 ) -> None:
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     if stored == "unknown":
@@ -1294,7 +1303,7 @@ def test_recoverable_startup_keeps_hearing_live_and_refuses_speaking(
 
 
 def test_shutdown_winning_before_pending_registration_never_loads_or_publishes(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """A side-effect-free factory result is closed if shutdown wins its handoff."""
     constructed = threading.Event()
@@ -1339,7 +1348,7 @@ def test_shutdown_winning_before_pending_registration_never_loads_or_publishes(
 
 @pytest.mark.parametrize("surface", ["health", "snapshot", "capture", "sample"])
 def test_every_speaking_surface_reconciles_a_dead_active_without_fallback(
-    tmp_path, surface: str
+    tmp_path: Path, surface: str
 ) -> None:
     class ClosableSpeaking(FakeSpeaking):
         def __init__(self) -> None:
@@ -1376,7 +1385,7 @@ def test_every_speaking_surface_reconciles_a_dead_active_without_fallback(
 
 
 def test_nonstreaming_provider_failure_reconciles_and_allows_a_fresh_load(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     class ClosableSpeaking(FakeSpeaking):
         retain_when_inactive = False
@@ -1408,7 +1417,9 @@ def test_nonstreaming_provider_failure_reconciles_and_allows_a_fresh_load(
     assert _captured_engine(runtime) is replacement
 
 
-def test_switching_releases_any_provider_process_before_load_returns(tmp_path) -> None:
+def test_switching_releases_any_provider_process_before_load_returns(
+    tmp_path: Path,
+) -> None:
     old = _TrackedSpeaking(sample_rate=24_000)
     old.retain_when_inactive = False
     target = _TrackedSpeaking()
@@ -1432,7 +1443,7 @@ def test_switching_releases_any_provider_process_before_load_returns(tmp_path) -
 
 
 def test_failed_active_reconciliation_excludes_retry_until_close_finishes(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     close_started = threading.Event()
     release_close = threading.Event()

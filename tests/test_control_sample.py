@@ -24,6 +24,7 @@ from tests.support.speak_support import ASGI_TIMEOUT_SECONDS, info_comment_befor
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 class _ClientSendError(RuntimeError):
@@ -46,7 +47,7 @@ class _ResponseConstructionError(RuntimeError):
     ],
 )
 def test_private_sample_uses_its_fixed_phrase_and_native_rate(
-    tmp_path, language: str, phrase: str, sample_rate: int
+    tmp_path: Path, language: str, phrase: str, sample_rate: int
 ) -> None:
     speaking = FakeSpeaking()
     speaking.sample_rate = sample_rate
@@ -71,7 +72,7 @@ def test_private_sample_uses_its_fixed_phrase_and_native_rate(
     assert speaking.heard_language == language
 
 
-def test_sample_refuses_a_stale_voice_without_synthesising(tmp_path) -> None:
+def test_sample_refuses_a_stale_voice_without_synthesising(tmp_path: Path) -> None:
     speaking = FakeSpeaking()
     runtime = Runtime(speaking, FakeHearing())
     settings = Settings(
@@ -88,7 +89,9 @@ def test_sample_refuses_a_stale_voice_without_synthesising(tmp_path) -> None:
     assert speaking.heard_text == ""
 
 
-def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(tmp_path) -> None:
+def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(
+    tmp_path: Path,
+) -> None:
     class GatedSpeaking(FakeSpeaking):
         def __init__(self) -> None:
             super().__init__()
@@ -158,7 +161,7 @@ def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(tmp_path) 
     assert later.status_code == 200
 
 
-def test_second_sample_refuses_while_the_first_sample_streams(tmp_path) -> None:
+def test_second_sample_refuses_while_the_first_sample_streams(tmp_path: Path) -> None:
     class GatedSpeaking(FakeSpeaking):
         def __init__(self) -> None:
             super().__init__()
@@ -216,7 +219,7 @@ def test_second_sample_refuses_while_the_first_sample_streams(tmp_path) -> None:
     assert asyncio.run(scenario()) == 409
 
 
-def test_sample_synthesis_error_releases_the_next_sample(tmp_path) -> None:
+def test_sample_synthesis_error_releases_the_next_sample(tmp_path: Path) -> None:
     class FailingSpeaking(FakeSpeaking):
         def __init__(self) -> None:
             super().__init__()
@@ -243,7 +246,9 @@ def test_sample_synthesis_error_releases_the_next_sample(tmp_path) -> None:
     assert client.post("/voices/piper/sample/de").status_code == 200
 
 
-def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(tmp_path) -> None:
+def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(
+    tmp_path: Path,
+) -> None:
     class HeldSpeaking(FakeSpeaking):
         def __init__(self) -> None:
             super().__init__()
@@ -319,7 +324,7 @@ def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(tmp_path) -
 
 
 def test_sample_response_construction_failure_releases_admission_for_deselection(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     store.write(VoiceId.CHATTERBOX)
@@ -368,7 +373,9 @@ def test_sample_response_construction_failure_releases_admission_for_deselection
     assert response.status_code == 200
 
 
-def test_sample_send_failure_before_pcm_releases_the_admitted_voice(tmp_path) -> None:
+def test_sample_send_failure_before_pcm_releases_the_admitted_voice(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> int:
         runtime = Runtime(FakeSpeaking(), FakeHearing())
         settings = Settings(
@@ -410,7 +417,7 @@ def test_sample_send_failure_before_pcm_releases_the_admitted_voice(tmp_path) ->
     assert asyncio.run(scenario()) == 200
 
 
-def test_sample_pre_body_disconnect_releases_the_voice(tmp_path) -> None:
+def test_sample_pre_body_disconnect_releases_the_voice(tmp_path: Path) -> None:
     async def scenario() -> int:
         runtime = Runtime(FakeSpeaking(), FakeHearing())
         settings = Settings(

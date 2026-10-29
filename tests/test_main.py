@@ -67,7 +67,7 @@ class _CloseOrderingServer:
         if value:
             self.stopped.set()
 
-    async def serve(self, *, sockets=None) -> None:
+    async def serve(self, *, sockets: list[socket.socket] | None = None) -> None:
         del sockets
         assert await asyncio.to_thread(self.scenario.spawned.wait, 5)
         self.scenario.stopping[0].set()
@@ -79,11 +79,13 @@ class _CloseOrderingServer:
             (self.scenario.cache / "allow-ready").touch()
 
 
-def test_closed_uds_client_does_not_abandon_an_accepted_voice_load(tmp_path) -> None:
+def test_closed_uds_client_does_not_abandon_an_accepted_voice_load(
+    tmp_path: Path,
+) -> None:
     asyncio.run(_closed_uds_client_finishes_load(tmp_path))
 
 
-async def _closed_uds_client_finishes_load(tmp_path) -> None:
+async def _closed_uds_client_finishes_load(tmp_path: Path) -> None:
     entered = threading.Event()
     release = threading.Event()
     completed = threading.Event()
@@ -162,7 +164,7 @@ class _HealthServer:
     def use(self, app: object) -> None:
         self._app = app
 
-    async def serve(self, *, sockets=None) -> None:
+    async def serve(self, *, sockets: list[socket.socket] | None = None) -> None:
         del sockets
         assert await asyncio.to_thread(self._started.wait, 5)
         assert self._app is not None
@@ -170,7 +172,7 @@ class _HealthServer:
         self._release.set()
 
 
-def test_private_socket_removes_only_the_inode_it_bound(tmp_path) -> None:
+def test_private_socket_removes_only_the_inode_it_bound(tmp_path: Path) -> None:
     with PrivateSocket(tmp_path, runtime_uid=os.geteuid()) as listener:
         socket_path = tmp_path / "speech.sock"
         inode = socket_path.stat().st_ino
@@ -187,7 +189,7 @@ def test_private_socket_removes_only_the_inode_it_bound(tmp_path) -> None:
     ids=["other-mode", "other-owner"],
 )
 def test_private_socket_refuses_an_unsafe_directory(
-    tmp_path, directory_mode: int, uid_offset: int
+    tmp_path: Path, directory_mode: int, uid_offset: int
 ) -> None:
     directory = tmp_path / "private"
     directory.mkdir()
@@ -202,7 +204,7 @@ def test_private_socket_refuses_an_unsafe_directory(
     assert not (directory / "speech.sock").exists()
 
 
-def test_private_socket_preserves_an_existing_socket_path(tmp_path) -> None:
+def test_private_socket_preserves_an_existing_socket_path(tmp_path: Path) -> None:
     existing = tmp_path / "speech.sock"
     existing.touch()
 
@@ -215,7 +217,7 @@ def test_private_socket_preserves_an_existing_socket_path(tmp_path) -> None:
     assert existing.exists()
 
 
-def test_private_socket_replaces_a_dead_leftover_socket(tmp_path) -> None:
+def test_private_socket_replaces_a_dead_leftover_socket(tmp_path: Path) -> None:
     path = tmp_path / "speech.sock"
     dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     dead.bind(str(path))
@@ -229,7 +231,7 @@ def test_private_socket_replaces_a_dead_leftover_socket(tmp_path) -> None:
 
 
 def test_private_socket_refuses_a_concurrent_start_while_the_listener_is_running(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     with (
         PrivateSocket(tmp_path, runtime_uid=os.geteuid()),
@@ -240,7 +242,7 @@ def test_private_socket_refuses_a_concurrent_start_while_the_listener_is_running
 
 
 def test_private_socket_refuses_when_the_socket_is_replaced_mid_check(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "speech.sock"
     dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -263,7 +265,7 @@ def test_private_socket_refuses_when_the_socket_is_replaced_mid_check(
     assert path.read_text(encoding="utf-8") == "replacement"
 
 
-def test_private_socket_refuses_a_socket_with_a_live_listener(tmp_path) -> None:
+def test_private_socket_refuses_a_socket_with_a_live_listener(tmp_path: Path) -> None:
     path = tmp_path / "speech.sock"
     listening = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listening.bind(str(path))
@@ -283,7 +285,7 @@ def test_private_socket_refuses_a_socket_with_a_live_listener(tmp_path) -> None:
 
 
 def test_private_socket_lock_survives_release_and_the_next_start_reacquires_its_inode(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     lock_path = tmp_path / "speech.sock.lock"
 
@@ -297,7 +299,7 @@ def test_private_socket_lock_survives_release_and_the_next_start_reacquires_its_
 
 
 def test_private_socket_refuses_when_another_process_holds_the_released_lock_inode(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     lock_path = tmp_path / "speech.sock.lock"
 
@@ -320,7 +322,7 @@ def test_private_socket_refuses_when_another_process_holds_the_released_lock_ino
 
 
 def test_failed_loader_stops_the_server_and_cleans_the_owned_socket(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = Runtime(
         None,
@@ -348,7 +350,7 @@ def test_failed_loader_stops_the_server_and_cleans_the_owned_socket(
             if value:
                 self._stopped.set()
 
-        async def serve(self, *, sockets=None) -> None:
+        async def serve(self, *, sockets: list[socket.socket] | None = None) -> None:
             del sockets
             await self._stopped.wait()
 
@@ -463,7 +465,7 @@ while True:
 
 
 def test_owned_speaking_failure_stops_the_server_and_returns_failure(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class FatalSpeaking(FakeSpeaking):
         def __init__(self) -> None:
@@ -498,7 +500,7 @@ def test_owned_speaking_failure_stops_the_server_and_returns_failure(
             if value:
                 self.stopped.set()
 
-        async def serve(self, *, sockets=None) -> None:
+        async def serve(self, *, sockets: list[socket.socket] | None = None) -> None:
             del sockets
             speaking.callback()
             await self.stopped.wait()
@@ -522,7 +524,9 @@ def test_owned_speaking_failure_stops_the_server_and_returns_failure(
     assert not (tmp_path / "speech.sock").exists()
 
 
-def test_runtime_skips_hearing_after_a_stop_during_speaking_load(tmp_path) -> None:
+def test_runtime_skips_hearing_after_a_stop_during_speaking_load(
+    tmp_path: Path,
+) -> None:
     started = threading.Event()
     release = threading.Event()
     stop = threading.Event()
@@ -550,7 +554,7 @@ def test_runtime_skips_hearing_after_a_stop_during_speaking_load(tmp_path) -> No
 
 
 def test_orchestrator_serves_health_from_its_loading_runtime(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     started = threading.Event()
     release = threading.Event()
@@ -626,7 +630,7 @@ def test_signal_handler_stops_the_runtime_loader_and_async_orchestrator(
 
 
 def test_signal_exit_is_zero_and_cleans_the_owned_socket(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = Runtime(FakeSpeaking(), FakeHearing())
 
@@ -643,7 +647,7 @@ def test_signal_exit_is_zero_and_cleans_the_owned_socket(
             if value:
                 self._stopped.set()
 
-        async def serve(self, *, sockets=None) -> None:
+        async def serve(self, *, sockets: list[socket.socket] | None = None) -> None:
             del sockets
             await self._stopped.wait()
 
@@ -667,14 +671,14 @@ def test_signal_exit_is_zero_and_cleans_the_owned_socket(
 
 
 def test_server_ending_on_its_own_returns_failure_and_cleans_the_owned_socket(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = Runtime(FakeSpeaking(), FakeHearing())
 
     class Server:
         should_exit = False
 
-        async def serve(self, *, sockets=None) -> None:
+        async def serve(self, *, sockets: list[socket.socket] | None = None) -> None:
             del sockets
 
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
@@ -699,7 +703,7 @@ def test_server_ending_on_its_own_returns_failure_and_cleans_the_owned_socket(
     [(None, "required"), (os.geteuid() + 1, "effective UID")],
 )
 def test_invalid_runtime_uid_refuses_before_runtime_or_listener_work(
-    tmp_path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     runtime_uid: int | None,
     reason: str,

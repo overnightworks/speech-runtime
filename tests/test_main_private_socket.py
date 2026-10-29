@@ -26,6 +26,7 @@ from tests.support.private_server_support import PrivateServer, serving_privatel
 if TYPE_CHECKING:
     import threading
     from collections.abc import AsyncIterator
+    from pathlib import Path
 
 _SPEAK_BODY = {"text": "Hallo", "language": "de"}
 
@@ -87,7 +88,9 @@ def _hear_uri() -> str:
     return "ws://speech/hear?language=de"
 
 
-def test_socket_streams_speak_while_the_voice_is_still_synthesizing(tmp_path) -> None:
+def test_socket_streams_speak_while_the_voice_is_still_synthesizing(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> tuple[GatedSpeaking, int, bytes, bytes, list[int]]:
         voice = GatedSpeaking(hold_last_chunk=True)
         voice.release_first_step.set()
@@ -120,7 +123,9 @@ def test_socket_streams_speak_while_the_voice_is_still_synthesizing(tmp_path) ->
     assert modes == [0o700, 0o600, os.geteuid(), os.geteuid()]
 
 
-def test_socket_speak_disconnect_frees_the_voice_for_the_next_caller(tmp_path) -> None:
+def test_socket_speak_disconnect_frees_the_voice_for_the_next_caller(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> tuple[GatedSpeaking, httpx2.Response]:
         voice = GatedSpeaking(hold_last_chunk=True)
         voice.release_first_step.set()
@@ -143,7 +148,7 @@ def test_socket_speak_disconnect_frees_the_voice_for_the_next_caller(tmp_path) -
     _assert_whole_wav(later.status_code, later.content, voice)
 
 
-def test_a_speak_holds_the_one_synthesis_gate(tmp_path) -> None:
+def test_a_speak_holds_the_one_synthesis_gate(tmp_path: Path) -> None:
     async def scenario() -> tuple[
         GatedSpeaking, httpx2.Response, httpx2.Response, httpx2.Response
     ]:
@@ -171,7 +176,7 @@ def test_a_speak_holds_the_one_synthesis_gate(tmp_path) -> None:
 
 
 def test_socket_hear_sends_partials_then_a_final_and_a_second_utterance(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     async def scenario() -> dict[str, Any]:
         runtime = _gated_runtime(GatedSpeaking())
@@ -190,7 +195,7 @@ def test_socket_hear_sends_partials_then_a_final_and_a_second_utterance(
 
 
 def test_socket_hear_disconnect_runs_no_decode_and_frees_the_next_session(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     async def scenario() -> tuple[int, int]:
         hearing = FakeHearing()
@@ -216,7 +221,7 @@ def test_socket_hear_disconnect_runs_no_decode_and_frees_the_next_session(
 
 
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
-def test_socket_serves_no_api_documentation(tmp_path, path: str) -> None:
+def test_socket_serves_no_api_documentation(tmp_path: Path, path: str) -> None:
     async def scenario() -> httpx2.Response:
         async with (
             serving_privately(tmp_path, _gated_runtime(GatedSpeaking())) as server,

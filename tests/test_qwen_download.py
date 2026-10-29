@@ -136,7 +136,7 @@ def _join(worker: threading.Thread) -> None:
 
 
 def test_qwen_download_uses_only_the_pinned_artifacts_without_a_token(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     requested: dict[str, object] = {}
 
@@ -196,7 +196,7 @@ def test_private_download_can_be_discarded_and_revisited_through_truthful_status
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
-    fails,
+    fails: bool,
     terminal: VoiceState,
 ) -> None:
     complete = False
@@ -324,7 +324,7 @@ def test_any_failure_ends_the_download_as_failed_without_a_thread_traceback(
 
 @pytest.mark.parametrize("worker_usable", [False, True])
 def test_unavailable_or_already_complete_download_has_no_other_side_effect(
-    tmp_path: Path, worker_usable
+    tmp_path: Path, worker_usable: bool
 ) -> None:
     complete = worker_usable
     downloads = 0
@@ -412,7 +412,7 @@ def test_exact_completion_wins_when_the_callback_raises_after_writing_artifacts(
 def test_thread_start_failure_rechecks_artifacts_and_releases_ownership(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    complete_after_refusal,
+    complete_after_refusal: bool,
     terminal: VoiceState,
 ) -> None:
     complete = False
