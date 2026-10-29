@@ -14,6 +14,7 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from pathlib import Path
+from typing import IO
 
 from presentator_speech_provider_contract import (
     Frame,
@@ -275,7 +276,7 @@ class ProviderProcess:
     def _write(self, process: subprocess.Popen[bytes], frame: Frame) -> None:
         try:
             write_frame(process.stdin, frame)
-        except (BrokenPipeError, OSError, ProtocolError, ValueError) as error:
+        except (OSError, ValueError) as error:
             self._mark_failed()
             raise ProviderProtocolError from error
 
@@ -287,7 +288,7 @@ class ProviderProcess:
             raise ProviderProtocolError
         try:
             return self._read_available_frame(process, decoder)
-        except (EOFError, OSError, ProtocolError, ValueError) as error:
+        except (EOFError, OSError, ValueError) as error:
             self._mark_failed()
             raise ProviderProtocolError from error
 
@@ -306,23 +307,29 @@ class ProviderProcess:
                 frame = decoder.next_frame()
                 if frame is not None:
                     return frame
-                if self._closing and deadline is None:
+                wait = self._next_wait_seconds(deadline)
+                if selector.select(wait):
+                    self._feed_available_chunk(process.stdout, decoder)
+                elif process.poll() is not None:
                     raise EOFError
-                wait = _COMMAND_WAIT_SECONDS
-                if deadline is not None:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError
-                    wait = min(wait, remaining)
-                if not selector.select(wait):
-                    if process.poll() is not None:
-                        raise EOFError
-                    continue
-                chunk = os.read(process.stdout.fileno(), _READ_SIZE)
-                if not chunk:
-                    decoder.finish()
-                    raise EOFError
-                decoder.feed(chunk)
+
+    def _next_wait_seconds(self, deadline: float | None) -> float:
+        if deadline is None:
+            if self._closing:
+                raise EOFError
+            return _COMMAND_WAIT_SECONDS
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        return min(_COMMAND_WAIT_SECONDS, remaining)
+
+    @staticmethod
+    def _feed_available_chunk(stdout: IO[bytes], decoder: FrameDecoder) -> None:
+        chunk = os.read(stdout.fileno(), _READ_SIZE)
+        if not chunk:
+            decoder.finish()
+            raise EOFError
+        decoder.feed(chunk)
 
     def _validate_response(
         self, frame: Frame, request_id: int, *, cancelling: bool
@@ -351,14 +358,7 @@ class ProviderProcess:
                     return
                 if frame.kind is FrameKind.FAILED:
                     raise ProviderProtocolError
-        except (
-            ProviderProtocolError,
-            OSError,
-            ProtocolError,
-            TimeoutError,
-            ValueError,
-            EOFError,
-        ):
+        except (ProviderProtocolError, OSError, ValueError, EOFError):
             self._mark_failed()
 
     def _mark_failed(self) -> None:

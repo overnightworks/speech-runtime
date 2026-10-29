@@ -1,13 +1,10 @@
 # Measured by `quality baseline write`. Entries only ever go down.
 
-[ccn."src/presentator_speech/service.py"]
-"Runtime._activate_voice" = 18
-
 [file_lines]
-"tests/test_control_voice_status.py" = 1473
+"tests/test_control_voice_status.py" = 1471
 
 [function_lines."providers/chatterbox/src/presentator_chatterbox/model.py"]
-"speech_token_chunks" = 84
+"speech_token_chunks" = 83
 
 [function_lines."providers/magpie/tests/test_main.py"]
 "test_entrypoint_reserves_stdout_before_importing_the_provider" = 88

@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from presentator_speech.config import Settings
-    from presentator_speech.service import SpeakingEngine
     from presentator_speech.voices import VoiceId
 
 
@@ -70,7 +69,10 @@ class PiperSpeaking:
         """Piper stays retained for the process and needs no explicit cleanup."""
 
 
-def speaking_for_voice(settings: Settings, voice: VoiceId) -> SpeakingEngine:
+LocalSpeaking = PiperSpeaking | ProviderProcess
+
+
+def speaking_for_voice(settings: Settings, voice: VoiceId) -> LocalSpeaking:
     """Construct one supported local engine from the closed catalogue id."""
     from presentator_speech.voices import VoiceId
 

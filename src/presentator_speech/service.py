@@ -416,21 +416,34 @@ class Runtime:
                 return self._not_activated(voice)
             return self._replace_voice(voice, engine, recovery)
         finally:
-            should_close = False
-            with self._state_lock:
-                self.loading = False
-                self._pending = None
-                if not committed and self._pending_engine is engine:
-                    self._pending_engine = None
-                    should_close = newly_constructed
-                elif not registered:
-                    should_close = newly_constructed
-            if should_close and engine is not None:
-                try:
-                    engine.close()
-                except Exception:
-                    _LOG.exception("uncommitted speaking engine cleanup failed")
-                    self._fatal_callback()
+            self._finish_activation(
+                engine,
+                newly_constructed=newly_constructed,
+                registered=registered,
+                committed=committed,
+            )
+
+    def _finish_activation(
+        self,
+        engine: SpeakingEngine | None,
+        *,
+        newly_constructed: bool,
+        registered: bool,
+        committed: bool,
+    ) -> None:
+        with self._state_lock:
+            self.loading = False
+            self._pending = None
+            owns_pending = not committed and self._pending_engine is engine
+            if owns_pending:
+                self._pending_engine = None
+            should_close = newly_constructed and (owns_pending or not registered)
+        if should_close and engine is not None:
+            try:
+                engine.close()
+            except Exception:
+                _LOG.exception("uncommitted speaking engine cleanup failed")
+                self._fatal_callback()
 
     def _voice_dependencies_ready(self, voice: VoiceId) -> bool:
         if (
@@ -445,35 +458,14 @@ class Runtime:
     def _replace_voice(
         self, voice: VoiceId, engine: SpeakingEngine, recovery: VoiceRecovery | None
     ) -> VoiceLoadOutcome:
-        closing: SpeakingEngine | None = None
         with self._state_changed:
             while self._admitted and not self._stopping:
                 self._state_changed.wait()
             if self._stopping:
                 return VoiceLoadOutcome.NOT_ACTIVATED
-            if (
-                self.speaking is not None
-                and self.speaking is not engine
-                and not self.speaking.retain_when_inactive
-            ):
-                closing = self.speaking
-                self.speaking = None
-                if self._engines.get(self._selected) is closing:
-                    self._engines.pop(self._selected)
-                self._closing_engine = closing
-            else:
-                self._publish_voice(voice, engine, recovery)
+            closing = self._detach_replaced_engine(voice, engine, recovery)
         if closing is not None:
-            try:
-                closing.close()
-            except Exception:
-                with self._state_changed:
-                    self._closing_engine = None
-                    if self._selected is not None:
-                        self._engines[self._selected] = closing
-                    self._state_changed.notify_all()
-                self._fatal_callback()
-                raise
+            self._close_replaced_engine(closing)
             with self._state_changed:
                 self._closing_engine = None
                 self._state_changed.notify_all()
@@ -483,6 +475,32 @@ class Runtime:
         if recovery is None:
             return VoiceLoadOutcome.ACTIVATED
         return VoiceLoadOutcome.ACTIVATED_DURABILITY_UNCONFIRMED
+
+    def _detach_replaced_engine(
+        self, voice: VoiceId, engine: SpeakingEngine, recovery: VoiceRecovery | None
+    ) -> SpeakingEngine | None:
+        """Return the active engine to close first, else publish the new one."""
+        closing = self.speaking
+        if closing is None or closing is engine or closing.retain_when_inactive:
+            self._publish_voice(voice, engine, recovery)
+            return None
+        self.speaking = None
+        if self._engines.get(self._selected) is closing:
+            self._engines.pop(self._selected)
+        self._closing_engine = closing
+        return closing
+
+    def _close_replaced_engine(self, closing: SpeakingEngine) -> None:
+        try:
+            closing.close()
+        except Exception:
+            with self._state_changed:
+                self._closing_engine = None
+                if self._selected is not None:
+                    self._engines[self._selected] = closing
+                self._state_changed.notify_all()
+            self._fatal_callback()
+            raise
 
     def _publish_voice(
         self, voice: VoiceId, engine: SpeakingEngine, recovery: VoiceRecovery | None
