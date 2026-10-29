@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 
     from speech_runtime_service.config import Settings
 
-_LOG = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 SpeakText = Annotated[str, Field(min_length=1)]
 HEARING_FAILED_REASON = "hearing failed"
@@ -337,7 +337,7 @@ class Runtime:
                 engine.close()
             except Exception:
                 failed = True
-                _LOG.exception("speaking engine cleanup failed")
+                logger.exception("speaking engine cleanup failed")
         if failed:
             self._fatal_callback()
             message = "speaking engine cleanup failed"
@@ -412,7 +412,7 @@ class Runtime:
                     kind=VoiceRecoveryKind.DURABILITY_UNCONFIRMED, voice=voice
                 )
             except Exception:
-                _LOG.exception("voice %s failed to load", voice.value)
+                logger.exception("voice %s failed to load", voice.value)
                 return self._not_activated(voice)
             return self._replace_voice(voice, engine, recovery)
         finally:
@@ -442,7 +442,7 @@ class Runtime:
             try:
                 engine.close()
             except Exception:
-                _LOG.exception("uncommitted speaking engine cleanup failed")
+                logger.exception("uncommitted speaking engine cleanup failed")
                 self._fatal_callback()
 
     def _voice_dependencies_ready(self, voice: VoiceId) -> bool:
@@ -557,7 +557,7 @@ class Runtime:
                 with self._state_lock:
                     if failed_voice is not None:
                         self._engines[failed_voice] = active
-                _LOG.exception("failed speaking engine cleanup failed")
+                logger.exception("failed speaking engine cleanup failed")
                 self._fatal_callback()
             finally:
                 with self._state_changed:
@@ -674,13 +674,13 @@ def _load_or_raise(which: str, model: str, load: Callable[[], None]) -> None:
         load()
     except Exception:
         message = failed_to_load_message(which, model)
-        _LOG.exception("%s", message)
+        logger.exception("%s", message)
         raise RuntimeError(message) from None
 
 
 def _log_text(*, debug: bool, kind: str, text: str) -> None:
     if debug:
-        _LOG.debug("%s text: %s", kind, text)
+        logger.debug("%s text: %s", kind, text)
 
 
 def _wav_chunks(
@@ -753,7 +753,7 @@ def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
                 reason=FRAME_TOO_LARGE_REASON,
             )
         except Exception:
-            _LOG.exception("hearing failed")
+            logger.exception("hearing failed")
             await _close_open(
                 websocket,
                 code=WS_1011_INTERNAL_ERROR,

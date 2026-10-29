@@ -24,13 +24,13 @@ from speech_runtime_service.provider_process import (
     ProviderProcess,
     provider_entrypoint,
 )
+from speech_runtime_service.voices import VoiceId
 
 if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
     from speech_runtime_service.config import Settings
-    from speech_runtime_service.voices import VoiceId
 
 
 class PiperSpeaking:
@@ -77,8 +77,6 @@ LocalSpeaking = PiperSpeaking | ProviderProcess
 
 def speaking_for_voice(settings: Settings, voice: VoiceId) -> LocalSpeaking:
     """Construct one supported local engine from the closed catalogue id."""
-    from speech_runtime_service.voices import VoiceId
-
     if voice is VoiceId.PIPER:
         return PiperSpeaking(DEFAULT_SPEAKING_MODEL, settings.voice_cache)
     if voice is VoiceId.CHATTERBOX:

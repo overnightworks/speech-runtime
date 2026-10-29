@@ -7,6 +7,7 @@ parallel-lane proof: a caller that only knows the HTTP contract.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import http.client
 import json
 import re
@@ -17,9 +18,12 @@ import time
 from array import array
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from websockets.asyncio.client import ClientConnection, unix_connect
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 SENTENCE = (
     "Die Kamera zeigt den Vortragenden, während im Hintergrund "
@@ -30,6 +34,8 @@ FRAME_SECONDS = 0.1
 SILENCE_SECONDS = 0.9
 MEASURE_REPETITIONS = 5
 FINAL_WAIT_SECONDS = 30
+BYTES_PER_SAMPLE = 2
+SILENCE_RMS = 0.01
 NO_FINAL = f"no final within {FINAL_WAIT_SECONDS} s"
 
 
@@ -114,23 +120,27 @@ def speak(path: Path, text: str) -> bytes:
 
 
 def _rms(pcm: bytes) -> float:
-    if len(pcm) < 2:
+    if len(pcm) < BYTES_PER_SAMPLE:
         return 0.0
     samples = array("h")
-    samples.frombytes(pcm[: len(pcm) - (len(pcm) % 2)])
+    samples.frombytes(pcm[: len(pcm) - (len(pcm) % BYTES_PER_SAMPLE)])
     total = sum(sample * sample for sample in samples)
     return (total / len(samples)) ** 0.5 / 32768.0
+
+
+@contextlib.asynccontextmanager
+async def _at_most(seconds: float) -> AsyncIterator[None]:
+    """Run the block for at most `seconds`; running out of time is not an error."""
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(seconds):
+            yield
 
 
 async def _drain(
     websocket: ClientConnection,
     events: list[dict[str, object]],
-    timeout: float,
 ) -> None:
-    try:
-        raw = await asyncio.wait_for(websocket.recv(), timeout=timeout)
-    except TimeoutError:
-        return
+    raw = await websocket.recv()
     if isinstance(raw, str):
         events.append(json.loads(raw))
 
@@ -171,16 +181,18 @@ async def send_pcm(
     observer: _FrameObserver | None = None,
 ) -> None:
     """Send paced frames, telling the observer at each send and each receive."""
-    frame_bytes = int(FRAME_SECONDS * sample_rate * 2)
+    frame_bytes = int(FRAME_SECONDS * sample_rate * BYTES_PER_SAMPLE)
     for offset in range(0, len(pcm), frame_bytes):
         await websocket.send(pcm[offset : offset + frame_bytes])
         if observer is not None:
             observer.note_sent()
-        await _drain(websocket, events, timeout=0.02)
+        async with _at_most(0.02):
+            await _drain(websocket, events)
         if observer is not None:
             observer.note()
         await asyncio.sleep(FRAME_SECONDS)
-        await _drain(websocket, events, timeout=0.02)
+        async with _at_most(0.02):
+            await _drain(websocket, events)
         if observer is not None:
             observer.note()
 
@@ -196,15 +208,15 @@ async def _hear_utterance(
     partial_at = 0.0
     partial_frame = 0
     still_sending = False
-    frames_sent = 0
-    frame_bytes = int(FRAME_SECONDS * sample_rate * 2)
-    for offset in range(0, len(pcm), frame_bytes):
+    frame_bytes = int(FRAME_SECONDS * sample_rate * BYTES_PER_SAMPLE)
+    for frames_sent, offset in enumerate(range(0, len(pcm), frame_bytes), start=1):
         await websocket.send(pcm[offset : offset + frame_bytes])
-        frames_sent += 1
         next_offset = offset + frame_bytes
-        await _drain(websocket, events, timeout=0.02)
+        async with _at_most(0.02):
+            await _drain(websocket, events)
         await asyncio.sleep(FRAME_SECONDS)
-        await _drain(websocket, events, timeout=0.02)
+        async with _at_most(0.02):
+            await _drain(websocket, events)
         if partial is None:
             found = _first_nonempty_partial(events)
             if found is not None:
@@ -212,13 +224,14 @@ async def _hear_utterance(
                 partial_at = time.perf_counter() - started
                 partial_frame = frames_sent
                 still_sending = frames_remain_unsent(pcm, next_offset)
-    silence = bytes(int(SILENCE_SECONDS * sample_rate * 2))
+    silence = bytes(int(SILENCE_SECONDS * sample_rate * BYTES_PER_SAMPLE))
     await send_pcm(websocket, silence, sample_rate, events)
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         if _first_final(events) is not None:
             break
-        await _drain(websocket, events, timeout=0.3)
+        async with _at_most(0.3):
+            await _drain(websocket, events)
     return events, partial, partial_at, partial_frame, still_sending
 
 
@@ -329,7 +342,7 @@ async def _measure_utterance(
     arrivals = _Arrivals()
     await send_pcm(websocket, pcm, sample_rate, arrivals.events, arrivals)
     speech_ended_s = arrivals.last_sent_s
-    silence = bytes(int(SILENCE_SECONDS * sample_rate * 2))
+    silence = bytes(int(SILENCE_SECONDS * sample_rate * BYTES_PER_SAMPLE))
     await send_pcm(websocket, silence, sample_rate, arrivals.events, arrivals)
     sending_ended_s = arrivals.elapsed()
     arrivals.sending_ended_s = sending_ended_s
@@ -338,7 +351,8 @@ async def _measure_utterance(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        await _drain(websocket, arrivals.events, timeout=min(0.3, remaining))
+        async with _at_most(min(0.3, remaining)):
+            await _drain(websocket, arrivals.events)
         arrivals.note()
     final = _first_final(arrivals.events) if arrivals.final_at_s is not None else None
     return Repetition(
@@ -401,7 +415,7 @@ async def _run(path: Path) -> None:
         f"bytes={len(wav)} pcm={len(pcm)} "
         f"rate={rate}->{sample_rate} rms={_rms(pcm):.4f}",
     )
-    if _rms(pcm) < 0.01:
+    if _rms(pcm) < SILENCE_RMS:
         message = "speak returned silence"
         raise SystemExit(message)
 
@@ -463,7 +477,8 @@ def main() -> None:
     arguments = sys.argv[1:]
     measure = arguments[:1] == ["--measure"]
     if len(arguments) != 1 + measure:
-        raise SystemExit("usage: contract_client.py [--measure] SOCKET_PATH")
+        message = "usage: contract_client.py [--measure] SOCKET_PATH"
+        raise SystemExit(message)
     run = _run_measure if measure else _run
     asyncio.run(run(Path(arguments[-1])))
 

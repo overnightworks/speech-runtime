@@ -68,26 +68,16 @@ ignore = [
 # FastAPI evaluates the route handlers' annotations when it builds the app.
 runtime-evaluated-decorators = ["fastapi.FastAPI.get", "fastapi.FastAPI.post"]
 
+[tool.ruff.lint.flake8-tidy-imports]
+# Piper and faster-whisper stay unloaded until the process holds them.
+banned-module-level-imports = ["piper", "faster_whisper"]
+
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
-"scripts/**" = [
-    "T201",
-    "S108",
-    "PLR2004",
-    "TRY003",
-    "EM101",
-    "ASYNC109",
-    "SIM113",
-    # A background thread's failure can be any library error; it is reported by
-    # message, not left to hang the join with no diagnostic.
-    "BLE001",
-]
-# A failed load can be any library error; the process still names the model and stops.
-"src/speech_runtime_service/service.py" = ["BLE001"]
-"src/speech_runtime_service/qwen_download.py" = ["BLE001"] # A provider callback may raise any library error.
-# Piper and faster-whisper stay unloaded until the process holds them.
-"src/speech_runtime_service/speaking.py" = ["PLC0415"]
-"src/speech_runtime_service/hearing.py" = ["PLC0415"]
+# The scripts' output is the command line.
+"scripts/**" = ["T201"]
+# The probe lock path is fixed by the global contract.
+"scripts/prove_speech.py" = ["S108"]
