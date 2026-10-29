@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class PrivateServer:
+    """A running private-socket server and the events its handlers set."""
+
     path: Path
     hear_handler_returned: asyncio.Event
     speak_disconnect_received: asyncio.Event
