@@ -1,0 +1,8 @@
+claim_id = "1cfc8b069d614c57a505ef008c82b9d4"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "14931436685dfaf55ccc4c444411feef6e38db9f"
+branch = "claude/issue-37-quality-v0-9-0"
+scope = [".github/workflows/ci.yml", ".github/workflows/code-scanning.yml", "pyproject.toml", "scripts/contract_client.py", "scripts/prove_speech.py", "src/speech_runtime_service/card.py", "src/speech_runtime_service/provider_process.py", "tests/support/worker_support.py", "tests/test_provider_process.py"]
+opened_commit = "171b1ad2dc62c2a3c3f1ede655e620f9da862700"
+whole_reason = "The pins move to v0.9.0 and its findings only turn green together, so the bump, the markers and the dropped config land at once."
