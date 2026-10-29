@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "overnightworks-speech-runtime-service"
 version = "0.0.0"
 description = "Local speaking and hearing, one process on the card."
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.14"
 dependencies = [
     "fastapi==0.162.0",
     "faster-whisper==1.2.1",
@@ -49,7 +49,7 @@ relative_files = true
 include = ["src/*", "providers/*/src/*"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 src = [".", "src", "tests"]
 
 [tool.ruff.lint]
@@ -58,6 +58,10 @@ ignore = [
     "COM812",
     "CPY001",
 ]
+
+[tool.ruff.lint.flake8-type-checking]
+# FastAPI evaluates the route handlers' annotations when it builds the app.
+exempt-modules = ["typing", "speech_runtime_service.voices"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

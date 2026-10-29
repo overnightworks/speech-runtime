@@ -145,11 +145,16 @@ def test_protocol_refuses_invalid_synthesis_payloads(payload: bytes) -> None:
         write_frame(stream, frame)
 
 
+@pytest.fixture(params=["python3.12", "python3.14"])
+def python_dir(request: pytest.FixtureRequest) -> str:
+    return str(request.param)
+
+
 def test_direct_closed_entrypoint_streams_after_transient_loader_exits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, python_dir: str
 ) -> None:
     root, cache = closed_provider(tmp_path)
-    cublas = root / "chatterbox/.venv/lib/python3.12/site-packages/nvidia/cublas/lib"
+    cublas = root / f"chatterbox/.venv/lib/{python_dir}/site-packages/nvidia/cublas/lib"
     cublas.mkdir(parents=True)
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     monkeypatch.setenv("PATH", "parent-executable-search-path")

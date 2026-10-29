@@ -85,7 +85,7 @@ class SpeakingEngine(Protocol):
     def load(self) -> None:
         """Load weights and become ready, or raise."""
 
-    def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
+    def pcm_chunks(self, text: str, language: str) -> Generator[bytes]:
         """16-bit mono PCM as soon as the model produces it."""
 
     def close(self) -> None:

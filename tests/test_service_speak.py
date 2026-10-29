@@ -4,8 +4,8 @@ import asyncio
 import os
 import sys
 import threading
-from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,6 +43,9 @@ from tests.support.speak_support import (
     speak_scope,
     wav_body,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def test_speak_streams_wav_that_plays_as_tone() -> None:

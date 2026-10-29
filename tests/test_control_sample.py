@@ -4,8 +4,7 @@ import asyncio
 import json
 import os
 import threading
-from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,6 +21,9 @@ from speech_runtime_service.service import (
 from speech_runtime_service.voices import VoiceId, VoiceLoadOutcome
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
 from tests.support.speak_support import ASGI_TIMEOUT_SECONDS, info_comment_before_data
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class _ClientSendError(RuntimeError):

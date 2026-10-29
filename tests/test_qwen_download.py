@@ -3,9 +3,8 @@
 import logging
 import os
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,6 +26,10 @@ from speech_runtime_service.voices import (
     VoiceState,
 )
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
 
 class _TrackedSpeaking(FakeSpeaking):

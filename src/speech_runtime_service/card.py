@@ -25,7 +25,7 @@ def card_memory_mb() -> int:
             text=True,
             timeout=2,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return 0
     first = completed.stdout.strip().splitlines()
     if not first:

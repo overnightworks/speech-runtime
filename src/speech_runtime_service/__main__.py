@@ -153,7 +153,7 @@ def _probe_is_dead(path: Path) -> bool:
     try:
         probe.settimeout(_LIVENESS_TIMEOUT_SECONDS)
         probe.connect(str(path))
-    except (ConnectionRefusedError, FileNotFoundError):
+    except ConnectionRefusedError, FileNotFoundError:
         return True
     else:
         return False
