@@ -711,5 +711,6 @@ def test_invalid_runtime_uid_refuses_before_runtime_or_listener_work(
     )
 
     settings = Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=runtime_uid)
+    serving = __main__.serve(settings)
     with pytest.raises(PermissionError, match=reason):
-        asyncio.run(__main__.serve(settings))
+        asyncio.run(serving)

@@ -132,14 +132,17 @@ def test_parent_rejects_a_worker_that_advertises_another_rate(tmp_path: Path) ->
     ],
 )
 def test_protocol_rejects_illegal_lengths_kinds_and_payloads(encoded: bytes) -> None:
+    stream = BytesIO(encoded)
     with pytest.raises((ProtocolError, EOFError)):
-        read_frame(BytesIO(encoded))
+        read_frame(stream)
 
 
 @pytest.mark.parametrize("payload", [b"", b"\x03text", b"\x01\xff"])
 def test_protocol_refuses_invalid_synthesis_payloads(payload: bytes) -> None:
+    stream = BytesIO()
+    frame = Frame(FrameKind.SYNTHESIZE, 1, payload)
     with pytest.raises(ProtocolError):
-        write_frame(BytesIO(), Frame(FrameKind.SYNTHESIZE, 1, payload))
+        write_frame(stream, frame)
 
 
 def test_direct_closed_entrypoint_streams_after_transient_loader_exits(

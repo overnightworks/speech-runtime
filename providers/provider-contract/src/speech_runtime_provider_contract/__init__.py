@@ -1,5 +1,7 @@
 """The narrow binary protocol and worker loop shared by local providers."""
 
+import contextlib
+import functools
 import os
 import queue
 import struct
@@ -250,6 +252,26 @@ class ProviderFunctions:
     prepare: Callable[[object], None] | None = None
 
 
+def _load_model_and_signal_ready(
+    *,
+    device: str,
+    cache: str,
+    stream: BinaryIO,
+    sample_rate: int,
+    functions: ProviderFunctions,
+) -> object | None:
+    """Load and prepare the model, then announce readiness; None on failure."""
+    try:
+        model = functions.load(device, Path(cache))
+        if functions.prepare is not None:
+            functions.prepare(model)
+        write_frame(stream, Frame(FrameKind.READY, 0, ready_payload(sample_rate)))
+    except Exception:
+        _failed(stream, 0)
+        return None
+    return model
+
+
 def serve_provider(
     *,
     device: str,
@@ -260,30 +282,32 @@ def serve_provider(
 ) -> int:
     """Load once, optionally prepare, then process serialized commands."""
     stream = os.fdopen(protocol_stdout, "wb", buffering=0)
-    try:
-        model = functions.load(device, Path(cache))
-        if functions.prepare is not None:
-            functions.prepare(model)
-        write_frame(stream, Frame(FrameKind.READY, 0, ready_payload(sample_rate)))
-    except Exception:
-        _failed(stream, 0)
-        stream.close()
-        return 1
-    commands: queue.Queue[Frame | BaseException] = queue.Queue()
-    reader_stopped = threading.Event()
-    reader = threading.Thread(
-        target=_read_commands,
-        args=(commands, reader_stopped),
-        name="speech-provider-input",
-        daemon=True,
+    model = _load_model_and_signal_ready(
+        device=device,
+        cache=cache,
+        stream=stream,
+        sample_rate=sample_rate,
+        functions=functions,
     )
-    reader.start()
     try:
-        return serve_commands(commands, stream, functions.synthesize, model)
+        if model is not None:
+            commands: queue.Queue[Frame | BaseException] = queue.Queue()
+            reader_stopped = threading.Event()
+            reader = threading.Thread(
+                target=_read_commands,
+                args=(commands, reader_stopped),
+                name="speech-provider-input",
+                daemon=True,
+            )
+            reader.start()
+            try:
+                serve_commands(commands, stream, functions.synthesize, model)
+            finally:
+                if reader_stopped.is_set():
+                    reader.join()
     finally:
-        if reader_stopped.is_set():
-            reader.join()
         stream.close()
+    return 1
 
 
 def _read_commands(
@@ -302,14 +326,14 @@ def serve_commands(
     stream: BinaryIO,
     synthesize: Callable[[object, str, str], Iterable[bytes]],
     model: object,
-) -> int:
+) -> None:
     """Serve validated commands until input or synthesis fails."""
     previous_terminal = 0
     while True:
         command = commands.get()
         if isinstance(command, BaseException):
             _failed(stream, 0)
-            return 1
+            return
         if command.kind is FrameKind.CANCEL and command.request_id == previous_terminal:
             continue
         if (
@@ -317,34 +341,52 @@ def serve_commands(
             or command.request_id <= previous_terminal
         ):
             _failed(stream, 0)
-            return 1
-        request_id = command.request_id
-        language = {1: "de", 2: "en"}[command.payload[0]]
-        text = command.payload[1:].decode("utf-8")
-        iterator: Iterable[bytes] | None = None
-        try:
-            cancelled = False
-            iterator = iter(synthesize(model, text, language))
-            for pcm in iterator:
-                cancelled = _consume_cancellation(
-                    commands, request_id, previous_terminal
-                )
-                if cancelled:
-                    break
-                write_frame(stream, Frame(FrameKind.PCM, request_id, pcm))
-            if not cancelled:
-                cancelled = _consume_cancellation(
-                    commands, request_id, previous_terminal
-                )
-            terminal = FrameKind.CANCELLED if cancelled else FrameKind.COMPLETE
-        except Exception:
-            return _fail_request(stream, request_id, iterator)
-        try:
-            _close_iterator(iterator)
-        except Exception:
-            return _fail_request(stream, request_id, None)
-        write_frame(stream, Frame(terminal, request_id, b""))
-        previous_terminal = request_id
+            return
+        terminal = _synthesize_request(
+            commands,
+            stream,
+            functools.partial(synthesize, model),
+            command,
+            previous_terminal,
+        )
+        if terminal is None:
+            return
+        write_frame(stream, Frame(terminal, command.request_id, b""))
+        previous_terminal = command.request_id
+
+
+def _synthesize_request(
+    commands: queue.Queue[Frame | BaseException],
+    stream: BinaryIO,
+    synthesize: Callable[[str, str], Iterable[bytes]],
+    command: Frame,
+    previous_terminal: int,
+) -> FrameKind | None:
+    """Stream one request; return its terminal kind, or None after FAILED."""
+    request_id = command.request_id
+    language = {1: "de", 2: "en"}[command.payload[0]]
+    text = command.payload[1:].decode("utf-8")
+    iterator: Iterable[bytes] | None = None
+    try:
+        cancelled = False
+        iterator = iter(synthesize(text, language))
+        for pcm in iterator:
+            cancelled = _consume_cancellation(commands, request_id, previous_terminal)
+            if cancelled:
+                break
+            write_frame(stream, Frame(FrameKind.PCM, request_id, pcm))
+        if not cancelled:
+            cancelled = _consume_cancellation(commands, request_id, previous_terminal)
+        terminal = FrameKind.CANCELLED if cancelled else FrameKind.COMPLETE
+    except Exception:
+        _fail_request(stream, request_id, iterator)
+        return None
+    try:
+        _close_iterator(iterator)
+    except Exception:
+        _fail_request(stream, request_id, None)
+        return None
+    return terminal
 
 
 def _consume_cancellation(
@@ -399,14 +441,10 @@ def _close_iterator(iterator: Iterable[bytes] | None) -> None:
 
 def _fail_request(
     stream: BinaryIO, request_id: int, iterator: Iterable[bytes] | None
-) -> int:
-    try:
+) -> None:
+    with contextlib.suppress(Exception):
         _close_iterator(iterator)
-    except Exception:
-        _failed(stream, request_id)
-        return 1
     _failed(stream, request_id)
-    return 1
 
 
 def _failed(stream: BinaryIO, request_id: int) -> None:

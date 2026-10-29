@@ -22,7 +22,7 @@ speech-runtime-magpie-worker = "speech_runtime_magpie.__main__:main"
 overnightworks-speech-runtime-provider-contract = { path = "../provider-contract", editable = true }
 
 [dependency-groups]
-dev = ["pytest==9.1.1", "ruff==0.17.2"]
+dev = ["pytest==9.1.1", "pytest-cov==7.1.0", "ruff==0.17.2"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/speech_runtime_magpie"]

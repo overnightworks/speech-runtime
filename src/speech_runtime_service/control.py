@@ -46,7 +46,10 @@ def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
     def voices() -> VoiceSnapshot:
         return runtime.snapshot(settings)
 
-    @app.post("/voices/{voice}/load")
+    @app.post(
+        "/voices/{voice}/load",
+        responses={409: {"description": "A voice transition is in progress."}},
+    )
     def load(voice: VoiceId) -> dict[str, VoiceLoadOutcome]:
         outcome = runtime.load_voice(voice)
         if outcome is None:
@@ -55,14 +58,23 @@ def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
             )
         return {"outcome": outcome}
 
-    @app.post("/voices/qwen3-tts-0.6b/download")
+    @app.post(
+        "/voices/qwen3-tts-0.6b/download",
+        responses={409: {"description": "The Qwen download is unavailable."}},
+    )
     def download() -> dict[str, VoiceDownloadOutcome]:
         outcome = runtime.start_qwen_download()
         if outcome is None:
             raise HTTPException(status_code=409, detail="Qwen download is unavailable")
         return {"outcome": outcome}
 
-    @app.post("/voices/{voice}/sample/{language}")
+    @app.post(
+        "/voices/{voice}/sample/{language}",
+        responses={
+            404: {"description": "The active voice is unavailable."},
+            409: {"description": "Speech is busy."},
+        },
+    )
     def sample(voice: VoiceId, language: SampleLanguage) -> ClosingWavResponse:
         try:
             voice_sample = runtime.preacquire_sample(voice)

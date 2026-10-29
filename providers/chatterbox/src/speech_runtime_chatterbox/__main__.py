@@ -1,6 +1,7 @@
 """Bootstrap the provider after reserving stdout for its binary protocol."""
 
 import argparse
+import collections
 import ctypes
 import os
 import signal
@@ -38,8 +39,7 @@ def _prepare(model: object) -> None:
     """Preserve Chatterbox's established pre-READY preparation."""
     from speech_runtime_chatterbox.model import pcm_chunks
 
-    for _pcm in pcm_chunks(model, "Hallo.", "de"):
-        pass
+    collections.deque(pcm_chunks(model, "Hallo.", "de"), maxlen=0)
 
 
 def _arguments() -> argparse.Namespace:

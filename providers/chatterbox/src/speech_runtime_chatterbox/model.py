@@ -69,13 +69,10 @@ def pcm_chunks(model: object, text: str, language: str) -> Iterator[bytes]:
 
     samples_per_token = int(model.sr) // int(S3_TOKEN_RATE)
     emitted = 0
-    accumulated: torch.Tensor | None = None
+    token_chunks: list[torch.Tensor] = []
     for token_chunk in speech_token_chunks(model, text, language):
-        accumulated = (
-            token_chunk
-            if accumulated is None
-            else torch.cat([accumulated, token_chunk])
-        )
+        token_chunks.append(token_chunk)
+        accumulated = torch.cat(token_chunks)
         clean = drop_invalid_tokens(accumulated).to(model.device)
         if clean.numel() == 0:
             continue
@@ -85,9 +82,9 @@ def pcm_chunks(model: object, text: str, language: str) -> Iterator[bytes]:
         emitted = ready_until
         if new.size:
             yield float_to_pcm(new)
-    if accumulated is None:
+    if not token_chunks:
         return
-    clean = drop_invalid_tokens(accumulated).to(model.device)
+    clean = drop_invalid_tokens(torch.cat(token_chunks)).to(model.device)
     if clean.numel() == 0:
         return
     wav = _vocode(model, clean)
@@ -151,12 +148,11 @@ def speech_token_chunks(model: object, text: str, language: str) -> Iterator[obj
     )
     bos_embed = t3.speech_emb(bos) + t3.speech_pos_emb.get_fixed_embedding(0)
     bos_embed = torch.cat([bos_embed, bos_embed])
-    generated = bos.clone()
-    processors = (
-        RepetitionPenaltyLogitsProcessor(penalty=1.2),
-        MinPLogitsWarper(min_p=0.05),
-        TopPLogitsWarper(top_p=1.0),
-    )
+    generated = bos.new_empty((1, MAX_NEW_TOKENS + 1))
+    generated[:, :1] = bos
+    repetition = RepetitionPenaltyLogitsProcessor(penalty=1.2)
+    minimum = MinPLogitsWarper(min_p=0.05)
+    top = TopPLogitsWarper(top_p=1.0)
     with torch.inference_mode():
         output = t3.patched_model(
             inputs_embeds=torch.cat([embeds, bos_embed], dim=1),
@@ -169,15 +165,15 @@ def speech_token_chunks(model: object, text: str, language: str) -> Iterator[obj
         past = output.past_key_values
         buffer: list[object] = []
         for step in range(MAX_NEW_TOKENS):
-            repetition, minimum, top = processors
+            history = generated[:, : step + 1]
             logits = output.logits[:, -1, :]
             logits = logits[:1] + 0.5 * (logits[:1] - logits[1:2])
-            logits = repetition(generated[:1], logits) / 0.8
-            logits = minimum(generated[:1], logits)
+            logits = repetition(history, logits) / 0.8
+            logits = minimum(history, logits)
             next_token = torch.multinomial(
-                torch.softmax(top(generated[:1], logits), dim=-1), num_samples=1
+                torch.softmax(top(history, logits), dim=-1), num_samples=1
             )
-            generated = torch.cat([generated, next_token], dim=1)
+            generated[:, step + 1 : step + 2] = next_token
             if next_token.view(-1) == t3.hp.stop_speech_token:
                 break
             buffer.append(next_token)
@@ -187,7 +183,7 @@ def speech_token_chunks(model: object, text: str, language: str) -> Iterator[obj
             next_embed = t3.speech_emb(next_token)
             next_embed = next_embed + t3.speech_pos_emb.get_fixed_embedding(step + 1)
             output = t3.patched_model(
-                inputs_embeds=torch.cat([next_embed, next_embed]),
+                inputs_embeds=next_embed.repeat_interleave(2, dim=0),
                 past_key_values=past,
                 output_attentions=False,
                 output_hidden_states=True,

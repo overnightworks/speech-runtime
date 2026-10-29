@@ -299,9 +299,7 @@ def test_wrong_direction_out_of_order_and_stale_commands_fail_once(
     for command in commands:
         command_queue.put(command)
     command_queue.put(EOFError())
-    assert (
-        worker.serve_commands(command_queue, output, lambda *_args: (), object()) == 1
-    )
+    worker.serve_commands(command_queue, output, lambda *_args: (), object())
     frames = _frames(output.getvalue())
     assert frames[-1] == Frame(FrameKind.FAILED, failure_id, b"\x01")
     assert sum(frame.kind is FrameKind.FAILED for frame in frames) == 1
@@ -324,7 +322,7 @@ def test_model_and_pcm_validation_failure_emit_only_active_failure() -> None:
         commands: queue.Queue[Frame | BaseException] = queue.Queue()
         output = BytesIO()
         commands.put(Frame(FrameKind.SYNTHESIZE, 9, b"\x01Hallo"))
-        assert worker.serve_commands(commands, output, synthesizer, object()) == 1
+        worker.serve_commands(commands, output, synthesizer, object())
         assert _frames(output.getvalue()) == [Frame(FrameKind.FAILED, 9, b"\x01")]
         assert b"raw model detail" not in output.getvalue()
 
@@ -367,13 +365,9 @@ def test_every_request_exit_closes_its_iterator_before_terminal_output(
     output = BytesIO()
     commands.put(Frame(FrameKind.SYNTHESIZE, 9, b"\x01Hallo"))
     if failure == "normal":
-        outcomes: list[int] = []
         serving = threading.Thread(
-            target=lambda: outcomes.append(
-                worker.serve_commands(
-                    commands, output, lambda *_args: ClosableIterator(), object()
-                )
-            )
+            target=worker.serve_commands,
+            args=(commands, output, lambda *_args: ClosableIterator(), object()),
         )
         serving.start()
         try:
@@ -382,13 +376,9 @@ def test_every_request_exit_closes_its_iterator_before_terminal_output(
             commands.put(EOFError())
             serving.join(timeout=5)
         assert not serving.is_alive()
-        assert outcomes == [1]
     else:
-        assert (
-            worker.serve_commands(
-                commands, output, lambda *_args: ClosableIterator(), object()
-            )
-            == 1
+        worker.serve_commands(
+            commands, output, lambda *_args: ClosableIterator(), object()
         )
     assert events.index("closed") < events.index(terminal)
     if failure != "normal":
@@ -428,12 +418,7 @@ def test_active_protocol_failure_closes_the_iterator_before_sanitized_failure(
     commands.put(Frame(FrameKind.SYNTHESIZE, 9, b"\x01Hallo"))
     commands.put(Frame(FrameKind.PCM, 9, b"\x00\x01"))
 
-    assert (
-        worker.serve_commands(
-            commands, output, lambda *_args: ClosableIterator(), object()
-        )
-        == 1
-    )
+    worker.serve_commands(commands, output, lambda *_args: ClosableIterator(), object())
     assert events == ["closed", FrameKind.FAILED]
     assert _frames(output.getvalue()) == [Frame(FrameKind.FAILED, 9, b"\x01")]
 
@@ -454,11 +439,8 @@ def test_iterator_cleanup_failure_emits_only_the_active_failure() -> None:
     output = BytesIO()
     commands.put(Frame(FrameKind.SYNTHESIZE, 9, b"\x01Hallo"))
 
-    assert (
-        worker.serve_commands(
-            commands, output, lambda *_args: FailingCloseIterator(), object()
-        )
-        == 1
+    worker.serve_commands(
+        commands, output, lambda *_args: FailingCloseIterator(), object()
     )
     assert _frames(output.getvalue()) == [Frame(FrameKind.FAILED, 9, b"\x01")]
     assert b"cleanup detail" not in output.getvalue()

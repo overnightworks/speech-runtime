@@ -828,13 +828,11 @@ def test_status_refuses_the_whole_snapshot_when_cache_lookup_fails(
 
     monkeypatch.setattr(voices, "try_to_load_from_cache", cache_unavailable)
 
+    state = VoiceRuntimeState(
+        selected=None, ready=False, loading=False, pending=None, failed=None
+    )
     with pytest.raises(OSError, match="cache unavailable"):
-        statuses(
-            settings,
-            VoiceRuntimeState(
-                selected=None, ready=False, loading=False, pending=None, failed=None
-            ),
-        )
+        statuses(settings, state)
 
 
 class _TrackedSpeaking(FakeSpeaking):
