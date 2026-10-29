@@ -48,7 +48,13 @@ jobs:
         run: uv run --locked ruff format --check
 
       - name: Test
-        run: uv run --locked pytest -q
+        run: uv run --locked pytest -q --cov --cov-report=xml:coverage-root.xml
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-root
+          path: coverage-root.xml
 
   chatterbox-provider:
     name: "Speech: Chatterbox provider"
@@ -85,7 +91,16 @@ jobs:
         run: uv run --locked ruff format --check src tests ../provider-contract/src
 
       - name: Test
-        run: uv run --locked pytest -q tests
+        working-directory: ${{ github.workspace }}
+        run: >-
+          uv run --locked --project providers/chatterbox pytest -q providers/chatterbox/tests
+          --cov --cov-report=xml:coverage-chatterbox.xml
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-chatterbox
+          path: coverage-chatterbox.xml
 
   qwen-provider:
     name: "Speech: Qwen provider"
@@ -123,7 +138,16 @@ jobs:
         run: uv run --locked ruff format --check src tests ../provider-contract/src
 
       - name: Test
-        run: uv run --locked pytest -q tests/test_main.py tests/test_model.py
+        working-directory: ${{ github.workspace }}
+        run: >-
+          uv run --locked --project providers/qwen pytest -q providers/qwen/tests/test_main.py providers/qwen/tests/test_model.py
+          --cov --cov-report=xml:coverage-qwen.xml
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-qwen
+          path: coverage-qwen.xml
 
   voxcpm-provider:
     name: "Speech: VoxCPM provider"
@@ -161,7 +185,16 @@ jobs:
         run: uv run --locked ruff format --check src tests ../provider-contract/src
 
       - name: Test
-        run: uv run --locked pytest -q tests/test_main.py tests/test_model.py
+        working-directory: ${{ github.workspace }}
+        run: >-
+          uv run --locked --project providers/voxcpm pytest -q providers/voxcpm/tests/test_main.py providers/voxcpm/tests/test_model.py
+          --cov --cov-report=xml:coverage-voxcpm.xml
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-voxcpm
+          path: coverage-voxcpm.xml
 
   magpie-provider:
     name: "Speech: Magpie provider"
@@ -193,11 +226,45 @@ jobs:
       - name: Check formatting
         run: uv run --locked ruff format --check src tests ../provider-contract/src
       - name: Test
-        run: uv run --locked pytest -q tests/test_main.py tests/test_model.py
+        working-directory: ${{ github.workspace }}
+        run: >-
+          uv run --locked --project providers/magpie pytest -q providers/magpie/tests/test_main.py providers/magpie/tests/test_model.py
+          --cov --cov-report=xml:coverage-magpie.xml
+
+      - name: Upload the coverage report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-magpie
+          path: coverage-magpie.xml
+
+  coverage:
+    name: "Speech: coverage reports"
+    needs:
+      - speech
+      - chatterbox-provider
+      - qwen-provider
+      - voxcpm-provider
+      - magpie-provider
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download the five coverage reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+
+      - name: Upload the coverage reports for the quality gate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: coverage-*.xml
+          if-no-files-found: error
 
   quality:
     name: quality
     needs:
+      - coverage
       - speech
       - chatterbox-provider
       - qwen-provider
@@ -205,6 +272,8 @@ jobs:
       - magpie-provider
     if: always()
     uses: overnightworks/quality/.github/workflows/gate.yml@7b39c6307d3df21b5803a2e0ec2c61f0509e0455 # v0.7.0
+    with:
+      coverage-artifact: coverage
     permissions:
       contents: read
       actions: read

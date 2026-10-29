@@ -15,7 +15,7 @@ presentator-chatterbox-worker = "presentator_chatterbox.__main__:main"
 overnightworks-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
 
 [dependency-groups]
-dev = ["pytest==9.1.1", "ruff==0.17.1"]
+dev = ["pytest==9.1.1", "pytest-cov==7.1.0", "ruff==0.17.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/presentator_chatterbox"]
