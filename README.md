@@ -1,22 +1,24 @@
-# Local speech
+# Speech runtime
 
 Audience: the operator starting this process on the home server, and
 Presentator, which calls it.
 
 One process holds a German voice and a German listener resident, and offers
-them over HTTP on a private Unix socket. Nothing in `src/presentator`
-imports this package. The caller
-owns the address. Settings · Voice chooses between downloaded Piper,
-Chatterbox, Qwen3-TTS 0.6B, VoxCPM2, and cached NVIDIA Magpie; the durable choice is private state. An admin
-may explicitly download the pinned Qwen snapshot through the private control
-socket; it retains partials, never selects the voice, and reports local
-artifact truth.
+them over HTTP on a private Unix socket whose caller is Presentator. The caller
+owns the address. The voice is chosen between downloaded Piper, Chatterbox,
+Qwen3-TTS 0.6B, VoxCPM2, and cached NVIDIA Magpie; the durable choice is private
+state. An admin may explicitly download the pinned Qwen snapshot through the
+private control socket; it retains partials, never selects the voice, and
+reports local artifact truth.
+
+The code was extracted, with its history, from `speech/` in
+[overnightworks/presentator](https://github.com/overnightworks/presentator).
 
 ## Models
 
 | Role | Hugging Face | Licence | Why this one |
 | --- | --- | --- | --- |
-| Speaking (default) | [`rhasspy/piper-voices`](https://huggingface.co/rhasspy/piper-voices) voice `de_DE-thorsten-medium` | Voice recordings CC0; ONNX weights under the piper-voices MIT repo. The `piper-tts` runtime is `GPL-3.0-or-later`. The HTTP boundary keeps it out of `src/presentator` while the speech program itself carries the GPL obligations. | German is documented and not in question. #70 measured this voice on this 3090 at 0.23 s to first audio on CPU. `thorsten-high` on the same sentence took 1.21 s through this service, over the one-second first-audio target, so medium is the default. The voice does not compete with the listener for the card. |
+| Speaking (default) | [`rhasspy/piper-voices`](https://huggingface.co/rhasspy/piper-voices) voice `de_DE-thorsten-medium` | Voice recordings CC0; ONNX weights under the piper-voices MIT repo. The `piper-tts` runtime is `GPL-3.0-or-later`. The HTTP boundary keeps it out of `src/speech_runtime_service` while the speech program itself carries the GPL obligations. | German is documented and not in question. #70 measured this voice on this 3090 at 0.23 s to first audio on CPU. `thorsten-high` on the same sentence took 1.21 s through this service, over the one-second first-audio target, so medium is the default. The voice does not compete with the listener for the card. |
 | Speaking (optional) | [`ResembleAI/chatterbox`](https://huggingface.co/ResembleAI/chatterbox) Multilingual V3, snapshot `5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18` | MIT (`chatterbox-tts` 0.1.7) | Real German, streams PCM while it synthesises, 24 kHz. Installed `from_pretrained` takes only `device` and loads V2; this service loads `t3_mtl23ls_v3.safetensors` from the local Hub cache, pinned to the snapshot it was measured against. `resemble-perth` 1.0.1's `PerthImplicitWatermarker` needs `pkg_resources`, which setuptools stopped shipping at 82; this project pins `setuptools==81.0.0` so Chatterbox's own construction of the real watermarker succeeds instead of silently degrading to `perth`'s no-op. The streamed path calls `s3gen` directly rather than the model's own `generate()`, so it never reaches the line that applies the watermark to the waveform — unmarked audio either way, now for a stated reason rather than a substituted no-op. |
 | Speaking (optional) | [`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice), snapshot `85e237c12c027371202489a0ec509ded67b5e4b5` | Apache-2.0 (`qwen-tts` 0.1.1) | German and English through one configured built-in preset, initially Ryan. It returns a complete 24 kHz waveform, so `speaking.streams` is false. The isolated provider accepts the repository's `cuda` setting as `cuda:0`, uses bfloat16 and package-default attention, and reads only the pinned local snapshot. Runtime quality and latency remain unmeasured. |
 | Speaking (optional) | [`openbmb/VoxCPM2`](https://huggingface.co/openbmb/VoxCPM2), snapshot `32279effe8c19989596f05d353d1447f51d9e915` | Apache-2.0 (`voxcpm` 2.0.3) | German and English text-only streaming at 48 kHz through its isolated provider. It reads only the pinned local snapshot, uses no prompt, reference audio, cloning, or voice-design controls, and has no measured quality, latency, residency, or deployment result. |
@@ -179,8 +181,8 @@ All `SPEECH_*`:
 | `SPEECH_HUGGINGFACE_CACHE` | Provider Hub cache (normally `~/.cache/huggingface/hub`) | The shared local Hub cache for provider loading and status lookup |
 | `SPEECH_QWEN_SPEAKER` | `Ryan` | One of Vivian, Serena, Uncle_Fu, Dylan, Eric, Ryan, Aiden, Ono_Anna, or Sohee |
 | `SPEECH_MAGPIE_SPEAKER` | `Sofia` | One of Aria, Jason, John, Leo, or Sofia |
-| `SPEECH_PRIVATE_DIRECTORY` | `/run/presentator-speech` | Private directory that owns `speech.sock` |
-| `SPEECH_STATE_DIRECTORY` | `~/.local/state/presentator-speech` | Private directory containing the durable selected voice |
+| `SPEECH_PRIVATE_DIRECTORY` | `/run/speech-runtime` | Private directory that owns `speech.sock` |
+| `SPEECH_STATE_DIRECTORY` | `~/.local/state/speech-runtime` | Private directory containing the durable selected voice |
 
 When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 
@@ -195,18 +197,18 @@ If a model cannot be loaded the process exits and names which one failed.
 
 ## Run
 
-From this directory:
+From the repository root:
 
 ```sh
 uv sync --group dev
-uv run presentator-speech
+uv run speech-runtime-service
 ```
 
 Stage proof (takes `/tmp/probe-stack.lock`, checks load, one heavy step at a
 time). It selects Chatterbox when the durable selection is absent and points
-`SPEECH_PROVIDER_ROOT` at `speech/providers` unless the caller set it, so each
+`SPEECH_PROVIDER_ROOT` at `providers` unless the caller set it, so each
 provider needs its virtual environment first (`uv sync --locked` inside
-`speech/providers/<provider>`). It gives speech a temporary
+`providers/<provider>`). It gives speech a temporary
 `SPEECH_STATE_DIRECTORY`, so it never reads or writes the operator's voice
 choice. `SPEECH_DEVICE` (default `cuda`) and `SPEECH_HEARING_MODEL` (default
 large-v3) pass through; on `cpu` the card is hidden from speech with an empty

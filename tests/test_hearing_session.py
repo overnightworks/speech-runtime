@@ -2,14 +2,14 @@
 
 import pytest
 
-from presentator_speech.config import HEAR_SAMPLE_RATE
-from presentator_speech.hearing import (
+from speech_runtime_service.config import HEAR_SAMPLE_RATE
+from speech_runtime_service.hearing import (
     MAX_FRAME_SECONDS,
     MAX_UTTERANCE_SECONDS,
     FrameTooLargeError,
     HearingSession,
 )
-from presentator_speech.pcm import BYTES_PER_SAMPLE
+from speech_runtime_service.pcm import BYTES_PER_SAMPLE
 from tests.support.fakes_support import sine_pcm
 
 

@@ -3,12 +3,12 @@ requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
-name = "overnightworks-presentator-speech-provider-contract"
+name = "overnightworks-speech-runtime-provider-contract"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/presentator_speech_provider_contract"]
+packages = ["src/speech_runtime_provider_contract"]
 
 [tool.ruff]
 target-version = "py312"

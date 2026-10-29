@@ -10,7 +10,7 @@ import torch
 from huggingface_hub import hf_hub_download
 from nemo.collections.tts.models import MagpieTTSModel
 from omegaconf import DictConfig
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     MAGPIE_CODEC_FILENAME,
     MAGPIE_CODEC_ID,
     MAGPIE_CODEC_REVISION,

@@ -8,9 +8,9 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from presentator_speech_provider_contract import MAX_PCM_BYTES
+from speech_runtime_provider_contract import MAX_PCM_BYTES
 
-from presentator_qwen import model
+from speech_runtime_qwen import model
 
 
 class _GeneratedModel:

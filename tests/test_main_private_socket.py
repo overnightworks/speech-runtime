@@ -13,9 +13,9 @@ import httpx2
 import pytest
 from websockets.asyncio.client import ClientConnection, unix_connect
 
-from presentator_speech.config import HEAR_SAMPLE_RATE
-from presentator_speech.pcm import BYTES_PER_SAMPLE, WAV_HEADER_BYTES, pcm_from_wav
-from presentator_speech.service import Runtime
+from speech_runtime_service.config import HEAR_SAMPLE_RATE
+from speech_runtime_service.pcm import BYTES_PER_SAMPLE, WAV_HEADER_BYTES, pcm_from_wav
+from speech_runtime_service.service import Runtime
 from tests.support.fakes_support import (
     GATE_TIMEOUT_SECONDS,
     SPEAK_SAMPLE_RATE,

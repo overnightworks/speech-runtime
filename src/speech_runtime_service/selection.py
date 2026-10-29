@@ -7,7 +7,7 @@ import stat
 import tempfile
 from pathlib import Path
 
-from presentator_speech.voices import VoiceId
+from speech_runtime_service.voices import VoiceId
 
 _DIRECTORY_MODE = 0o700
 _FILE_MODE = 0o600

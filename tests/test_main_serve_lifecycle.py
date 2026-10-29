@@ -12,11 +12,11 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from presentator_speech import __main__
-from presentator_speech.config import Settings
-from presentator_speech.selection import VoiceSelectionStore
-from presentator_speech.service import Runtime, RuntimeDependencies
-from presentator_speech.voices import VoiceId
+from speech_runtime_service import __main__
+from speech_runtime_service.config import Settings
+from speech_runtime_service.selection import VoiceSelectionStore
+from speech_runtime_service.service import Runtime, RuntimeDependencies
+from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
 
 if TYPE_CHECKING:
@@ -30,11 +30,11 @@ import asyncio
 import os
 from pathlib import Path
 
-from presentator_speech import __main__
-from presentator_speech.config import Settings
-from presentator_speech.selection import VoiceSelectionStore
-from presentator_speech.service import Runtime, RuntimeDependencies
-from presentator_speech.voices import VoiceId
+from speech_runtime_service import __main__
+from speech_runtime_service.config import Settings
+from speech_runtime_service.selection import VoiceSelectionStore
+from speech_runtime_service.service import Runtime, RuntimeDependencies
+from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
 
 directory = Path(os.environ["SPEECH_TEST_DIRECTORY"])
@@ -97,7 +97,7 @@ def test_python_dash_m_starts_the_service_on_its_private_socket(tmp_path) -> Non
         "PYTHONPATH": str(speech_root),
     }
     with subprocess.Popen(
-        [sys.executable, "-m", "presentator_speech"], env=environment
+        [sys.executable, "-m", "speech_runtime_service"], env=environment
     ) as server:
         try:
             deadline = time.monotonic() + 30

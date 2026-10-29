@@ -3,26 +3,26 @@ requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
-name = "overnightworks-presentator-voxcpm-provider"
+name = "overnightworks-speech-runtime-voxcpm-provider"
 version = "0.0.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "numpy==2.5.4",
-    "overnightworks-presentator-speech-provider-contract",
+    "overnightworks-speech-runtime-provider-contract",
     "voxcpm==2.0.3",
 ]
 
 [project.scripts]
-presentator-voxcpm-worker = "presentator_voxcpm.__main__:main"
+speech-runtime-voxcpm-worker = "speech_runtime_voxcpm.__main__:main"
 
 [tool.uv.sources]
-overnightworks-presentator-speech-provider-contract = { path = "../provider-contract", editable = true }
+overnightworks-speech-runtime-provider-contract = { path = "../provider-contract", editable = true }
 
 [dependency-groups]
 dev = ["pytest==9.1.1", "ruff==0.17.2"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/presentator_voxcpm"]
+packages = ["src/speech_runtime_voxcpm"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
@@ -38,5 +38,5 @@ ignore = ["COM812", "CPY001", "D103", "INP001", "PLC0415", "S101", "TC003"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
-"src/presentator_voxcpm/__main__.py" = ["PLC0415"]
-"src/presentator_voxcpm/model.py" = ["PLC0415", "TC003"]
+"src/speech_runtime_voxcpm/__main__.py" = ["PLC0415"]
+"src/speech_runtime_voxcpm/model.py" = ["PLC0415", "TC003"]

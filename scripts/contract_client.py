@@ -1,7 +1,7 @@
 """Drive the three speech endpoints over the private socket.
 
-This process must not import the `presentator_speech` package. It is the parallel-lane
-proof: a caller that only knows the HTTP contract.
+This process must not import the `speech_runtime_service` package. It is the
+parallel-lane proof: a caller that only knows the HTTP contract.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ NO_FINAL = f"no final within {FINAL_WAIT_SECONDS} s"
 
 
 def _must_not_have_imported_speech() -> None:
-    if "presentator_speech" in sys.modules:
-        message = "contract client imported presentator_speech"
+    if "speech_runtime_service" in sys.modules:
+        message = "contract client imported speech_runtime_service"
         raise SystemExit(message)
 
 

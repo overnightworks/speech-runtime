@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from presentator_speech_provider_contract import QWEN_MODEL_ID
 from pydantic import BaseModel, Field
+from speech_runtime_provider_contract import QWEN_MODEL_ID
 from starlette.status import (
     HTTP_503_SERVICE_UNAVAILABLE,
     WS_1009_MESSAGE_TOO_BIG,
@@ -20,27 +20,27 @@ from starlette.status import (
 )
 from starlette.websockets import WebSocketState
 
-from presentator_speech.card import card_memory_mb
-from presentator_speech.config import (
+from speech_runtime_service.card import card_memory_mb
+from speech_runtime_service.config import (
     CHATTERBOX_SPEAKING_MODEL,
     DEFAULT_SPEAKING_MODEL,
     HEAR_SAMPLE_RATE,
 )
-from presentator_speech.hearing import (
+from speech_runtime_service.hearing import (
     POLL_WAIT_SECONDS,
     FrameTooLargeError,
     HearingSession,
     hearing_from_settings,
 )
-from presentator_speech.pcm import wav_header
-from presentator_speech.qwen_download import _QwenDownload, download_qwen
-from presentator_speech.selection import (
+from speech_runtime_service.pcm import wav_header
+from speech_runtime_service.qwen_download import _QwenDownload, download_qwen
+from speech_runtime_service.selection import (
     DurabilityUnconfirmedError,
     SelectionError,
     VoiceSelectionStore,
 )
-from presentator_speech.speaking import speaking_for_voice
-from presentator_speech.voices import (
+from speech_runtime_service.speaking import speaking_for_voice
+from speech_runtime_service.voices import (
     VoiceDownloadOutcome,
     VoiceId,
     VoiceLoadOutcome,
@@ -52,12 +52,12 @@ from presentator_speech.voices import (
     qwen_worker_is_usable,
     statuses,
 )
-from presentator_speech.wav_response import ClosingWavResponse
+from speech_runtime_service.wav_response import ClosingWavResponse
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
 
-    from presentator_speech.config import Settings
+    from speech_runtime_service.config import Settings
 
 _LOG = logging.getLogger(__name__)
 

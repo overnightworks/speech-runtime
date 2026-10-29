@@ -6,15 +6,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from huggingface_hub import snapshot_download
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     QWEN_ARTIFACTS,
     QWEN_MODEL_ID,
     QWEN_REVISION,
 )
 
-from presentator_speech import voices
-from presentator_speech.config import Settings
-from presentator_speech.voices import VoiceDownloadOutcome
+from speech_runtime_service import voices
+from speech_runtime_service.config import Settings
+from speech_runtime_service.voices import VoiceDownloadOutcome
 
 
 def download_qwen(settings: Settings) -> None:

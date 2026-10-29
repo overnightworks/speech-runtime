@@ -26,10 +26,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
 
 import httpx2
-from presentator_speech_provider_contract import CHATTERBOX_SAMPLE_RATE
+from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
-from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL
-from presentator_speech.cuda_libs import cuda_library_dirs
+from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL
+from speech_runtime_service.cuda_libs import cuda_library_dirs
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -298,7 +298,7 @@ def _speech_server(
 ) -> Iterator[_RunningSpeech]:
     """Start speech, wait until both models are ready, and stop it on the way out."""
     server = subprocess.Popen(
-        [sys.executable, "-m", "presentator_speech"],
+        [sys.executable, "-m", "speech_runtime_service"],
         cwd=project,
         env=env,
         stdout=subprocess.PIPE,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     CHATTERBOX_SAMPLE_RATE,
     MAGPIE_MODEL_ID,
     MAGPIE_SAMPLE_RATE,
@@ -14,8 +14,11 @@ from presentator_speech_provider_contract import (
     VOXCPM_SAMPLE_RATE,
 )
 
-from presentator_speech.config import CHATTERBOX_SPEAKING_MODEL, DEFAULT_SPEAKING_MODEL
-from presentator_speech.provider_process import (
+from speech_runtime_service.config import (
+    CHATTERBOX_SPEAKING_MODEL,
+    DEFAULT_SPEAKING_MODEL,
+)
+from speech_runtime_service.provider_process import (
     ProviderId,
     ProviderLaunch,
     ProviderProcess,
@@ -26,9 +29,9 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from pathlib import Path
 
-    from presentator_speech.config import Settings
-    from presentator_speech.service import SpeakingEngine
-    from presentator_speech.voices import VoiceId
+    from speech_runtime_service.config import Settings
+    from speech_runtime_service.service import SpeakingEngine
+    from speech_runtime_service.voices import VoiceId
 
 
 class PiperSpeaking:
@@ -72,7 +75,7 @@ class PiperSpeaking:
 
 def speaking_for_voice(settings: Settings, voice: VoiceId) -> SpeakingEngine:
     """Construct one supported local engine from the closed catalogue id."""
-    from presentator_speech.voices import VoiceId
+    from speech_runtime_service.voices import VoiceId
 
     if voice is VoiceId.PIPER:
         return PiperSpeaking(DEFAULT_SPEAKING_MODEL, settings.voice_cache)

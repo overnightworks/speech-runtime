@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     MAGPIE_SAMPLE_RATE,
     VOXCPM_ARTIFACTS,
     VOXCPM_MODEL_ID,
@@ -24,18 +24,18 @@ from presentator_speech_provider_contract import (
     VOXCPM_SAMPLE_RATE,
 )
 
-from presentator_speech import voices
-from presentator_speech.config import Settings
-from presentator_speech.control import create_control_app
-from presentator_speech.pcm import pcm_from_wav
-from presentator_speech.selection import VoiceSelectionStore
-from presentator_speech.service import (
+from speech_runtime_service import voices
+from speech_runtime_service.config import Settings
+from speech_runtime_service.control import create_control_app
+from speech_runtime_service.pcm import pcm_from_wav
+from speech_runtime_service.selection import VoiceSelectionStore
+from speech_runtime_service.service import (
     Runtime,
     RuntimeDependencies,
     SpeakingEngine,
 )
-from presentator_speech.speaking import speaking_for_voice
-from presentator_speech.voices import (
+from speech_runtime_service.speaking import speaking_for_voice
+from speech_runtime_service.voices import (
     VoiceId,
     VoiceLoadOutcome,
     VoiceRecoveryKind,
@@ -53,6 +53,8 @@ from tests.support.speak_support import (
     wav_body,
 )
 from tests.support.worker_support import assert_reaped, closed_provider, observed
+
+_SERVICE_MODULES = ("speech_runtime_service.voices", "speech_runtime_service.speaking")
 
 
 def _captured_engine(runtime: Runtime) -> SpeakingEngine:
@@ -105,7 +107,7 @@ def test_chatterbox_weights_need_the_exact_executable_but_active_survives_its_re
         huggingface_cache=tmp_path,
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
-    entrypoint = provider_root / "chatterbox/.venv/bin/presentator-chatterbox-worker"
+    entrypoint = provider_root / "chatterbox/.venv/bin/speech-runtime-chatterbox-worker"
     entrypoint.parent.mkdir(parents=True)
 
     absent = statuses(
@@ -216,7 +218,7 @@ def test_qwen_requires_the_exact_snapshot_and_executable_and_has_a_truthful_pres
     )
 
     missing_worker = statuses(settings, _RuntimeFacts().state())
-    worker = provider_root / "qwen/.venv/bin/presentator-qwen-worker"
+    worker = provider_root / "qwen/.venv/bin/speech-runtime-qwen-worker"
     worker.parent.mkdir(parents=True)
     worker.write_text("#!/bin/false\n", encoding="utf-8")
     worker.chmod(0o700)
@@ -260,7 +262,7 @@ def test_voxcpm_requires_the_exact_snapshot_and_worker_and_uses_48_khz(
     )
 
     missing_worker = statuses(settings, _RuntimeFacts().state())
-    worker = provider_root / "voxcpm/.venv/bin/presentator-voxcpm-worker"
+    worker = provider_root / "voxcpm/.venv/bin/speech-runtime-voxcpm-worker"
     worker.parent.mkdir(parents=True)
     worker.write_text("#!/bin/false\n", encoding="utf-8")
     worker.chmod(0o700)
@@ -292,7 +294,7 @@ def test_magpie_requires_both_exact_archives_and_its_worker(tmp_path: Path) -> N
     )
 
     missing_worker = statuses(settings, _RuntimeFacts().state())
-    worker = provider_root / "magpie/.venv/bin/presentator-magpie-worker"
+    worker = provider_root / "magpie/.venv/bin/speech-runtime-magpie-worker"
     worker.parent.mkdir(parents=True)
     worker.write_text("#!/bin/false\n", encoding="utf-8")
     worker.chmod(0o700)
@@ -322,7 +324,7 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
     provider_root = tmp_path / "providers"
     cache = tmp_path / "hub"
     _complete_voxcpm_snapshot(cache)
-    worker = provider_root / "voxcpm/.venv/bin/presentator-voxcpm-worker"
+    worker = provider_root / "voxcpm/.venv/bin/speech-runtime-voxcpm-worker"
     worker.parent.mkdir(parents=True)
     worker.write_text("#!/bin/false\n", encoding="utf-8")
     worker.chmod(0o700)
@@ -331,15 +333,13 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
         huggingface_cache=cache,
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
-    host = importlib.import_module("presentator_speech")
+    host = importlib.import_module("speech_runtime_service")
     marker = object()
     previous_attributes = {
         name: getattr(host, name, marker) for name in ("voices", "speaking")
     }
     previous_modules = {
-        name: sys.modules.pop(name)
-        for name in ("presentator_speech.voices", "presentator_speech.speaking")
-        if name in sys.modules
+        name: sys.modules.pop(name) for name in _SERVICE_MODULES if name in sys.modules
     }
     original_import = builtins.__import__
 
@@ -350,7 +350,7 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
         fromlist: tuple[str, ...] = (),
         level: int = 0,
     ) -> object:
-        if name == "presentator_voxcpm" or name.startswith("presentator_voxcpm."):
+        if name == "speech_runtime_voxcpm" or name.startswith("speech_runtime_voxcpm."):
             raise AssertionError
         if name == "voxcpm" or name.startswith("voxcpm."):
             raise AssertionError
@@ -358,8 +358,8 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
 
     monkeypatch.setattr(builtins, "__import__", guard_provider_import)
     try:
-        fresh_voices = importlib.import_module("presentator_speech.voices")
-        fresh_speaking = importlib.import_module("presentator_speech.speaking")
+        fresh_voices = importlib.import_module("speech_runtime_service.voices")
+        fresh_speaking = importlib.import_module("speech_runtime_service.speaking")
         rows = fresh_voices.statuses(
             settings,
             fresh_voices.VoiceRuntimeState(
@@ -374,7 +374,7 @@ def test_voxcpm_catalogue_and_factory_import_no_provider_packages(
         assert engine.model_name == VOXCPM_MODEL_ID
         assert engine.sample_rate == VOXCPM_SAMPLE_RATE
     finally:
-        for name in ("presentator_speech.voices", "presentator_speech.speaking"):
+        for name in _SERVICE_MODULES:
             sys.modules.pop(name, None)
         sys.modules.update(previous_modules)
         for name, value in previous_attributes.items():
@@ -394,15 +394,13 @@ def test_magpie_catalogue_and_factory_import_no_provider_packages(
         huggingface_cache=cache,
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
-    host = importlib.import_module("presentator_speech")
+    host = importlib.import_module("speech_runtime_service")
     marker = object()
     previous_attributes = {
         name: getattr(host, name, marker) for name in ("voices", "speaking")
     }
     previous_modules = {
-        name: sys.modules.pop(name)
-        for name in ("presentator_speech.voices", "presentator_speech.speaking")
-        if name in sys.modules
+        name: sys.modules.pop(name) for name in _SERVICE_MODULES if name in sys.modules
     }
     original_import = builtins.__import__
 
@@ -413,14 +411,14 @@ def test_magpie_catalogue_and_factory_import_no_provider_packages(
         fromlist: tuple[str, ...] = (),
         level: int = 0,
     ) -> object:
-        if name.split(".", 1)[0] in {"nemo", "torch", "presentator_magpie"}:
+        if name.split(".", 1)[0] in {"nemo", "torch", "speech_runtime_magpie"}:
             raise AssertionError
         return original_import(name, global_namespace, local_namespace, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", guard_provider_import)
     try:
-        fresh_voices = importlib.import_module("presentator_speech.voices")
-        fresh_speaking = importlib.import_module("presentator_speech.speaking")
+        fresh_voices = importlib.import_module("speech_runtime_service.voices")
+        fresh_speaking = importlib.import_module("speech_runtime_service.speaking")
         rows = fresh_voices.statuses(settings, _RuntimeFacts().state())
         magpie = next(row for row in rows if row.id is fresh_voices.VoiceId.MAGPIE)
         engine = fresh_speaking.speaking_for_voice(
@@ -429,7 +427,7 @@ def test_magpie_catalogue_and_factory_import_no_provider_packages(
         assert magpie.state is fresh_voices.VoiceState.DOWNLOADED
         assert engine.sample_rate == MAGPIE_SAMPLE_RATE
     finally:
-        for name in ("presentator_speech.voices", "presentator_speech.speaking"):
+        for name in _SERVICE_MODULES:
             sys.modules.pop(name, None)
         sys.modules.update(previous_modules)
         for name, value in previous_attributes.items():

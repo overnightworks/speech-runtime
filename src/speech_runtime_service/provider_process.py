@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import Enum, StrEnum
 from pathlib import Path
 
-from presentator_speech_provider_contract import (
+from speech_runtime_provider_contract import (
     Frame,
     FrameDecoder,
     FrameKind,
@@ -405,7 +405,7 @@ def provider_entrypoint(
         / provider.value
         / ".venv"
         / "bin"
-        / (f"presentator-{provider.value}-worker")
+        / (f"speech-runtime-{provider.value}-worker")
     )
 
 

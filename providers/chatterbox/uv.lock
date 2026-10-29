@@ -918,13 +918,13 @@ wheels = [
 ]
 
 [[package]]
-name = "overnightworks-presentator-chatterbox-provider"
+name = "overnightworks-speech-runtime-chatterbox-provider"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "chatterbox-tts" },
     { name = "numpy" },
-    { name = "overnightworks-presentator-speech-provider-contract" },
+    { name = "overnightworks-speech-runtime-provider-contract" },
     { name = "setuptools" },
 ]
 
@@ -938,7 +938,7 @@ dev = [
 requires-dist = [
     { name = "chatterbox-tts", specifier = "==0.1.7" },
     { name = "numpy", specifier = "==1.26.4" },
-    { name = "overnightworks-presentator-speech-provider-contract", editable = "../provider-contract" },
+    { name = "overnightworks-speech-runtime-provider-contract", editable = "../provider-contract" },
     { name = "setuptools", specifier = "==81.0.0" },
 ]
 
@@ -949,7 +949,7 @@ dev = [
 ]
 
 [[package]]
-name = "overnightworks-presentator-speech-provider-contract"
+name = "overnightworks-speech-runtime-provider-contract"
 version = "0.0.0"
 source = { editable = "../provider-contract" }
 
