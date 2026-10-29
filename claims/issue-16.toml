@@ -1,7 +1,0 @@
-claim_id = "c0d4347f08134c479f16dd7ef00604c4"
-agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
-role = "builder"
-base = "87362e2be3b87337b61a8dda0fa51f7bc2ae727e"
-branch = "claude/issue-16-c2b-proof-script-temp-paths"
-scope = ["README.md", "pyproject.toml", "scripts/prove_speech.py"]
-opened_commit = "c3a4b195e00e13d9a476bfeb0d9743a96b92cb55"
