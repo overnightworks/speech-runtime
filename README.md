@@ -89,7 +89,7 @@ measurable per-request latency, because the streamed path never calls it.
 Load now synthesises a short German warmup so `ready` means the first real
 sentence is already in budget — a cold first request before that warmup
 existed took 1.362 s. `scripts/prove_speech.py` writes the German WAV of the run it
-just proved to `/tmp/issue-83-voice/german.wav` for a listening judgment.
+just proved to `german.wav` in a private temporary directory the script prints for a listening judgment.
 
 CTranslate2 does not bundle CUDA. This project installs `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` and preloads them at start.
 

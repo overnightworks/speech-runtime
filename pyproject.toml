@@ -73,7 +73,6 @@ convention = "google"
     "T201",
     "S603",
     "S108",
-    "S607",
     "PLR2004",
     "TRY003",
     "EM101",
