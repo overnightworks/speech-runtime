@@ -281,11 +281,12 @@ def serve_provider(
     )
     reader.start()
     try:
-        return serve_commands(commands, stream, functions.synthesize, model)
+        serve_commands(commands, stream, functions.synthesize, model)
     finally:
         if reader_stopped.is_set():
             reader.join()
         stream.close()
+    return 1
 
 
 def _read_commands(
@@ -304,14 +305,14 @@ def serve_commands(
     stream: BinaryIO,
     synthesize: Callable[[object, str, str], Iterable[bytes]],
     model: object,
-) -> int:
+) -> None:
     """Serve validated commands until input or synthesis fails."""
     previous_terminal = 0
     while True:
         command = commands.get()
         if isinstance(command, BaseException):
             _failed(stream, 0)
-            return 1
+            return
         if command.kind is FrameKind.CANCEL and command.request_id == previous_terminal:
             continue
         if (
@@ -319,7 +320,7 @@ def serve_commands(
             or command.request_id <= previous_terminal
         ):
             _failed(stream, 0)
-            return 1
+            return
         terminal = _synthesize_request(
             commands,
             stream,
@@ -328,7 +329,7 @@ def serve_commands(
             previous_terminal,
         )
         if terminal is None:
-            return 1
+            return
         write_frame(stream, Frame(terminal, command.request_id, b""))
         previous_terminal = command.request_id
 
