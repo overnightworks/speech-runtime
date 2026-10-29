@@ -3,6 +3,6 @@ agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
 role = "builder"
 base = "87362e2be3b87337b61a8dda0fa51f7bc2ae727e"
 branch = "claude/issue-17-c2c-exemption-cuda-test-markers"
-scope = ["pyproject.toml", "scripts/__init__.py", "src/speech_runtime_service/control.py", "src/speech_runtime_service/provider_process.py", "tests"]
+scope = ["pyproject.toml", "src/speech_runtime_service/control.py", "src/speech_runtime_service/provider_process.py", "tests"]
 opened_commit = "4602e7285425d01d53924d0c38b1b9d33f029d3e"
 whole_reason = "Three small root cards bundled in one lane to share one claim, review and landing; each alone is a handful of lines."
