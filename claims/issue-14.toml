@@ -1,8 +1,0 @@
-claim_id = "d71a33a6f4094559a77a59affca6c1e0"
-agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
-role = "builder"
-base = "b4f0fce8f52909063745660e57284a4e9a3af3e8"
-branch = "claude/issue-14-c2a-stale-ruff-ignores"
-scope = ["providers/chatterbox/pyproject.toml", "providers/magpie/pyproject.toml", "providers/provider-contract/pyproject.toml", "providers/qwen/pyproject.toml", "providers/voxcpm/pyproject.toml", "pyproject.toml"]
-opened_commit = "e21c1a00efbc0c6694505dee3d2d26b524341e2f"
-whole_reason = "One mechanical measurement across the six projects' lint configuration; splitting it per project would only multiply landings."
