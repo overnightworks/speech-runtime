@@ -1,1 +1,0 @@
-"""Proof and contract scripts."""
