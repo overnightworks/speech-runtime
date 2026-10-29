@@ -271,7 +271,7 @@ jobs:
       - voxcpm-provider
       - magpie-provider
     if: always()
-    uses: overnightworks/quality/.github/workflows/gate.yml@64009e7eba23ba7d3c5d2b2df0e7d68b71b27a73 # v0.8.0
+    uses: overnightworks/quality/.github/workflows/gate.yml@0512e98cff3190c9bec855e6bc753180ab3aae02 # v0.9.0
     with:
       coverage-artifact: coverage
     permissions:

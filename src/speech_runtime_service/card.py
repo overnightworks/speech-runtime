@@ -18,7 +18,7 @@ def card_memory_mb() -> int:
     if nvidia is None:
         return 0
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603 - argv is the resolved nvidia-smi and a fixed query with no shell
             [nvidia, *_QUERY],
             check=True,
             capture_output=True,

@@ -5,6 +5,8 @@ time, and leaves no process behind. Model weights stay in the Hugging Face and
 Piper caches.
 """
 
+# ruff: noqa: T201 - the proof prints its stage lines as the command line output
+
 from __future__ import annotations
 
 import argparse
@@ -45,7 +47,7 @@ ENGLISH = (
     "automatically prepared in the background."
 )
 SECOND = "Die nächste Folie bitte."
-LOCK_PATH = Path("/tmp/probe-stack.lock")
+LOCK_PATH = Path("/tmp/probe-stack.lock")  # noqa: S108 - the one machine-wide probe lock must keep this exact path whatever TMPDIR says
 MEASURE_REPETITIONS = 5
 MEASURE_FLAG = {False: [], True: ["--measure"]}
 CONTRACT_MARKERS = {
@@ -253,7 +255,7 @@ def _query_nvidia(*arguments: str) -> str:
     if nvidia is None:
         return "unavailable: nvidia-smi not found"
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603 - argv is the resolved nvidia-smi and fixed arguments with no shell
             [nvidia, *arguments],
             check=True,
             capture_output=True,
@@ -509,7 +511,7 @@ def _prove_contract(
 ) -> None:
     client = project / "scripts" / "contract_client.py"
     print("contract_client_start")
-    completed = subprocess.run(
+    completed = subprocess.run(  # noqa: S603 - argv is this interpreter and this repository's client script with no shell
         [sys.executable, str(client), *MEASURE_FLAG[measure], str(socket_path)],
         check=False,
         cwd=private_directory,
