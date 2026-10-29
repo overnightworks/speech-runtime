@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 from speech_runtime_provider_contract import MAX_PCM_BYTES
 
 from speech_runtime_qwen import model
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class _GeneratedModel:

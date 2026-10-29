@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from speech_runtime_provider_contract import (
@@ -13,6 +12,10 @@ from speech_runtime_provider_contract import (
     VOXCPM_REVISION,
     VOXCPM_SAMPLE_RATE,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
 
 
 def load_model(device: str, cache: Path) -> object:

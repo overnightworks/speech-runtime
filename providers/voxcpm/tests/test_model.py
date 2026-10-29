@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
-from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
-from speech_runtime_provider_contract import MAX_PCM_BYTES
+from speech_runtime_provider_contract import MAX_PCM_BYTES, VOXCPM_SAMPLE_RATE
 
 from speech_runtime_voxcpm import model
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from pathlib import Path
 
 
 @pytest.mark.parametrize("sample_rate", [48_000, 24_000])
@@ -34,7 +37,7 @@ def test_load_uses_the_pinned_local_snapshot_and_validates_native_rate(
     monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot_download)
     monkeypatch.setitem(sys.modules, "voxcpm", SimpleNamespace(VoxCPM=FakeVoxCPM))
 
-    if sample_rate == 48_000:
+    if sample_rate == VOXCPM_SAMPLE_RATE:
         assert model.load_model("cuda", tmp_path) is loaded
     else:
         with pytest.raises(ValueError, match="unexpected VoxCPM sample rate"):

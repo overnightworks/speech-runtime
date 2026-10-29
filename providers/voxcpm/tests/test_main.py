@@ -4,18 +4,27 @@ from __future__ import annotations
 
 import sys
 from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING
 
 from speech_runtime_voxcpm import __main__ as entrypoint
 
+if TYPE_CHECKING:
+    import pytest
 
-def test_entrypoint_reserves_stdout_before_importing_the_provider(monkeypatch) -> None:
+
+def test_entrypoint_reserves_stdout_before_importing_the_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     observed: dict[str, object] = {}
+    exit_code = 17
+    protocol_descriptor = 9
+    sample_rate = 48_000
     events: list[str] = []
 
     def serve_provider(**arguments: object) -> int:
         events.append("serve")
         observed.update(arguments)
-        return 17
+        return exit_code
 
     def provider_functions(load: object, synthesize: object) -> SimpleNamespace:
         events.append("contract:functions")
@@ -43,7 +52,9 @@ def test_entrypoint_reserves_stdout_before_importing_the_provider(monkeypatch) -
         lambda _pid: events.append("parent-death"),
     )
     monkeypatch.setattr(
-        entrypoint.os, "dup", lambda _fd: events.append("stdout:dup") or 9
+        entrypoint.os,
+        "dup",
+        lambda _fd: events.append("stdout:dup") or protocol_descriptor,
     )
     monkeypatch.setattr(
         entrypoint.os, "open", lambda *_args: events.append("stdout:open") or 10
@@ -77,13 +88,13 @@ def test_entrypoint_reserves_stdout_before_importing_the_provider(monkeypatch) -
         ),
     )
     contract_module = sys.modules["speech_runtime_provider_contract"]
-    contract_module.VOXCPM_SAMPLE_RATE = 48_000
+    contract_module.VOXCPM_SAMPLE_RATE = sample_rate
     contract_module.ProviderFunctions = provider_functions
     contract_module.serve_provider = serve_provider
 
-    assert entrypoint.main() == 17
-    assert observed["sample_rate"] == 48_000
-    assert observed["protocol_stdout"] == 9
+    assert entrypoint.main() == exit_code
+    assert observed["sample_rate"] == sample_rate
+    assert observed["protocol_stdout"] == protocol_descriptor
     assert events == [
         "stdout:dup",
         "stdout:open",
