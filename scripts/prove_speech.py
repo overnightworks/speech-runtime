@@ -31,6 +31,7 @@ from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
 from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL
 from speech_runtime_service.cuda_libs import cuda_library_dirs
+from speech_runtime_service.pcm import BYTES_PER_SAMPLE
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -56,7 +57,6 @@ CONTRACT_MARKERS = {
     True: ("measure_rep1", "measure_summary"),
 }
 LOGGER = logging.getLogger(__name__)
-BYTES_PER_SAMPLE = 2
 SILENCE_RMS = 0.01
 MIN_SPEECH_SECONDS = 0.4
 LOAD_CEILING = 18.0
