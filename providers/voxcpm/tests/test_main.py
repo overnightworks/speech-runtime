@@ -12,6 +12,25 @@ if TYPE_CHECKING:
     import pytest
 
 
+def record_stdout_reservation(
+    monkeypatch: pytest.MonkeyPatch, events: list[str], protocol_descriptor: int
+) -> None:
+    monkeypatch.setattr(
+        entrypoint.os,
+        "dup",
+        lambda _fd: events.append("stdout:dup") or protocol_descriptor,
+    )
+    monkeypatch.setattr(
+        entrypoint.os, "open", lambda *_args: events.append("stdout:open") or 10
+    )
+    monkeypatch.setattr(
+        entrypoint.os, "dup2", lambda *_args: events.append("stdout:redirect")
+    )
+    monkeypatch.setattr(
+        entrypoint.os, "close", lambda *_args: events.append("stdout:close")
+    )
+
+
 def test_entrypoint_reserves_stdout_before_importing_the_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -51,20 +70,7 @@ def test_entrypoint_reserves_stdout_before_importing_the_provider(
         "install_parent_death_signal",
         lambda _pid: events.append("parent-death"),
     )
-    monkeypatch.setattr(
-        entrypoint.os,
-        "dup",
-        lambda _fd: events.append("stdout:dup") or protocol_descriptor,
-    )
-    monkeypatch.setattr(
-        entrypoint.os, "open", lambda *_args: events.append("stdout:open") or 10
-    )
-    monkeypatch.setattr(
-        entrypoint.os, "dup2", lambda *_args: events.append("stdout:redirect")
-    )
-    monkeypatch.setattr(
-        entrypoint.os, "close", lambda *_args: events.append("stdout:close")
-    )
+    record_stdout_reservation(monkeypatch, events, protocol_descriptor)
     monkeypatch.setitem(
         sys.modules,
         "speech_runtime_voxcpm.model",
