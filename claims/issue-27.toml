@@ -3,6 +3,6 @@ agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
 role = "builder"
 base = "c80151e9e885e6c2cce6d8b4b104dda2157bad9c"
 branch = "claude/issue-27-c2h-service-speaking-hearing-lint"
-scope = ["pyproject.toml", "src/speech_runtime_service/hearing.py", "src/speech_runtime_service/qwen_download.py", "src/speech_runtime_service/service.py", "src/speech_runtime_service/speaking.py", "tests"]
+scope = ["pyproject.toml", "quality/baseline.toml", "src/speech_runtime_service/hearing.py", "src/speech_runtime_service/qwen_download.py", "src/speech_runtime_service/service.py", "src/speech_runtime_service/speaking.py", "tests"]
 opened_commit = "4b3a3f1e4b58ab3bf9f7066cfb63e1b6b1a996d4"
 whole_reason = "Four source files whose only change is the two ruff routes #3 names; they share one per-file-ignores block."
