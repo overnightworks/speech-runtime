@@ -511,7 +511,7 @@ def _prove_contract(
 ) -> None:
     client = project / "scripts" / "contract_client.py"
     print("contract_client_start")
-    completed = subprocess.run(  # noqa: S603 - argv is this interpreter and the repository own client script with no shell
+    completed = subprocess.run(  # noqa: S603 - argv is this interpreter and this repository's client script with no shell
         [sys.executable, str(client), *MEASURE_FLAG[measure], str(socket_path)],
         check=False,
         cwd=private_directory,
