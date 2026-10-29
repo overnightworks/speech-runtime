@@ -87,7 +87,7 @@ class _QwenDownload:
         try:
             if self.download is not None:
                 self.download()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a traceback would carry the upstream URL and token
             callback_failed = True
         finally:
             try:
@@ -98,7 +98,7 @@ class _QwenDownload:
     def _finish(self, *, callback_failed: bool) -> None:
         try:
             complete = self.artifacts_are_complete()
-        except Exception:
+        except Exception:  # noqa: BLE001 - a traceback would carry the upstream URL and token
             complete = False
             callback_failed = True
         if callback_failed:

@@ -65,6 +65,10 @@ ignore = [
 # FastAPI evaluates the route handlers' annotations when it builds the app.
 runtime-evaluated-decorators = ["fastapi.FastAPI.get", "fastapi.FastAPI.post"]
 
+[tool.ruff.lint.flake8-tidy-imports]
+# Piper and faster-whisper stay unloaded until the process holds them.
+banned-module-level-imports = ["piper", "faster_whisper"]
+
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
@@ -85,13 +89,7 @@ convention = "google"
 ]
 # nvidia-smi is resolved on PATH; the arguments are a constant.
 "src/speech_runtime_service/card.py" = ["S603"]
-# A failed load can be any library error; the process still names the model and stops.
-"src/speech_runtime_service/service.py" = ["BLE001"]
-"src/speech_runtime_service/qwen_download.py" = ["BLE001"] # A provider callback may raise any library error.
-# Piper and faster-whisper stay unloaded until the process holds them.
-"src/speech_runtime_service/speaking.py" = ["PLC0415"]
 "src/speech_runtime_service/provider_process.py" = [
     "S603", "BLE001", "EM101", "SIM105",
     "TC003", "TRY003", "TRY301",
 ]
-"src/speech_runtime_service/hearing.py" = ["PLC0415"]
