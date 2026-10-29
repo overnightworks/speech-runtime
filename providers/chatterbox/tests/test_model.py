@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import perth
 import pytest
-import torch
 from speech_runtime_provider_contract import (
     CHATTERBOX_ARTIFACTS,
     CHATTERBOX_REVISION,
 )
 
 from speech_runtime_chatterbox import model
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import torch
 
 
 def test_the_real_watermarker_is_importable() -> None:
@@ -55,12 +59,19 @@ class _FakeHyperParameters:
 
 class _FakeOutput:
     past_key_values = None
-    logits = torch.zeros(2, 1, 128)
+
+    @property
+    def logits(self) -> torch.Tensor:
+        import torch
+
+        return torch.zeros(2, 1, 128)
 
 
 class _FakeSpeechPosition:
     @staticmethod
     def get_fixed_embedding(_step: int) -> torch.Tensor:
+        import torch
+
         return torch.zeros(1, 1, 4)
 
 
@@ -69,6 +80,8 @@ class _FakeT3:
     compiled = True
 
     def prepare_input_embeds(self, **_arguments: object) -> tuple[torch.Tensor, None]:
+        import torch
+
         return torch.zeros(2, 1, 4), None
 
     def speech_emb(self, token: torch.Tensor) -> torch.Tensor:
@@ -82,6 +95,8 @@ class _FakeT3:
 
 class _FakeTokenizer:
     def text_to_tokens(self, _text: str, language_id: str) -> torch.Tensor:
+        import torch
+
         assert language_id == "de"
         return torch.zeros(1, 3, dtype=torch.long)
 
@@ -100,6 +115,8 @@ class _FakeModel:
 def test_speech_tokens_stream_in_order_with_a_short_trailing_chunk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import torch
+
     monkeypatch.setattr(model, "STREAM_TOKEN_CHUNK", 3)
     script = iter([10, 11, 12, 13, 14, 15, 16, _FakeT3.hp.stop_speech_token])
     monkeypatch.setattr(

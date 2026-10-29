@@ -16,4 +16,7 @@ src = ["src", "../chatterbox/src", "../chatterbox/tests"]
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["BLE001", "COM812", "CPY001", "SIM105"]
+ignore = [
+    "COM812", # conflicts with ruff format
+    "CPY001", # the copyright header is not used here
+]

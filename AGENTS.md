@@ -35,4 +35,11 @@ uv run --locked ruff format --check
 uv run --locked pytest -q <named tests>
 ```
 
+`providers/provider-contract` has no ruff and no lock of its own. Lint it with
+Chatterbox's locked ruff, from `providers/provider-contract`, and never `uv run ruff` there, which leaves a stray `uv.lock`:
+
+```bash
+uv run --locked --project ../chatterbox ruff check --config pyproject.toml .
+```
+
 `scripts/prove_speech.py` starts the providers and takes `/tmp/probe-stack.lock`.
