@@ -61,11 +61,11 @@ def test_both_proof_scripts_reach_a_running_speech_over_its_socket(tmp_path) -> 
         runtime = Runtime(FakeSpeaking(), FakeHearing(), memory_probe=lambda: 0)
         async with serving_privately(tmp_path, runtime) as server:
             return (
-                await asyncio.to_thread(CLIENT._get_json, server.path, "/health"),  # noqa: SLF001
-                await asyncio.to_thread(PROVE._get_json, server.path, "/health"),  # noqa: SLF001
-                await asyncio.to_thread(CLIENT._speak, server.path, "Hallo"),  # noqa: SLF001
+                await asyncio.to_thread(CLIENT.get_json, server.path, "/health"),
+                await asyncio.to_thread(PROVE.get_json, server.path, "/health"),
+                await asyncio.to_thread(CLIENT.speak, server.path, "Hallo"),
                 await asyncio.to_thread(
-                    PROVE._speak_measured,  # noqa: SLF001
+                    PROVE.speak_measured,
                     server.path,
                     "Hallo",
                 ),
@@ -83,7 +83,7 @@ def test_prove_points_the_service_at_the_repository_provider_environments(
 ) -> None:
     monkeypatch.delenv("SPEECH_PROVIDER_ROOT", raising=False)
 
-    environment = PROVE._speech_environment(tmp_path, "model")  # noqa: SLF001
+    environment = PROVE.speech_environment(tmp_path, "model")
 
     provider_root = Path(environment["SPEECH_PROVIDER_ROOT"])
     assert provider_root.is_absolute()
@@ -93,7 +93,7 @@ def test_prove_points_the_service_at_the_repository_provider_environments(
 def test_prove_keeps_a_provider_root_the_caller_set(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("SPEECH_PROVIDER_ROOT", "/elsewhere")
 
-    environment = PROVE._speech_environment(tmp_path, "model")  # noqa: SLF001
+    environment = PROVE.speech_environment(tmp_path, "model")
 
     assert environment["SPEECH_PROVIDER_ROOT"] == "/elsewhere"
 
@@ -233,7 +233,7 @@ def test_prove_defaults_to_the_card_proof_and_never_the_operators_voice_choice(
     for name in ("SPEECH_DEVICE", "SPEECH_HEARING_MODEL", "CUDA_VISIBLE_DEVICES"):
         monkeypatch.delenv(name, raising=False)
 
-    environment = PROVE._speech_environment(tmp_path, "model")  # noqa: SLF001
+    environment = PROVE.speech_environment(tmp_path, "model")
 
     assert environment["SPEECH_DEVICE"] == "cuda"
     assert environment["SPEECH_HEARING_MODEL"] == "Systran/faster-whisper-large-v3"
@@ -250,7 +250,7 @@ def test_prove_takes_device_and_hearing_model_and_hides_the_card_on_the_cpu(
     monkeypatch.setenv("SPEECH_DEVICE", "cpu")
     monkeypatch.setenv("SPEECH_HEARING_MODEL", "elsewhere/whisper")
 
-    environment = PROVE._speech_environment(tmp_path, "model")  # noqa: SLF001
+    environment = PROVE.speech_environment(tmp_path, "model")
 
     assert environment["SPEECH_DEVICE"] == "cpu"
     assert environment["SPEECH_HEARING_MODEL"] == "elsewhere/whisper"

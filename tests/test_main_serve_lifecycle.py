@@ -122,7 +122,7 @@ def test_serve_listens_only_on_the_private_socket(
 ) -> None:
     built: list[uvicorn.Server] = []
     stopping: list[asyncio.Event] = []
-    build_server = __main__._server  # noqa: SLF001
+    build_server = __main__.build_server
 
     started = asyncio.Event()
 
@@ -161,7 +161,7 @@ def test_serve_listens_only_on_the_private_socket(
     runtime = _loadable_runtime(tmp_path)
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
-    monkeypatch.setattr(__main__, "_server", observed_server)
+    monkeypatch.setattr(__main__, "build_server", observed_server)
     monkeypatch.setattr(__main__, "_install_signal_handlers", install)
 
     outcome, families = asyncio.run(scenario())

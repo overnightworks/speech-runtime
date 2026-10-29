@@ -86,7 +86,8 @@ def _acquire_lock(lock: TextIO) -> None:
     print("lock_acquired", LOCK_PATH)
 
 
-def _get_json(socket_path: Path, target: str) -> dict[str, object]:
+def get_json(socket_path: Path, target: str) -> dict[str, object]:
+    """GET a path over the speech socket and decode the JSON body."""
     transport = httpx2.HTTPTransport(uds=str(socket_path))
     with httpx2.Client(transport=transport, base_url="http://speech") as client:
         return client.get(target, timeout=5).json()
@@ -97,7 +98,7 @@ def _wait_ready(socket_path: Path) -> dict[str, object]:
     last: dict[str, object] | None = None
     while time.monotonic() < deadline:
         try:
-            last = _get_json(socket_path, "/health")
+            last = get_json(socket_path, "/health")
         except httpx2.HTTPError, json.JSONDecodeError:
             time.sleep(0.5)
             continue
@@ -192,11 +193,12 @@ def _http_body_complete(header: bytes, body: bytes) -> bool:
     return False
 
 
-def _speak_measured(
+def speak_measured(
     socket_path: Path,
     text: str,
     language: str = "de",
 ) -> tuple[bytes, float, float]:
+    """Stream one speak request; return the WAV, time to first audio and total time."""
     payload = json.dumps({"text": text, "language": language}).encode("utf-8")
     request = (
         b"POST /speak HTTP/1.1\r\n"
@@ -360,7 +362,7 @@ def _prove_one_speak(
     limit: float,
     label: str,
 ) -> tuple[bytes, float, float]:
-    wav, ttfa, total = _speak_measured(socket_path, text, language=language)
+    wav, ttfa, total = speak_measured(socket_path, text, language=language)
     rate, pcm = _pcm_from_wav(wav)
     duration = (len(pcm) / 2) / rate
     rtf = duration / total if total else 0.0
@@ -448,7 +450,7 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
 
     def run(key: str, text: str) -> None:
         try:
-            results[key] = _speak_measured(socket_path, text, language="de")
+            results[key] = speak_measured(socket_path, text, language="de")
         except Exception as error:
             errors.append(f"{key}: {error}")
 
@@ -519,7 +521,8 @@ def _prove_contract(
             raise SystemExit(message)
 
 
-def _speech_environment(private_directory: Path, speaking_model: str) -> dict[str, str]:
+def speech_environment(private_directory: Path, speaking_model: str) -> dict[str, str]:
+    """Return the process environment pointing at the private directory and model."""
     env = os.environ.copy()
     env["SPEECH_PRIVATE_DIRECTORY"] = str(private_directory)
     env["PRESENTATOR_RUNTIME_UID"] = str(os.geteuid())
@@ -576,7 +579,7 @@ def main() -> None:
         )
         project = Path(__file__).resolve().parents[1]
         try:
-            env = _speech_environment(private_directory, speaking_model)
+            env = speech_environment(private_directory, speaking_model)
             with _speech_server(project, env, socket_path) as running:
                 print("health_ready", json.dumps(running.health, sort_keys=True))
                 print("load_to_ready_s", f"{running.ready_seconds:.1f}")
