@@ -7,10 +7,10 @@
 "speech_token_chunks" = 83
 
 [function_lines."providers/magpie/tests/test_main.py"]
-"test_entrypoint_reserves_stdout_before_importing_the_provider" = 88
+"test_entrypoint_reserves_stdout_before_importing_the_provider" = 82
 
 [function_lines."providers/voxcpm/tests/test_main.py"]
-"test_entrypoint_reserves_stdout_before_importing_the_provider" = 89
+"test_entrypoint_reserves_stdout_before_importing_the_provider" = 83
 
 [function_lines."scripts/contract_client.py"]
 "_run" = 75
