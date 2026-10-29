@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import selectors
@@ -10,11 +11,10 @@ import stat
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Generator
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum, StrEnum
-from pathlib import Path
-from typing import IO
+from typing import IO, TYPE_CHECKING
 
 from speech_runtime_provider_contract import (
     Frame,
@@ -24,6 +24,12 @@ from speech_runtime_provider_contract import (
     ready_sample_rate,
     write_frame,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator
+    from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 TERMINATE_GRACE_SECONDS = 5
 CANCEL_DRAIN_SECONDS = 5
@@ -37,6 +43,62 @@ _NVIDIA_LIBRARY_DIRECTORIES = (
 
 class ProviderProtocolError(RuntimeError):
     """The provider broke its private, sanitized wire contract."""
+
+
+class ProviderFailedError(RuntimeError):
+    """The provider failed and cannot serve requests."""
+
+    def __init__(self) -> None:
+        """Carry the one message every failed provider reports."""
+        super().__init__("speech provider failed")
+
+
+class ProviderSynthesisFailedError(RuntimeError):
+    """The provider reported that one synthesis request failed."""
+
+    def __init__(self) -> None:
+        """Carry the one message every failed synthesis reports."""
+        super().__init__("speech provider synthesis failed")
+
+
+class ProviderCleanupFailedError(RuntimeError):
+    """The provider process could not be terminated and reaped."""
+
+    def __init__(self) -> None:
+        """Carry the one message every failed cleanup reports."""
+        super().__init__("speech provider cleanup failed")
+
+
+class ProviderUnavailableError(RuntimeError):
+    """The configured provider executable cannot be launched."""
+
+    def __init__(self) -> None:
+        """Carry the one message every unavailable provider reports."""
+        super().__init__("speech provider unavailable")
+
+
+class ProviderNotReadyError(RuntimeError):
+    """The provider is not in a state that accepts requests."""
+
+    def __init__(self) -> None:
+        """Carry the one message every not-ready provider reports."""
+        super().__init__("speech provider is not ready")
+
+
+class ProviderRequestIdsExhaustedError(RuntimeError):
+    """The provider used every request id its wire format can carry."""
+
+    def __init__(self) -> None:
+        """Carry the one message every id exhaustion reports."""
+        super().__init__("speech provider request ids exhausted")
+
+
+class UnsupportedLanguageError(ValueError):
+    """The requested language is not one the provider speaks."""
+
+    def __init__(self) -> None:
+        """Carry the one message every unsupported language reports."""
+        super().__init__("unsupported speech provider language")
 
 
 class ProviderId(StrEnum):
@@ -100,7 +162,7 @@ class ProviderProcess:
         """Start the stable creator and wait for its single READY handshake."""
         with self._state_lock:
             if self._failed or self._closing:
-                raise RuntimeError("speech provider failed")
+                raise ProviderFailedError
             if self.ready:
                 return
             if self._owner is None:
@@ -113,14 +175,14 @@ class ProviderProcess:
         with self._state_lock:
             ready = self.ready
         if not ready:
-            raise RuntimeError("speech provider failed")
+            raise ProviderFailedError
 
     def pcm_chunks(self, text: str, language: str) -> Generator[bytes]:
         """Stream one request and cancel/drain it if the response closes early."""
         normalized = language.strip().lower().replace("_", "-")
         language_code = {"de": 1, "en": 2}.get((normalized or "de").split("-", 1)[0])
         if language_code is None:
-            raise ValueError("unsupported speech provider language")
+            raise UnsupportedLanguageError
         payload = bytes([language_code]) + text.encode("utf-8")
         process = self._live_process()
         completed = False
@@ -136,7 +198,7 @@ class ProviderProcess:
                     continue
                 if frame.kind is FrameKind.FAILED:
                     self._mark_failed()
-                    raise RuntimeError("speech provider synthesis failed")
+                    raise ProviderSynthesisFailedError
                 completed = True
                 return
         finally:
@@ -157,11 +219,11 @@ class ProviderProcess:
         self._request_owner_stop(_OwnerExit.ORDINARY_CLOSE)
         if not self._stopped.wait((2 * TERMINATE_GRACE_SECONDS) + 2):
             self._fatal_callback()
-            raise RuntimeError("speech provider cleanup failed")
+            raise ProviderCleanupFailedError
         owner.join(timeout=1)
         if owner.is_alive() or self._cleanup_failed:
             self._fatal_callback()
-            raise RuntimeError("speech provider cleanup failed")
+            raise ProviderCleanupFailedError
 
     def set_fatal_callback(self, callback: Callable[[], None]) -> None:
         """Give the runtime its process-lifecycle failure notification seam."""
@@ -174,9 +236,7 @@ class ProviderProcess:
         try:
             child = self._spawn()
             decoder = FrameDecoder()
-            if child.stdout is None:
-                raise ProviderProtocolError
-            os.set_blocking(child.stdout.fileno(), False)
+            os.set_blocking(_require_stdout(child).fileno(), False)
             with self._state_lock:
                 self._process = child
                 self._response_decoder = decoder
@@ -189,6 +249,7 @@ class ProviderProcess:
             if outcome is _OwnerExit.PROVIDER_FAILURE:
                 self._set_failed()
         except Exception:
+            logger.exception("speech provider owner thread failed")
             lifecycle_failed = True
             self._set_failed()
         finally:
@@ -196,6 +257,7 @@ class ProviderProcess:
             try:
                 self._terminate_and_reap(child)
             except Exception:
+                logger.exception("speech provider cleanup failed")
                 lifecycle_failed = True
                 self._cleanup_failed = True
             with self._state_lock:
@@ -234,7 +296,7 @@ class ProviderProcess:
     def _spawn(self) -> subprocess.Popen[bytes]:
         entrypoint = self._executable
         if not _is_executable_file(entrypoint):
-            raise RuntimeError("speech provider unavailable")
+            raise ProviderUnavailableError
         provider_directory = entrypoint.parents[2]
         return subprocess.Popen(
             [
@@ -258,7 +320,7 @@ class ProviderProcess:
         with self._state_lock:
             process = self._process
             if process is None or not self.ready or self._closing or self._failed:
-                raise RuntimeError("speech provider is not ready")
+                raise ProviderNotReadyError
             self._request_finished.clear()
             return process
 
@@ -269,7 +331,7 @@ class ProviderProcess:
                 self._failed = True
                 self.ready = False
                 self._request_owner_stop(_OwnerExit.PROVIDER_FAILURE)
-                raise RuntimeError("speech provider request ids exhausted")
+                raise ProviderRequestIdsExhaustedError
             self._next_request_id += 1
             return request_id
 
@@ -345,21 +407,26 @@ class ProviderProcess:
         self, process: subprocess.Popen[bytes], request_id: int
     ) -> None:
         try:
-            self._write(process, Frame(FrameKind.CANCEL, request_id, b""))
-            deadline = time.monotonic() + CANCEL_DRAIN_SECONDS
-            with self._state_lock:
-                decoder = self._response_decoder
-            if decoder is None:
-                raise ProviderProtocolError
-            while True:
-                frame = self._read_available_frame(process, decoder, deadline=deadline)
-                self._validate_response(frame, request_id, cancelling=True)
-                if frame.kind in {FrameKind.COMPLETE, FrameKind.CANCELLED}:
-                    return
-                if frame.kind is FrameKind.FAILED:
-                    raise ProviderProtocolError
+            self._drain_cancelled(process, request_id)
         except ProviderProtocolError, OSError, ValueError, EOFError:
             self._mark_failed()
+
+    def _drain_cancelled(
+        self, process: subprocess.Popen[bytes], request_id: int
+    ) -> None:
+        self._write(process, Frame(FrameKind.CANCEL, request_id, b""))
+        deadline = time.monotonic() + CANCEL_DRAIN_SECONDS
+        with self._state_lock:
+            decoder = self._response_decoder
+        if decoder is None:
+            raise ProviderProtocolError
+        while True:
+            frame = self._read_available_frame(process, decoder, deadline=deadline)
+            self._validate_response(frame, request_id, cancelling=True)
+            if frame.kind in {FrameKind.COMPLETE, FrameKind.CANCELLED}:
+                return
+            if frame.kind is FrameKind.FAILED:
+                raise ProviderProtocolError
 
     def _mark_failed(self) -> None:
         self._set_failed()
@@ -371,10 +438,8 @@ class ProviderProcess:
             self.ready = False
 
     def _request_owner_stop(self, command: _OwnerExit) -> None:
-        try:
+        with suppress(queue.Full):
             self._commands.put_nowait(command)
-        except queue.Full:
-            pass
 
     def _terminate_and_reap(self, child: subprocess.Popen[bytes] | None) -> None:
         if child is None:
@@ -392,6 +457,12 @@ class ProviderProcess:
         for stream in (child.stdin, child.stdout):
             if stream is not None:
                 stream.close()
+
+
+def _require_stdout(child: subprocess.Popen[bytes]) -> IO[bytes]:
+    if child.stdout is None:
+        raise ProviderProtocolError
+    return child.stdout
 
 
 def provider_entrypoint(
