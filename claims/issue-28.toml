@@ -1,0 +1,8 @@
+claim_id = "0de6884417984dd089384fb9c7665d8e"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "c80151e9e885e6c2cce6d8b4b104dda2157bad9c"
+branch = "claude/issue-28-c2i-scripts-lint"
+scope = ["README.md", "pyproject.toml", "scripts/contract_client.py", "scripts/prove_speech.py", "tests/scripts/test_contract_client.py"]
+opened_commit = "b9e8edc01ac73c86f9b75ac4f6680c6016fcd080"
+whole_reason = "The two scripts share one ignore block and one test module."
