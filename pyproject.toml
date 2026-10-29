@@ -70,19 +70,10 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
-"scripts/**" = [
-    "T201",
-    "S603",
-    "S108",
-    "PLR2004",
-    "TRY003",
-    "EM101",
-    "ASYNC109",
-    "SIM113",
-    # A background thread's failure can be any library error; it is reported by
-    # message, not left to hang the join with no diagnostic.
-    "BLE001",
-]
+# The scripts' output is the command line; S603 goes with the root deselection.
+"scripts/**" = ["T201", "S603"]
+# The probe lock path is fixed by the global contract.
+"scripts/prove_speech.py" = ["S108"]
 # nvidia-smi is resolved on PATH; the arguments are a constant.
 "src/speech_runtime_service/card.py" = ["S603"]
 # A failed load can be any library error; the process still names the model and stops.
