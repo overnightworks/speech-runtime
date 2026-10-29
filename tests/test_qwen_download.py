@@ -276,6 +276,52 @@ def test_failed_download_releases_ownership_for_a_complete_retry(
     assert thread_failures == []
 
 
+class _UpstreamError(Exception):
+    """A Hub or HTTP client error outside the builtin families."""
+
+
+@pytest.mark.parametrize("failing_part", ["download", "artifact_check"])
+def test_any_failure_ends_the_download_as_failed_without_a_thread_traceback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failing_part: str,
+) -> None:
+    def download() -> None:
+        if failing_part == "download":
+            message = "https://upstream.invalid/secret"
+            raise _UpstreamError(message)
+
+    checks = 0
+
+    def complete() -> bool:
+        nonlocal checks
+        checks += 1
+        if failing_part == "artifact_check" and checks > 1:
+            message = "checker failure"
+            raise _UpstreamError(message)
+        return False
+
+    runtime = _runtime(tmp_path, complete=complete, download=download)
+    thread_failures = _capture_thread_failures(monkeypatch)
+    _patch_catalogue(monkeypatch, complete=lambda: False)
+    settings = Settings(voice_cache=tmp_path, huggingface_cache=tmp_path)
+
+    with (
+        caplog.at_level(logging.ERROR),
+        TestClient(create_control_app(settings, runtime)) as client,
+    ):
+        workers = _record_daemon_threads(monkeypatch)
+        assert client.post("/voices/qwen3-tts-0.6b/download").status_code == 200
+        _join(workers[-1])
+        state = client.get("/voices").json()["voices"][2]["state"]
+
+    assert state == "download_failed"
+    assert thread_failures == []
+    assert "Qwen download failed" in caplog.text
+    assert "secret" not in caplog.text
+
+
 @pytest.mark.parametrize("worker_usable", [False, True])
 def test_unavailable_or_already_complete_download_has_no_other_side_effect(
     tmp_path: Path, worker_usable

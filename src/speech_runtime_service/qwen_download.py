@@ -1,5 +1,6 @@
 """Download the exact local Qwen snapshot without selecting it."""
 
+import contextlib
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -83,12 +84,13 @@ class _QwenDownload:
         return self._state
 
     def _run(self) -> None:
-        callback_failed = False
+        callback_failed = True
         try:
-            if self.download is not None:
-                self.download()
-        except OSError, RuntimeError, ValueError:
-            callback_failed = True
+            # A traceback would carry the upstream URL and token, so no handler logs it.
+            with contextlib.suppress(Exception):
+                if self.download is not None:
+                    self.download()
+                callback_failed = False
         finally:
             try:
                 self._finish(callback_failed=callback_failed)
@@ -96,11 +98,12 @@ class _QwenDownload:
                 self.release()
 
     def _finish(self, *, callback_failed: bool) -> None:
-        try:
+        complete = False
+        check_failed = True
+        with contextlib.suppress(Exception):
             complete = self.artifacts_are_complete()
-        except OSError:
-            complete = False
-            callback_failed = True
+            check_failed = False
+        callback_failed = callback_failed or check_failed
         if callback_failed:
             logging.getLogger(__name__).error("Qwen download failed")
         with self.publication_lock:
