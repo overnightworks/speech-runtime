@@ -81,9 +81,8 @@ class PrivateSocket(AbstractContextManager[socket.socket]):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             os.close(fd)
-            message = (
-                f"another speech service is starting or running: {self._lock_path}"
-            )
+            lock_path = self._lock_path
+            message = f"another speech service is starting or running: {lock_path}"
             raise FileExistsError(message) from None
         return fd
 
