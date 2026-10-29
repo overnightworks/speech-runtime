@@ -1,0 +1,8 @@
+claim_id = "c1f8d7f97fb64a7cbae55e051d39e03e"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "4b3050d8fe1b811f5b53803852239a6d6858f45c"
+branch = "claude/issue-23-c2f-contract-chatterbox-lint"
+scope = ["AGENTS.md", "providers/chatterbox/pyproject.toml", "providers/chatterbox/src", "providers/chatterbox/tests", "providers/provider-contract/pyproject.toml", "providers/provider-contract/src"]
+opened_commit = "9c1a766d7271c796580f532311dfbb0c40e3e78d"
+whole_reason = "The contract is linted with Chatterbox's ruff and Chatterbox is its heaviest user, so both pass under one lint shape in one lane."
