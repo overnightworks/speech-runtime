@@ -76,7 +76,8 @@ banned-module-level-imports = ["piper", "faster_whisper"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
+# Asserts are the tests' checks; a test function's name is its documentation.
+"tests/**" = ["S101", "D103"]
 # The scripts' output is the command line.
 "scripts/**" = ["T201"]
 # The probe lock path is fixed by the global contract.

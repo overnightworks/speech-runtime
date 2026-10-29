@@ -51,23 +51,31 @@ def test_hear_closes_while_the_model_is_not_ready() -> None:
 
 
 class FailingSession(HearingSession):
+    """A hearing session whose audio intake fails."""
+
     def __init__(self) -> None:
+        """Build a session that transcribes nothing."""
         super().__init__(lambda _pcm: "", HEAR_SAMPLE_RATE)
 
     def add_pcm(self, data: bytes) -> None:
+        """Raise instead of taking the audio."""
         del data
         message = "transcribe exploded"
         raise RuntimeError(message)
 
 
 class FailingHearing:
+    """A hearing engine that opens only failing sessions."""
+
     model_name = "fake-ears"
     ready = True
 
     def load(self) -> None:
+        """Mark the engine ready."""
         self.ready = True
 
     def open_session(self, language: str) -> HearingSession:
+        """Open a session that fails on the first audio."""
         del language
         return FailingSession()
 

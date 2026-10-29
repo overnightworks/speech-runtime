@@ -357,6 +357,7 @@ def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
         "speech_runtime_service.provider_process.TERMINATE_GRACE_SECONDS", 0.05
     )
     root, cache = closed_provider(tmp_path, "partial-cancel", "qwen")
+    engines_built = 2
     constructed: list[ProviderProcess] = []
 
     def factory(_voice: VoiceId) -> ProviderProcess:
@@ -396,7 +397,7 @@ def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
 
     closed_provider(tmp_path, "normal", "qwen")
     assert runtime.load_voice(VoiceId.QWEN) is VoiceLoadOutcome.ACTIVATED
-    assert len(constructed) == 2
+    assert len(constructed) == engines_built
     runtime.close()
 
 
@@ -450,6 +451,7 @@ def test_deselecting_chatterbox_reaps_provider_before_load_returns(
     tmp_path: Path,
 ) -> None:
     piper = FakeSpeaking()
+    engines_built = 2
     chatterboxes: list[ProviderProcess] = []
     root, cache = closed_provider(tmp_path)
 
@@ -479,7 +481,7 @@ def test_deselecting_chatterbox_reaps_provider_before_load_returns(
         _, _, second_pid, _ = observed(tmp_path / "cache")
 
         assert second_pid != first_pid
-        assert len(chatterboxes) == 2
+        assert len(chatterboxes) == engines_built
     finally:
         runtime.close()
 

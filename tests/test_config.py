@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +22,9 @@ from speech_runtime_service.service import (
 )
 from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import FakeHearing, FakeSpeaking, an_app
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.parametrize(
@@ -50,7 +54,7 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_settings_default_uses_the_provider_hub_cache(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     provider_cache = tmp_path / "provider-hub-cache"
     monkeypatch.delenv("SPEECH_HUGGINGFACE_CACHE", raising=False)
@@ -60,7 +64,7 @@ def test_settings_default_uses_the_provider_hub_cache(
 
 
 def test_settings_preserves_an_explicit_huggingface_cache(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     explicit_cache = tmp_path / "operator-hub-cache"
     monkeypatch.setenv("SPEECH_HUGGINGFACE_CACHE", str(explicit_cache))
@@ -132,7 +136,7 @@ def test_magpie_speaker_is_a_closed_setting_with_sofia_as_its_default(
         Settings()
 
 
-def test_a_failed_hearing_load_names_the_model(tmp_path) -> None:
+def test_a_failed_hearing_load_names_the_model(tmp_path: Path) -> None:
     runtime = Runtime(
         None,
         FakeHearing(fail=True),

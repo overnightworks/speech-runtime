@@ -46,6 +46,7 @@ from tests.support.speak_support import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 def test_speak_streams_wav_that_plays_as_tone() -> None:
@@ -58,7 +59,6 @@ def test_speak_streams_wav_that_plays_as_tone() -> None:
     assert response.headers["content-type"].startswith("audio/wav")
     rate, pcm = pcm_from_wav(response.content)
     assert rate == SPEAK_SAMPLE_RATE
-    assert rate == 22_050
     assert len(pcm) > 0
     assert not is_silence(pcm)
 
@@ -138,7 +138,9 @@ def test_chatterbox_voice_id_constructs_the_streaming_voice() -> None:
     assert engine.sample_rate == CHATTERBOX_SAMPLE_RATE
 
 
-def test_piper_load_requires_local_onnx_and_metadata(tmp_path, monkeypatch) -> None:
+def test_piper_load_requires_local_onnx_and_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     loaded: list[object] = []
 
     class LocalVoice:
@@ -297,7 +299,7 @@ def test_speak_disconnect_during_synthesis_frees_the_voice() -> None:
 
 
 def _runtime_for_deselection(
-    tmp_path, speaking: FakeSpeaking
+    tmp_path: Path, speaking: FakeSpeaking
 ) -> tuple[Runtime, list[int]]:
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     store.write(VoiceId.CHATTERBOX)
@@ -318,7 +320,7 @@ def _runtime_for_deselection(
 
 
 def test_speak_response_construction_failure_releases_admission_for_deselection(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime, closed = _runtime_for_deselection(tmp_path, FakeSpeaking())
 
@@ -345,7 +347,7 @@ def test_speak_response_construction_failure_releases_admission_for_deselection(
     ["normal", "pre-body", "send-failure", "between-chunks", "synthesis-error"],
 )
 def test_speak_close_paths_release_admission_for_deselection(
-    tmp_path, close_path: str
+    tmp_path: Path, close_path: str
 ) -> None:
     class ClosingPathVoice(FakeSpeaking):
         def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:

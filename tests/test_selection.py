@@ -2,6 +2,7 @@
 
 import os
 import stat
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,21 +13,26 @@ from speech_runtime_service.selection import (
 )
 from speech_runtime_service.voices import VoiceId
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 def test_selection_creates_private_state_and_atomically_restores_a_voice(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
+    owner_only_file = 0o600
+    owner_only_directory = 0o700
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
 
     assert store.read() is None
     assert store.write(VoiceId.CHATTERBOX) is True
     assert store.read() is VoiceId.CHATTERBOX
-    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(store.path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(store.path.stat().st_mode) == owner_only_file
+    assert stat.S_IMODE(store.path.parent.stat().st_mode) == owner_only_directory
 
 
 def test_selection_refuses_a_present_invalid_token_without_rewriting_it(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     directory = tmp_path / "state"
     directory.mkdir(mode=0o700)
@@ -41,7 +47,9 @@ def test_selection_refuses_a_present_invalid_token_without_rewriting_it(
     assert path.read_text(encoding="utf-8") == "future-voice"
 
 
-def test_selection_refuses_a_symlink_even_when_its_target_is_private(tmp_path) -> None:
+def test_selection_refuses_a_symlink_even_when_its_target_is_private(
+    tmp_path: Path,
+) -> None:
     directory = tmp_path / "state"
     directory.mkdir(mode=0o700)
     target = tmp_path / "target"
@@ -56,7 +64,7 @@ def test_selection_refuses_a_symlink_even_when_its_target_is_private(tmp_path) -
 
 @pytest.mark.parametrize("step", ["write", "replace"])
 def test_selection_keeps_the_previous_choice_when_commit_has_not_happened(
-    tmp_path, monkeypatch: pytest.MonkeyPatch, step: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, step: str
 ) -> None:
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     store.write(VoiceId.PIPER)
@@ -79,7 +87,7 @@ def test_selection_keeps_the_previous_choice_when_commit_has_not_happened(
 
 
 def test_selection_exposes_the_replaced_choice_when_directory_sync_fails(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     monkeypatch.setattr(

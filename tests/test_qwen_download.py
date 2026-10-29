@@ -13,6 +13,7 @@ from speech_runtime_provider_contract import (
     QWEN_MODEL_ID,
     QWEN_REVISION,
 )
+from starlette.status import HTTP_200_OK
 
 from speech_runtime_service import qwen_download, voices
 from speech_runtime_service.config import Settings
@@ -136,7 +137,7 @@ def _join(worker: threading.Thread) -> None:
 
 
 def test_qwen_download_uses_only_the_pinned_artifacts_without_a_token(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     requested: dict[str, object] = {}
 
@@ -196,7 +197,8 @@ def test_private_download_can_be_discarded_and_revisited_through_truthful_status
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
-    fails,
+    *,
+    fails: bool,
     terminal: VoiceState,
 ) -> None:
     complete = False
@@ -257,6 +259,7 @@ def test_failed_download_releases_ownership_for_a_complete_retry(
             raise RuntimeError(message)
         complete = True
 
+    attempts_until_complete = 2
     runtime = _runtime(tmp_path, complete=lambda: complete, download=download)
     thread_failures = _capture_thread_failures(monkeypatch)
     _patch_catalogue(monkeypatch, complete=lambda: complete)
@@ -264,14 +267,14 @@ def test_failed_download_releases_ownership_for_a_complete_retry(
 
     with TestClient(create_control_app(settings, runtime)) as client:
         workers = _record_daemon_threads(monkeypatch)
-        assert client.post("/voices/qwen3-tts-0.6b/download").status_code == 200
+        assert client.post("/voices/qwen3-tts-0.6b/download").status_code == HTTP_200_OK
         _join(workers[-1])
         assert client.get("/voices").json()["voices"][2]["state"] == "download_failed"
-        assert client.post("/voices/qwen3-tts-0.6b/download").status_code == 200
+        assert client.post("/voices/qwen3-tts-0.6b/download").status_code == HTTP_200_OK
         _join(workers[-1])
         terminal = client.get("/voices").json()["voices"][2]["state"]
 
-    assert attempts == 2
+    assert attempts == attempts_until_complete
     assert terminal == "downloaded"
     assert thread_failures == []
 
@@ -312,7 +315,7 @@ def test_any_failure_ends_the_download_as_failed_without_a_thread_traceback(
         TestClient(create_control_app(settings, runtime)) as client,
     ):
         workers = _record_daemon_threads(monkeypatch)
-        assert client.post("/voices/qwen3-tts-0.6b/download").status_code == 200
+        assert client.post("/voices/qwen3-tts-0.6b/download").status_code == HTTP_200_OK
         _join(workers[-1])
         state = client.get("/voices").json()["voices"][2]["state"]
 
@@ -324,7 +327,7 @@ def test_any_failure_ends_the_download_as_failed_without_a_thread_traceback(
 
 @pytest.mark.parametrize("worker_usable", [False, True])
 def test_unavailable_or_already_complete_download_has_no_other_side_effect(
-    tmp_path: Path, worker_usable
+    tmp_path: Path, *, worker_usable: bool
 ) -> None:
     complete = worker_usable
     downloads = 0
@@ -412,7 +415,8 @@ def test_exact_completion_wins_when_the_callback_raises_after_writing_artifacts(
 def test_thread_start_failure_rechecks_artifacts_and_releases_ownership(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    complete_after_refusal,
+    *,
+    complete_after_refusal: bool,
     terminal: VoiceState,
 ) -> None:
     complete = False

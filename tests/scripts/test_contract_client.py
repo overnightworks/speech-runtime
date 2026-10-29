@@ -56,7 +56,9 @@ def test_a_partial_arriving_after_the_last_frame_is_rejected_as_late() -> None:
     assert CLIENT.frames_remain_unsent(pcm, next_offset) is False
 
 
-def test_both_proof_scripts_reach_a_running_speech_over_its_socket(tmp_path) -> None:
+def test_both_proof_scripts_reach_a_running_speech_over_its_socket(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> tuple[object, object, bytes, bytes]:
         runtime = Runtime(FakeSpeaking(), FakeHearing(), memory_probe=lambda: 0)
         async with serving_privately(tmp_path, runtime) as server:
@@ -79,7 +81,7 @@ def test_both_proof_scripts_reach_a_running_speech_over_its_socket(tmp_path) -> 
 
 
 def test_prove_points_the_service_at_the_repository_provider_environments(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("SPEECH_PROVIDER_ROOT", raising=False)
 
@@ -90,7 +92,9 @@ def test_prove_points_the_service_at_the_repository_provider_environments(
     assert (provider_root / "chatterbox" / "pyproject.toml").is_file()
 
 
-def test_prove_keeps_a_provider_root_the_caller_set(tmp_path, monkeypatch) -> None:
+def test_prove_keeps_a_provider_root_the_caller_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("SPEECH_PROVIDER_ROOT", "/elsewhere")
 
     environment = PROVE.speech_environment(tmp_path, "model")
@@ -212,9 +216,11 @@ def test_the_summary_gives_median_worst_and_count_of_completed_repetitions() -> 
         for value, partial in ((7.0, 1.0), (8.0, 2.0), (12.0, 4.0), (None, 20.0))
     ]
 
+    completed_repetitions = 3
+
     summary = CLIENT.summarize(repetitions)
 
-    assert summary["completed"] == 3
+    assert summary["completed"] == completed_repetitions
     assert summary["sending_to_final_s"] == (8.0, 12.0)
     assert summary["speech_end_to_final_s"] == (2.0, 6.0)
     assert summary["partial_s"] == (2.0, 4.0)
@@ -227,7 +233,7 @@ def test_a_final_matches_the_spoken_sentence_without_case_and_punctuation() -> N
 
 
 def test_prove_defaults_to_the_card_proof_and_never_the_operators_voice_choice(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#515 Change: own temporary state directory, card proof by default."""
     for name in ("SPEECH_DEVICE", "SPEECH_HEARING_MODEL", "CUDA_VISIBLE_DEVICES"):
@@ -244,7 +250,7 @@ def test_prove_defaults_to_the_card_proof_and_never_the_operators_voice_choice(
 
 
 def test_prove_takes_device_and_hearing_model_and_hides_the_card_on_the_cpu(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#515 Change: CUDA_VISIBLE_DEVICES empty on cpu."""
     monkeypatch.setenv("SPEECH_DEVICE", "cpu")
@@ -265,7 +271,9 @@ def test_peak_resident_memory_is_read_from_the_process_status_in_mebibytes() -> 
 
 
 @pytest.mark.parametrize("arguments", [["--help"], ["--measur"], ["extra"]])
-def test_prove_exits_before_any_start_on_help_or_an_unknown_argument(arguments) -> None:
+def test_prove_exits_before_any_start_on_help_or_an_unknown_argument(
+    arguments: list[str],
+) -> None:
     """#515 Never: --help and an unknown argument never start a proof."""
     with pytest.raises(SystemExit) as exit_info:
         PROVE.parse_arguments(arguments)

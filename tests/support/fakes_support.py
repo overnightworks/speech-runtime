@@ -34,6 +34,8 @@ def sine_pcm(seconds: float, rate: int = SAMPLE_RATE, freq: float = 440.0) -> by
 
 
 class FakeSpeaking:
+    """A speaking engine that returns a short tone without loading a model."""
+
     model_name = "fake-voice"
     sample_rate = SPEAK_SAMPLE_RATE
     ready = True
@@ -41,18 +43,21 @@ class FakeSpeaking:
     retain_when_inactive = True
 
     def __init__(self, *, ready: bool = True, fail: bool = False) -> None:
+        """Start ready or not, and optionally fail the load."""
         self.ready = ready
         self._fail = fail
         self.heard_text = ""
         self.heard_language = ""
 
     def load(self) -> None:
+        """Load the fake weights, or raise when built to fail."""
         if self._fail:
             message = "weights missing"
             raise RuntimeError(message)
         self.ready = True
 
     def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
+        """Record the request and yield the tone in two chunks."""
         self.heard_text = text
         self.heard_language = language
         pcm = sine_pcm(0.3, rate=self.sample_rate)
@@ -84,6 +89,7 @@ class GatedSpeaking:
     sample_rate = SPEAK_SAMPLE_RATE
 
     def __init__(self, *, hold_last_chunk: bool = False) -> None:
+        """Start with every gate open or the last chunk held."""
         self.entered_first_step = threading.Event()
         self.release_first_step = threading.Event()
         self.entered_last_step = threading.Event()
@@ -101,9 +107,11 @@ class GatedSpeaking:
         self.release_last_chunk.set()
 
     def load(self) -> None:
+        """Mark the engine ready."""
         self.ready = True
 
     def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
+        """Yield the tone in two chunks, gated by the test's events."""
         del text, language
         with self._lock:
             self.active_syntheses += 1
@@ -124,32 +132,39 @@ class GatedSpeaking:
 
 
 class FakeHearing:
+    """A hearing engine that transcribes by the length of the audio."""
+
     model_name = "fake-ears"
     ready = True
 
     def __init__(self, *, ready: bool = True, fail: bool = False) -> None:
+        """Start ready or not, and optionally fail the load."""
         self.ready = ready
         self._fail = fail
         self.sessions = 0
         self.transcriptions = 0
 
     def load(self) -> None:
+        """Load the fake weights, or raise when built to fail."""
         if self._fail:
             message = "weights missing"
             raise RuntimeError(message)
         self.ready = True
 
     def open_session(self, language: str) -> HearingSession:
+        """Open a session that transcribes by the duration heard so far."""
         del language
         self.sessions += 1
         spoken = "eins"
+        silent_below_seconds = 0.2
+        partial_below_seconds = 0.8
 
         def transcribe(pcm: bytes) -> str:
             self.transcriptions += 1
             duration = len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
-            if duration < 0.2:
+            if duration < silent_below_seconds:
                 return ""
-            if duration < 0.8:
+            if duration < partial_below_seconds:
                 return spoken
             return f"{spoken} zwei"
 
