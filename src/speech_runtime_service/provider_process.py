@@ -298,7 +298,7 @@ class ProviderProcess:
         if not _is_executable_file(entrypoint):
             raise ProviderUnavailableError
         provider_directory = entrypoint.parents[2]
-        return subprocess.Popen(
+        return subprocess.Popen(  # noqa: S603 - argv is the fixed provider entrypoint and flags with no shell
             [
                 str(entrypoint),
                 "--expected-parent-pid",

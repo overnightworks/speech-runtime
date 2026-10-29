@@ -59,9 +59,6 @@ select = ["ALL"]
 ignore = [
     "COM812",
     "CPY001",
-    # They flag every subprocess call, whatever its arguments.
-    "S404",
-    "S603",
 ]
 
 [tool.ruff.lint.flake8-type-checking]
@@ -77,8 +74,5 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 # Asserts are the tests' checks; a test function's name is its documentation.
-"tests/**" = ["S101", "D103"]
-# The scripts' output is the command line.
-"scripts/**" = ["T201"]
-# The probe lock path is fixed by the global contract.
-"scripts/prove_speech.py" = ["S108"]
+# The tests start the service and the workers as subprocesses with fixed argv.
+"tests/**" = ["S101", "S603", "D103"]

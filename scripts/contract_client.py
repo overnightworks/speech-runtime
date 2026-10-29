@@ -4,6 +4,8 @@ This process must not import the `speech_runtime_service` package. It is the
 parallel-lane proof: a caller that only knows the HTTP contract.
 """
 
+# ruff: noqa: T201 - the client prints its measurements as the command line output
+
 from __future__ import annotations
 
 import asyncio
