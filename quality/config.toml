@@ -6,16 +6,12 @@ entry = "providers/"
 reason = "the GPU and CPU speech providers, each its own uv project with its own lock"
 
 [[python.allow]]
-path = "providers/chatterbox/pyproject.toml"
-reason = "numpy==1.26.4 is pinned and does not resolve on 3.14; its C3 slice moves it after one GPU run"
-
-[[python.allow]]
 path = "providers/magpie/pyproject.toml"
 reason = "several locked packages have no cp314 wheel; its C3 slice moves it after one GPU run"
 
 [[python.allow]]
 path = "providers/provider-contract/pyproject.toml"
-reason = "Chatterbox and Magpie import it on 3.12, so it keeps >=3.12 until their C3 slices move them"
+reason = "Magpie imports it on 3.12, so it keeps >=3.12 until its C3 slice moves it"
 
 [[layout.allow]]
 path = "providers/chatterbox/tests/test_worker.py"
@@ -29,7 +25,7 @@ lock = "providers/chatterbox/uv.lock"
 until = 2027-01-31
 date = 2026-10-21
 item = "overnightworks/speech-runtime#2"
-reason = "diffusers 0.29.0: diffusers==0.29.0 is pinned; local TTS worker, text over a local socket"
+reason = "diffusers 0.29.0: chatterbox-tts 0.1.7 pins diffusers==0.29.0, the fix needs 0.38.0; local TTS worker, text over a local socket"
 
 [[advisories.allow]]
 id = "PYSEC-2026-40"
@@ -37,7 +33,7 @@ lock = "providers/chatterbox/uv.lock"
 until = 2027-01-31
 date = 2026-10-21
 item = "overnightworks/speech-runtime#2"
-reason = "diffusers 0.29.0: diffusers==0.29.0 is pinned; local TTS worker, text over a local socket"
+reason = "diffusers 0.29.0: chatterbox-tts 0.1.7 pins diffusers==0.29.0, the fix needs 0.38.0; local TTS worker, text over a local socket"
 
 [[advisories.allow]]
 id = "PYSEC-2026-41"
@@ -45,7 +41,7 @@ lock = "providers/chatterbox/uv.lock"
 until = 2027-01-31
 date = 2026-10-21
 item = "overnightworks/speech-runtime#2"
-reason = "diffusers 0.29.0: diffusers==0.29.0 is pinned; local TTS worker, text over a local socket"
+reason = "diffusers 0.29.0: chatterbox-tts 0.1.7 pins diffusers==0.29.0, the fix needs 0.38.0; local TTS worker, text over a local socket"
 
 [[advisories.allow]]
 id = "PYSEC-2026-211"
@@ -149,7 +145,7 @@ lock = "providers/chatterbox/uv.lock"
 until = 2027-01-31
 date = 2026-10-21
 item = "overnightworks/speech-runtime#2"
-reason = "setuptools 81.0.0: setuptools==81.0.0 is pinned because resemble-perth needs pkg_resources, gone at setuptools 82; local TTS worker, text over a local socket"
+reason = "setuptools 81.0.0: resemble-perth 1.0.1 needs pkg_resources, gone at setuptools 82, so setuptools==81.0.0 is pinned, the fix needs 83.0.0 or later; local TTS worker, text over a local socket"
 
 [[advisories.allow]]
 id = "PYSEC-2026-161"
@@ -192,188 +188,12 @@ item = "overnightworks/speech-runtime#2"
 reason = "starlette 0.52.1: gradio 6.8.0 requires starlette<1.0, held by the chatterbox-tts gradio pin; local TTS worker, text over a local socket"
 
 [[advisories.allow]]
-id = "PYSEC-2025-191"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-198"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-199"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-200"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-201"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-202"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-203"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-204"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-205"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-206"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-207"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-208"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2025-209"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2026-139"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2026-1970"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "PYSEC-2026-2286"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "GHSA-c678-jfcj-6jmf"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "GHSA-f4hp-rmr7-r7v8"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "GHSA-qfhq-4f3w-5fph"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "GHSA-rrmf-rvhw-rf47"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "GHSA-vgrw-7cvw-pwgx"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
-id = "GHSA-x3gm-94wq-g975"
-lock = "providers/chatterbox/uv.lock"
-until = 2027-01-31
-date = 2026-10-21
-item = "overnightworks/speech-runtime#2"
-reason = "torch 2.6.0: torch==2.6.0 and torchaudio==2.6.0 are pinned; local TTS worker, text over a local socket"
-
-[[advisories.allow]]
 id = "PYSEC-2026-2289"
 lock = "providers/chatterbox/uv.lock"
 until = 2027-01-31
 date = 2026-10-21
 item = "overnightworks/speech-runtime#2"
-reason = "transformers 5.2.0: transformers==5.2.0 is pinned; local TTS worker, text over a local socket"
+reason = "transformers 5.2.0: chatterbox-tts 0.1.7 pins transformers==5.2.0, the fix needs 5.3.0 or later; local TTS worker, text over a local socket"
 
 [[advisories.allow]]
 id = "PYSEC-2026-2290"
@@ -381,7 +201,7 @@ lock = "providers/chatterbox/uv.lock"
 until = 2027-01-31
 date = 2026-10-21
 item = "overnightworks/speech-runtime#2"
-reason = "transformers 5.2.0: transformers==5.2.0 is pinned; local TTS worker, text over a local socket"
+reason = "transformers 5.2.0: chatterbox-tts 0.1.7 pins transformers==5.2.0, the fix needs 5.3.0 or later; local TTS worker, text over a local socket"
 
 [[advisories.allow]]
 id = "PYSEC-2026-3929"
@@ -389,7 +209,7 @@ lock = "providers/chatterbox/uv.lock"
 until = 2027-01-31
 date = 2026-10-21
 item = "overnightworks/speech-runtime#2"
-reason = "transformers 5.2.0: transformers==5.2.0 is pinned; local TTS worker, text over a local socket"
+reason = "transformers 5.2.0: chatterbox-tts 0.1.7 pins transformers==5.2.0, the fix needs 5.3.0 or later; local TTS worker, text over a local socket"
 
 [[advisories.allow]]
 id = "PYSEC-2026-4174"
@@ -397,7 +217,7 @@ lock = "providers/chatterbox/uv.lock"
 until = 2027-01-31
 date = 2026-10-21
 item = "overnightworks/speech-runtime#2"
-reason = "transformers 5.2.0: transformers==5.2.0 is pinned; local TTS worker, text over a local socket"
+reason = "transformers 5.2.0: chatterbox-tts 0.1.7 pins transformers==5.2.0, the fix needs 5.3.0 or later; local TTS worker, text over a local socket"
 
 [[advisories.allow]]
 id = "GHSA-22hg-r758-rrw9"
@@ -661,7 +481,7 @@ lock = "providers/chatterbox/uv.lock"
 until = 2027-01-31
 date = 2026-10-24
 item = "overnightworks/speech-runtime#2"
-reason = "setuptools 81.0.0: setuptools==81.0.0 is pinned because resemble-perth needs pkg_resources, gone at setuptools 82; local TTS worker, text over a local socket"
+reason = "setuptools 81.0.0: resemble-perth 1.0.1 needs pkg_resources, gone at setuptools 82, so setuptools==81.0.0 is pinned, the fix needs 83.0.0 or later; local TTS worker, text over a local socket"
 
 # providers/magpie/uv.lock: advisories no relock reaches
 [[advisories.allow]]
