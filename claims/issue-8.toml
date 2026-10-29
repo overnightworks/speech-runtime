@@ -1,0 +1,8 @@
+claim_id = "9cdfd69caf03414882be700e675f407f"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "b603d49c06fbf99f1c5216e20df85040ea4ff71d"
+branch = "claude/issue-8-sonar-findings"
+scope = ["providers/chatterbox/src", "providers/provider-contract/src", "quality/baseline.toml", "src/presentator_speech/control.py", "src/presentator_speech/provider_process.py", "src/presentator_speech/service.py", "src/presentator_speech/speaking.py", "tests"]
+opened_commit = "51dc7e3fed031dd743f78c8c3839fb1394ecbb37"
+whole_reason = "main only turns green when all 28 findings are gone, so they land together."
