@@ -34,9 +34,9 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["ALL"]
-ignore = ["COM812", "CPY001", "D103", "INP001", "PLC0415", "S101", "TC003"]
+ignore = ["COM812", "CPY001", "TC003"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
+"tests/**" = ["S101", "D103", "ANN001", "PLR2004"]
 "src/speech_runtime_qwen/__main__.py" = ["PLC0415"]
-"src/speech_runtime_qwen/model.py" = ["PLC0415", "TC003"]
+"src/speech_runtime_qwen/model.py" = ["PLC0415"]
