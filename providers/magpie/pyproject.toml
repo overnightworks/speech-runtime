@@ -47,6 +47,7 @@ ignore = [
     "S101", # pytest checks with assert
     "D103", # the test name states the behaviour
 ]
-"src/speech_runtime_magpie/__main__.py" = [
-    "PLC0415", # the stdout redirect precedes the provider import, and the tests pin that order
-]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# The model library stays unloaded until the worker holds the model.
+banned-module-level-imports = ["speech_runtime_magpie.model"]

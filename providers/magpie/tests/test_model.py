@@ -19,14 +19,20 @@ from speech_runtime_provider_contract import (
     serve_commands,
 )
 
-from speech_runtime_magpie import model
-
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import ModuleType
+
+
+@pytest.fixture
+def model() -> ModuleType:
+    from speech_runtime_magpie import model as module
+
+    return module
 
 
 def test_load_resolves_exact_local_archives_before_overriding_the_codec(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    model: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     resolved = [tmp_path / "model.nemo", tmp_path / "codec.nemo"]
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
@@ -75,7 +81,7 @@ def test_load_resolves_exact_local_archives_before_overriding_the_codec(
 
 
 def test_load_rejects_an_unexpected_native_rate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    model: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     configuration = OmegaConf.create({"codecmodel_path": "nvidia/original"})
     restored = create_autospec(model.MagpieTTSModel, instance=True)
@@ -99,7 +105,7 @@ def test_load_rejects_an_unexpected_native_rate(
 
 @pytest.mark.parametrize(("language", "text"), [("de", "Hallo"), ("en", "Hello")])
 def test_synthesis_uses_the_fixed_sofia_voice_and_bounded_pcm(
-    language: str, text: str
+    model: ModuleType, language: str, text: str
 ) -> None:
     generated = create_autospec(model.MagpieTTSModel, instance=True)
     generated.do_tts.return_value = (
@@ -122,7 +128,9 @@ def test_synthesis_uses_the_fixed_sofia_voice_and_bounded_pcm(
     assert all(len(chunk) <= MAX_PCM_BYTES and len(chunk) % 2 == 0 for chunk in chunks)
 
 
-def test_synthesis_rejects_an_unsupported_language_before_calling_nemo() -> None:
+def test_synthesis_rejects_an_unsupported_language_before_calling_nemo(
+    model: ModuleType,
+) -> None:
     generated = create_autospec(model.MagpieTTSModel, instance=True)
 
     with pytest.raises(ValueError, match="unsupported Magpie language"):
@@ -131,7 +139,7 @@ def test_synthesis_rejects_an_unsupported_language_before_calling_nemo() -> None
     generated.do_tts.assert_not_called()
 
 
-def test_synthesis_rejects_an_empty_waveform() -> None:
+def test_synthesis_rejects_an_empty_waveform(model: ModuleType) -> None:
     generated = create_autospec(model.MagpieTTSModel, instance=True)
     generated.do_tts.return_value = (torch.zeros((1, 1)), torch.tensor([0]))
 
@@ -140,7 +148,9 @@ def test_synthesis_rejects_an_empty_waveform() -> None:
 
 
 @pytest.mark.parametrize("sample", [float("nan"), float("inf"), float("-inf")])
-def test_synthesis_rejects_nonfinite_waveform_values(sample: float) -> None:
+def test_synthesis_rejects_nonfinite_waveform_values(
+    model: ModuleType, sample: float
+) -> None:
     generated = create_autospec(model.MagpieTTSModel, instance=True)
     generated.do_tts.return_value = (torch.tensor([[sample]]), torch.tensor([1]))
 
@@ -153,7 +163,7 @@ def test_synthesis_rejects_nonfinite_waveform_values(sample: float) -> None:
     [("fr", [0.0], 1), ("de", [0.0], 0), ("de", [float("nan")], 1)],
 )
 def test_shared_worker_fails_and_exits_for_magpie_validation_errors(
-    language: str, samples: list[float], length: int
+    model: ModuleType, language: str, samples: list[float], length: int
 ) -> None:
     generated = create_autospec(model.MagpieTTSModel, instance=True)
     generated.do_tts.return_value = (torch.tensor([samples]), torch.tensor([length]))

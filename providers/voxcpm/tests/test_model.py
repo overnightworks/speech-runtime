@@ -10,16 +10,22 @@ import numpy as np
 import pytest
 from speech_runtime_provider_contract import MAX_PCM_BYTES, VOXCPM_SAMPLE_RATE
 
-from speech_runtime_voxcpm import model
-
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+    from types import ModuleType
+
+
+@pytest.fixture
+def model() -> ModuleType:
+    from speech_runtime_voxcpm import model as module
+
+    return module
 
 
 @pytest.mark.parametrize("sample_rate", [48_000, 24_000])
 def test_load_uses_the_pinned_local_snapshot_and_validates_native_rate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sample_rate: int
+    model: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sample_rate: int
 ) -> None:
     observed: dict[str, object] = {}
     loaded = SimpleNamespace(tts_model=SimpleNamespace(sample_rate=sample_rate))
@@ -58,7 +64,7 @@ def test_load_uses_the_pinned_local_snapshot_and_validates_native_rate(
 
 @pytest.mark.parametrize(("language", "text"), [("de", "Hallo"), ("en", "Hello")])
 def test_streaming_preserves_text_clips_pcm_and_closes_the_upstream_generator(
-    language: str, text: str
+    model: ModuleType, language: str, text: str
 ) -> None:
     closed = False
     calls: list[tuple[str, dict[str, object]]] = []
@@ -105,7 +111,9 @@ def test_streaming_preserves_text_clips_pcm_and_closes_the_upstream_generator(
     ]
 
 
-def test_closing_pcm_iterator_closes_the_upstream_generator_early() -> None:
+def test_closing_pcm_iterator_closes_the_upstream_generator_early(
+    model: ModuleType,
+) -> None:
     closed = False
     second_chunk_started = False
 
@@ -131,6 +139,6 @@ def test_closing_pcm_iterator_closes_the_upstream_generator_early() -> None:
     assert second_chunk_started is False
 
 
-def test_streaming_refuses_non_protocol_languages() -> None:
+def test_streaming_refuses_non_protocol_languages(model: ModuleType) -> None:
     with pytest.raises(ValueError, match="unsupported VoxCPM language"):
         list(model.pcm_chunks(object(), "Hallo", "fr"))

@@ -5,6 +5,12 @@ import ctypes
 import os
 import signal
 
+from speech_runtime_provider_contract import (
+    VOXCPM_SAMPLE_RATE,
+    ProviderFunctions,
+    serve_provider,
+)
+
 
 def main() -> int:
     """Redirect ordinary stdout, then enter the shared provider loop."""
@@ -17,12 +23,6 @@ def main() -> int:
         install_parent_death_signal(arguments.expected_parent_pid)
     except RuntimeError:
         return 1
-    from speech_runtime_provider_contract import (
-        VOXCPM_SAMPLE_RATE,
-        ProviderFunctions,
-        serve_provider,
-    )
-
     from speech_runtime_voxcpm.model import load_model, pcm_chunks
 
     return serve_provider(
