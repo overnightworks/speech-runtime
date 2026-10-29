@@ -248,7 +248,7 @@ class ProviderProcess:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             cwd=provider_directory,
-            env=_provider_environment(provider_directory),
+            env=provider_environment(provider_directory),
             bufsize=0,
             close_fds=True,
             start_new_session=True,
@@ -426,7 +426,8 @@ def _is_executable_file(entrypoint: Path | None) -> bool:
     return stat.S_ISREG(mode) and os.access(entrypoint, os.X_OK)
 
 
-def _provider_environment(provider_directory: Path) -> dict[str, str]:
+def provider_environment(provider_directory: Path) -> dict[str, str]:
+    """Return the minimal offline environment, with the venv's CUDA libraries."""
     environment = {
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
