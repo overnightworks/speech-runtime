@@ -1,8 +1,0 @@
-claim_id = "f62a4f645fd141158e5a4932b8bdfe75"
-agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
-role = "builder"
-base = "b603d49c06fbf99f1c5216e20df85040ea4ff71d"
-branch = "claude/issue-10-coverage"
-scope = [".github/workflows/ci.yml", "AGENTS.md", "providers/chatterbox/pyproject.toml", "providers/chatterbox/uv.lock", "providers/magpie/pyproject.toml", "providers/magpie/uv.lock", "providers/qwen/pyproject.toml", "providers/qwen/uv.lock", "providers/voxcpm/pyproject.toml", "providers/voxcpm/uv.lock", "pyproject.toml", "quality/config.toml", "sonar-project.properties", "uv.lock"]
-opened_commit = "7ff184ec71399144ecd50877b1acd607e0543876"
-whole_reason = "The gate reads one artifact, so the five jobs' reports, the gathering job and the Sonar setting only work together."
