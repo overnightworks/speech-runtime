@@ -1,8 +1,0 @@
-claim_id = "6c91ac44a0464c78ab9633ee9e938f05"
-agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
-role = "builder"
-base = "8ce87db4e244c7076a10ea6860f922ca15f977bc"
-branch = "claude/issue-34-c2j-root-tests-lint"
-scope = ["pyproject.toml", "quality/baseline.toml", "src/speech_runtime_service/qwen_download.py", "tests"]
-opened_commit = "f95bd62a91e10cb9c48bfc561d6f005137189691"
-whole_reason = "One rule family across the root test tree; the test files share one ignore entry and no production behaviour."
