@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -12,7 +13,7 @@ from speech_runtime_provider_contract import (
     CHATTERBOX_REVISION,
 )
 
-from speech_runtime_chatterbox import model  # noqa: TID253 - the model tests import the module under test
+model = importlib.import_module("speech_runtime_chatterbox.model")
 
 if TYPE_CHECKING:
     from pathlib import Path

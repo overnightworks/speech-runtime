@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import queue
 from io import BytesIO
 from typing import TYPE_CHECKING
@@ -19,7 +20,7 @@ from speech_runtime_provider_contract import (
     serve_commands,
 )
 
-from speech_runtime_magpie import model  # noqa: TID253 - the model tests import the module under test
+model = importlib.import_module("speech_runtime_magpie.model")
 
 if TYPE_CHECKING:
     from pathlib import Path

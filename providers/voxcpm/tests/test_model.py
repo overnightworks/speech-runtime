@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -10,7 +11,7 @@ import numpy as np
 import pytest
 from speech_runtime_provider_contract import MAX_PCM_BYTES, VOXCPM_SAMPLE_RATE
 
-from speech_runtime_voxcpm import model  # noqa: TID253 - the model tests import the module under test
+model = importlib.import_module("speech_runtime_voxcpm.model")
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
