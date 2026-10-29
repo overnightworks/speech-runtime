@@ -1,0 +1,8 @@
+claim_id = "f209191560fd468aa07ff694198e52e4"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "4b3050d8fe1b811f5b53803852239a6d6858f45c"
+branch = "claude/issue-22-c2e-public-seams-gitignore"
+scope = [".gitignore", "README.md", "scripts/contract_client.py", "scripts/prove_speech.py", "src/speech_runtime_service/__main__.py", "tests/scripts/test_contract_client.py", "tests/test_main_serve_lifecycle.py"]
+opened_commit = "7fdea5905e927a5c8493bbb8042713d6d6c20bbe"
+whole_reason = "Two small root cards bundled to share one claim, review and landing; the renames touch five files that must change together or nothing imports."
