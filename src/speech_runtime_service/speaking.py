@@ -59,7 +59,7 @@ class PiperSpeaking:
         self.sample_rate = voice.config.sample_rate
         self.ready = True
 
-    def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
+    def pcm_chunks(self, text: str, language: str) -> Generator[bytes]:
         """Yield 16-bit mono PCM as soon as Piper produces a chunk."""
         del language
         if self._voice is None:

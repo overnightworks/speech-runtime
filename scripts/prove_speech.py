@@ -99,7 +99,7 @@ def _wait_ready(socket_path: Path) -> dict[str, object]:
     while time.monotonic() < deadline:
         try:
             last = _get_json(socket_path, "/health")
-        except (httpx2.HTTPError, json.JSONDecodeError):
+        except httpx2.HTTPError, json.JSONDecodeError:
             time.sleep(0.5)
             continue
         speaking = last["speaking"]

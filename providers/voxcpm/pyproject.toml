@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "overnightworks-speech-runtime-voxcpm-provider"
 version = "0.0.0"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.14"
 dependencies = [
     "numpy==2.5.4",
     "overnightworks-speech-runtime-provider-contract",
@@ -29,7 +29,7 @@ addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 src = ["src", "tests"]
 
 [tool.ruff.lint]

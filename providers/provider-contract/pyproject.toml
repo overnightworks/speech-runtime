@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "overnightworks-speech-runtime-provider-contract"
 version = "0.0.0"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/speech_runtime_provider_contract"]

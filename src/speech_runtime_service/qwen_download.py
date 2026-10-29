@@ -2,8 +2,8 @@
 
 import logging
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from huggingface_hub import snapshot_download
 from speech_runtime_provider_contract import (
@@ -13,8 +13,12 @@ from speech_runtime_provider_contract import (
 )
 
 from speech_runtime_service import voices
-from speech_runtime_service.config import Settings
 from speech_runtime_service.voices import VoiceDownloadOutcome
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from speech_runtime_service.config import Settings
 
 
 def download_qwen(settings: Settings) -> None:

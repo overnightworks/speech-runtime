@@ -115,7 +115,7 @@ class ProviderProcess:
         if not ready:
             raise RuntimeError("speech provider failed")
 
-    def pcm_chunks(self, text: str, language: str) -> Generator[bytes, None, None]:
+    def pcm_chunks(self, text: str, language: str) -> Generator[bytes]:
         """Stream one request and cancel/drain it if the response closes early."""
         normalized = language.strip().lower().replace("_", "-")
         language_code = {"de": 1, "en": 2}.get((normalized or "de").split("-", 1)[0])
@@ -211,7 +211,7 @@ class ProviderProcess:
     ) -> _OwnerExit:
         try:
             frame = self._read_available_frame(child, decoder)
-        except (EOFError, OSError, ProtocolError):
+        except EOFError, OSError, ProtocolError:
             return _OwnerExit.PROVIDER_FAILURE
         if (
             frame.kind is not FrameKind.READY
@@ -358,7 +358,7 @@ class ProviderProcess:
                     return
                 if frame.kind is FrameKind.FAILED:
                     raise ProviderProtocolError
-        except (ProviderProtocolError, OSError, ValueError, EOFError):
+        except ProviderProtocolError, OSError, ValueError, EOFError:
             self._mark_failed()
 
     def _mark_failed(self) -> None:
@@ -437,11 +437,12 @@ def _provider_environment(provider_directory: Path) -> dict[str, str]:
     visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
     if visible_devices is not None:
         environment["CUDA_VISIBLE_DEVICES"] = visible_devices
-    site_packages = (
-        provider_directory / ".venv" / "lib" / "python3.12" / "site-packages"
+    site_packages_directories = sorted(
+        (provider_directory / ".venv" / "lib").glob("python3.*/site-packages")
     )
     libraries = (
         site_packages / "nvidia" / package / "lib"
+        for site_packages in site_packages_directories
         for package in _NVIDIA_LIBRARY_DIRECTORIES.split(":")
     )
     existing = [str(directory) for directory in libraries if directory.is_dir()]

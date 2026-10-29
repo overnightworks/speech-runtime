@@ -81,9 +81,8 @@ class PrivateSocket(AbstractContextManager[socket.socket]):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             os.close(fd)
-            message = (
-                f"another speech service is starting or running: {self._lock_path}"
-            )
+            lock_path = self._lock_path
+            message = f"another speech service is starting or running: {lock_path}"
             raise FileExistsError(message) from None
         return fd
 
@@ -153,7 +152,7 @@ def _probe_is_dead(path: Path) -> bool:
     try:
         probe.settimeout(_LIVENESS_TIMEOUT_SECONDS)
         probe.connect(str(path))
-    except (ConnectionRefusedError, FileNotFoundError):
+    except ConnectionRefusedError, FileNotFoundError:
         return True
     else:
         return False

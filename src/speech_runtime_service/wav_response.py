@@ -25,7 +25,7 @@ class ClosingWavResponse(StreamingResponse):
 
     def __init__(
         self,
-        chunks: Generator[bytes, None, None],
+        chunks: Generator[bytes],
         admission: Closeable,
         lease: Closeable | None = None,
     ) -> None:

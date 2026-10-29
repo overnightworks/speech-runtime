@@ -4,10 +4,8 @@ import asyncio
 import json
 import os
 import stat
-import threading
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
@@ -24,6 +22,10 @@ from tests.support.fakes_support import (
     sine_pcm,
 )
 from tests.support.private_server_support import PrivateServer, serving_privately
+
+if TYPE_CHECKING:
+    import threading
+    from collections.abc import AsyncIterator
 
 _SPEAK_BODY = {"text": "Hallo", "language": "de"}
 

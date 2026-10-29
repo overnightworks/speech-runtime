@@ -2,13 +2,15 @@
 
 import asyncio
 import json
-
-from fastapi import FastAPI
-from starlette.responses import StreamingResponse
+from typing import TYPE_CHECKING
 
 from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
 from speech_runtime_service.service import Runtime, SpeakRequest
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+    from starlette.responses import StreamingResponse
 
 
 def info_comment_before_data(wav: bytes) -> str | None:

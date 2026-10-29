@@ -2,19 +2,24 @@
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import uvicorn
-from starlette.types import Message, Receive, Scope, Send
 
 from speech_runtime_service.__main__ import PrivateSocket
 from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
-from speech_runtime_service.service import Runtime
 from tests.support.fakes_support import GATE_TIMEOUT_SECONDS
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+    from pathlib import Path
+
+    from starlette.types import Message, Receive, Scope, Send
+
+    from speech_runtime_service.service import Runtime
 
 
 @dataclass(frozen=True, slots=True)

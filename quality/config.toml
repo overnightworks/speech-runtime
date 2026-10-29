@@ -5,6 +5,18 @@ mandatory_jobs = ["Speech: lint, tests", "Speech: Chatterbox provider", "Speech:
 entry = "providers/"
 reason = "the GPU and CPU speech providers, each its own uv project with its own lock"
 
+[[python.allow]]
+path = "providers/chatterbox/pyproject.toml"
+reason = "numpy==1.26.4 is pinned and does not resolve on 3.14; its C3 slice moves it after one GPU run"
+
+[[python.allow]]
+path = "providers/magpie/pyproject.toml"
+reason = "several locked packages have no cp314 wheel; its C3 slice moves it after one GPU run"
+
+[[python.allow]]
+path = "providers/provider-contract/pyproject.toml"
+reason = "Chatterbox and Magpie import it on 3.12, so it keeps >=3.12 until their C3 slices move them"
+
 [[layout.allow]]
 path = "providers/chatterbox/tests/test_worker.py"
 rule = "test-layout"

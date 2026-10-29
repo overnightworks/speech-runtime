@@ -1,7 +1,7 @@
 # Measured by `quality baseline write`. Entries only ever go down.
 
 [file_lines]
-"tests/test_control_voice_status.py" = 1469
+"tests/test_control_voice_status.py" = 1466
 
 [function_lines."providers/chatterbox/src/speech_runtime_chatterbox/model.py"]
 "speech_token_chunks" = 83

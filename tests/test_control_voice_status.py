@@ -9,9 +9,8 @@ import os
 import sys
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -53,6 +52,10 @@ from tests.support.speak_support import (
     wav_body,
 )
 from tests.support.worker_support import assert_reaped, closed_provider, observed
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+    from pathlib import Path
 
 _SERVICE_MODULES = ("speech_runtime_service.voices", "speech_runtime_service.speaking")
 
@@ -141,6 +144,12 @@ def test_chatterbox_weights_need_the_exact_executable_but_active_survives_its_re
     assert active[1].state is VoiceState.ACTIVE
 
 
+def _touch_files(paths: Iterable[Path]) -> None:
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+
 def _complete_qwen_snapshot(cache: Path) -> Path:
     snapshot = (
         cache
@@ -163,24 +172,14 @@ def _complete_qwen_snapshot(cache: Path) -> Path:
         "tokenizer_config.json",
         "vocab.json",
     )
-    for artifact in artifacts:
-        path = snapshot / artifact
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
+    _touch_files(snapshot / artifact for artifact in artifacts)
     return snapshot
 
 
 def _complete_voxcpm_snapshot(cache: Path) -> Path:
-    snapshot = (
-        cache
-        / f"models--{VOXCPM_MODEL_ID.replace('/', '--')}"
-        / "snapshots"
-        / VOXCPM_REVISION
-    )
-    for artifact in VOXCPM_ARTIFACTS:
-        path = snapshot / artifact
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
+    repository = f"models--{VOXCPM_MODEL_ID.replace('/', '--')}"
+    snapshot = cache / repository / "snapshots" / VOXCPM_REVISION
+    _touch_files(snapshot / artifact for artifact in VOXCPM_ARTIFACTS)
     return snapshot
 
 
@@ -199,9 +198,7 @@ def _complete_magpie_snapshots(cache: Path) -> tuple[Path, Path]:
         / "fc00890b604aa2de298d2641ffc6c5f6caf8c4d7"
         / "nemo-nano-codec-22khz-1.89kbps-21.5fps.nemo"
     )
-    for artifact in (model, codec):
-        artifact.parent.mkdir(parents=True, exist_ok=True)
-        artifact.touch()
+    _touch_files((model, codec))
     return model, codec
 
 
