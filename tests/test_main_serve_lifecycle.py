@@ -67,7 +67,7 @@ def test_sigterm_stops_the_real_server_and_exits_zero_with_the_socket_removed(
         "SPEECH_TEST_DIRECTORY": str(tmp_path),
         "PYTHONPATH": str(speech_root),
     }
-    with subprocess.Popen(  # noqa: S603
+    with subprocess.Popen(
         [sys.executable, "-c", _SIGTERM_SERVER], env=environment
     ) as server:
         try:

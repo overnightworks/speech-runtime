@@ -59,6 +59,9 @@ select = ["ALL"]
 ignore = [
     "COM812",
     "CPY001",
+    # They flag every subprocess call, whatever its arguments.
+    "S404",
+    "S603",
 ]
 
 [tool.ruff.lint.flake8-type-checking]
@@ -72,7 +75,6 @@ convention = "google"
 "tests/**" = ["S101", "D101", "D102", "D103", "D107", "ANN001", "PLR2004"]
 "scripts/**" = [
     "T201",
-    "S603",
     "S108",
     "PLR2004",
     "TRY003",
@@ -83,15 +85,9 @@ convention = "google"
     # message, not left to hang the join with no diagnostic.
     "BLE001",
 ]
-# nvidia-smi is resolved on PATH; the arguments are a constant.
-"src/speech_runtime_service/card.py" = ["S603"]
 # A failed load can be any library error; the process still names the model and stops.
 "src/speech_runtime_service/service.py" = ["BLE001"]
 "src/speech_runtime_service/qwen_download.py" = ["BLE001"] # A provider callback may raise any library error.
 # Piper and faster-whisper stay unloaded until the process holds them.
 "src/speech_runtime_service/speaking.py" = ["PLC0415"]
-"src/speech_runtime_service/provider_process.py" = [
-    "S603", "BLE001", "EM101", "SIM105",
-    "TC003", "TRY003", "TRY301",
-]
 "src/speech_runtime_service/hearing.py" = ["PLC0415"]
