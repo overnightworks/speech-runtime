@@ -101,6 +101,7 @@ def test_hear_closes_with_a_reason_and_logs_the_failure_without_the_text(
     assert raised.value.reason == HEARING_FAILED_REASON
     assert "hearing failed" in caplog.text
     assert "RuntimeError" in caplog.text
+    assert 'File "' in caplog.text
     assert _HEARD not in caplog.text
 
 

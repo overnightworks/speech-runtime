@@ -468,6 +468,7 @@ def _assert_failure_logged_without_text(
     assert "speaking failed" in caplog.text
     assert "_SentenceCarryingError" in caplog.text
     assert "KeyError" in caplog.text
+    assert 'File "' in caplog.text
     assert _SPOKEN not in caplog.text
     assert _SPOKEN not in "".join(traceback.format_exception(raised))
 
@@ -584,7 +585,6 @@ def test_speak_cleanup_failure_after_a_disconnect_logs_no_sentence_and_frees_the
 
     failure, later = asyncio.run(scenario())
 
-    assert _SPOKEN not in caplog.text
-    if failure is not None:
-        assert _SPOKEN not in "".join(traceback.format_exception(failure))
+    assert isinstance(failure, SpeakingFailedError)
+    _assert_failure_logged_without_text(caplog, failure)
     assert _status(later) == HTTP_200_OK
