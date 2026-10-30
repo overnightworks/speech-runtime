@@ -180,6 +180,14 @@ def _key_server(
     return server
 
 
+def _private_pem(key: rsa.RSAPrivateKey | ec.EllipticCurvePrivateKey) -> bytes:
+    return key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+
+
 def _configuration_text(minting: Minting, jwks_url: str, voice: str) -> str:
     def value(text: str) -> str:
         return json.dumps(text)
@@ -222,14 +230,7 @@ def proof_identity(directory: Path, voice: str) -> Iterator[ProofIdentity]:
     ca_path = identity_directory / "ca.pem"
     tls_path = identity_directory / "tls-key.pem"
     _write_private(ca_path, certificate_pem)
-    _write_private(
-        tls_path,
-        tls_key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        ),
-    )
+    _write_private(tls_path, _private_pem(tls_key))
     public_jwk = json.loads(
         jwt.algorithms.RSAAlgorithm.to_jwk(signing_key.public_key())
     ) | {"kid": KEY_IDENTIFIER, "use": "sig", "alg": ALGORITHM}
@@ -239,11 +240,7 @@ def proof_identity(directory: Path, voice: str) -> Iterator[ProofIdentity]:
     try:
         origin = f"https://localhost:{server.server_address[1]}"
         minting = Minting(
-            private_key_pem=signing_key.private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.PKCS8,
-                serialization.NoEncryption(),
-            ).decode(),
+            private_key_pem=_private_pem(signing_key).decode(),
             key_identifier=KEY_IDENTIFIER,
             issuer=f"{origin}/realm",
             audience="speech-proof",
