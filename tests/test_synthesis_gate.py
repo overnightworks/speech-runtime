@@ -186,7 +186,9 @@ def test_a_release_right_after_the_gate_is_found_held_still_serves_the_waiter() 
         held = gate.try_acquire()
         assert held is not None
         gate.interleaving.after_exit = lambda: release_from_another_thread(held)
-        return await gate.acquire(_in(WAIT_SECONDS))
+        lease = await gate.acquire(_in(WAIT_SECONDS))
+        assert gate.interleaving.after_exit is None
+        return lease
 
     assert asyncio.run(scenario()) is not None
 
@@ -490,14 +492,16 @@ def test_a_free_gate_answers_within_the_wait_though_every_worker_is_occupied(
 
         def occupy() -> None:
             occupying.set()
-            occupied.wait(ASGI_TIMEOUT_SECONDS)
+            occupied.wait()
 
         job = asyncio.create_task(anyio.to_thread.run_sync(occupy))
-        await asyncio.to_thread(occupying.wait, ASGI_TIMEOUT_SECONDS)
-        call = SpeakCall(app, speak_body(CHATTERBOX))
-        await call.status()
-        occupied.set()
-        await job
+        try:
+            assert await asyncio.to_thread(occupying.wait, ASGI_TIMEOUT_SECONDS)
+            call = SpeakCall(app, speak_body(CHATTERBOX))
+            await call.status()
+        finally:
+            occupied.set()
+            await job
         await call.finish()
         return runtime, call
 
