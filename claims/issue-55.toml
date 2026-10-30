@@ -1,0 +1,7 @@
+claim_id = "95c90c5ea73e448a9d479859f3c4aca3"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "10cec89a6f2936b4bd7bdecee1b05b8566a70852"
+branch = "claude/issue-55-probe-lock-setpriv"
+scope = ["README.md", "scripts/prove_speech.py", "tests/scripts/test_prove_speech.py"]
+opened_commit = "74e05456eacc185d94641d714d0cb12347823cd5"
