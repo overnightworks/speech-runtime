@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING
 import jwt
 import pytest
 
-from speech_runtime_client.wire import AUTHORIZATION_HEADER, WORKLOAD_TOKEN_HEADER
+from speech_runtime_client.wire import (
+    AUTHORIZATION_HEADER,
+    CONTENT_TYPE_HEADER,
+    WORKLOAD_TOKEN_HEADER,
+)
 from speech_runtime_service.pcm import pcm_from_wav
 from speech_runtime_service.service import Runtime
 from speech_runtime_service.voices import VoiceId
@@ -348,7 +352,7 @@ def test_each_speaking_script_sends_the_workload_token_and_the_persons_bearer(
 
     (headers,) = (request.headers for request in requests)
     scheme, _, person = headers[AUTHORIZATION_HEADER].partition(" ")
-    assert headers["Content-Type"] == "application/json"
+    assert headers[CONTENT_TYPE_HEADER] == "application/json"
     assert scheme == "Bearer"
     assert _unverified_subject(headers[WORKLOAD_TOKEN_HEADER]) == (
         minting.workload_subject

@@ -163,7 +163,11 @@ def _key_server(
         def log_message(self, *_: object) -> None:
             """Log nothing."""
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    class QuietServer(http.server.ThreadingHTTPServer):
+        def handle_error(self, *_: object) -> None:
+            """Report nothing: a client rejecting the certificate is expected."""
+
+    server = QuietServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
