@@ -3,6 +3,7 @@
 import logging
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -29,7 +30,6 @@ from speech_runtime_service.voices import (
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -650,21 +650,36 @@ class _HeldStart:
     downloaded: threading.Event
 
 
-def _start_held_in_check(tmp_path: Path, *, held_check: str) -> _HeldStart:
+_Checks = tuple[Callable[[], bool], Callable[[], bool]]
+
+
+def _always() -> bool:
+    return True
+
+
+def _never() -> bool:
+    return False
+
+
+def _hold_worker_check(held: _HeldCheck) -> _Checks:
+    return held, _never
+
+
+def _hold_artifact_check(held: _HeldCheck) -> _Checks:
+    def artifacts_are_complete() -> bool:
+        held()
+        return False
+
+    return _always, artifacts_are_complete
+
+
+def _start_held_in_check(
+    tmp_path: Path, *, hold: Callable[[_HeldCheck], _Checks]
+) -> _HeldStart:
     held = _HeldCheck()
-    complete = False
     downloaded = threading.Event()
     results: list[VoiceDownloadOutcome | None] = []
-    artifacts_are_complete: Callable[[], bool] = lambda: complete  # noqa: E731
-    worker_usable: Callable[[], bool] = lambda: True  # noqa: E731
-    if held_check == "artifacts":
-
-        def artifacts_are_complete() -> bool:
-            held()
-            return complete
-
-    else:
-        worker_usable = held
+    worker_usable, artifacts_are_complete = hold(held)
     runtime = _runtime(
         tmp_path,
         complete=artifacts_are_complete,
@@ -681,21 +696,26 @@ def _start_held_in_check(tmp_path: Path, *, held_check: str) -> _HeldStart:
     return _HeldStart(runtime, held, results, starter, downloaded)
 
 
-@pytest.mark.parametrize("held_check", ["worker", "artifacts"])
+@pytest.mark.parametrize("hold", [_hold_worker_check, _hold_artifact_check])
 def test_speaking_admission_is_answered_while_a_download_start_checks_the_filesystem(
-    tmp_path: Path, held_check: str
+    tmp_path: Path, hold: Callable[[_HeldCheck], _Checks]
 ) -> None:
-    start = _start_held_in_check(tmp_path, held_check=held_check)
+    start = _start_held_in_check(tmp_path, hold=hold)
     runtime, held, results, starter = (
         start.runtime,
         start.held,
         start.results,
         start.starter,
     )
-    admissions: list[object] = []
-    capture = threading.Thread(
-        target=lambda: admissions.append(runtime.capture_speaking()), daemon=True
-    )
+    admitted: list[bool] = []
+
+    def capture_and_close() -> None:
+        admission = runtime.capture_speaking()
+        admitted.append(admission is not None)
+        if admission is not None:
+            admission.close()
+
+    capture = threading.Thread(target=capture_and_close, daemon=True)
     capture.start()
     capture.join(timeout=5)
     answered = not capture.is_alive()
@@ -703,23 +723,27 @@ def test_speaking_admission_is_answered_while_a_download_start_checks_the_filesy
     starter.join(timeout=5)
 
     assert answered
-    assert admissions[0] is not None
-    admissions[0].close()  # type: ignore[attr-defined]
+    assert admitted == [True]
     assert results == [VoiceDownloadOutcome.STARTED]
 
 
-@pytest.mark.parametrize("transition", ["begin_shutdown", "begin_loading"])
+_TRANSITIONS = [Runtime.begin_shutdown, Runtime.begin_loading]
+
+
+@pytest.mark.parametrize("transition", _TRANSITIONS)
 def test_download_never_starts_once_shutdown_or_loading_began_during_its_checks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transition: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    transition: Callable[[Runtime], None],
 ) -> None:
-    start = _start_held_in_check(tmp_path, held_check="artifacts")
+    start = _start_held_in_check(tmp_path, hold=_hold_artifact_check)
     runtime, held, results, starter = (
         start.runtime,
         start.held,
         start.results,
         start.starter,
     )
-    mover = threading.Thread(target=getattr(runtime, transition), daemon=True)
+    mover = threading.Thread(target=transition, args=(runtime,), daemon=True)
     mover.start()
     mover.join(timeout=5)
     returned = not mover.is_alive()
@@ -733,3 +757,29 @@ def test_download_never_starts_once_shutdown_or_loading_began_during_its_checks(
         _qwen_state(runtime, tmp_path, monkeypatch, complete=False)
         is not VoiceState.DOWNLOADING
     )
+
+
+@pytest.mark.parametrize("transition", _TRANSITIONS)
+def test_download_start_touches_no_file_once_shutdown_or_loading_began(
+    tmp_path: Path, transition: Callable[[Runtime], None]
+) -> None:
+    checks: list[str] = []
+
+    def worker_usable() -> bool:
+        checks.append("worker")
+        return True
+
+    def artifacts_are_complete() -> bool:
+        checks.append("artifacts")
+        return False
+
+    runtime = _runtime(
+        tmp_path,
+        complete=artifacts_are_complete,
+        download=lambda: None,
+        overrides=_RuntimeOverrides(worker_usable=worker_usable),
+    )
+    transition(runtime)
+
+    assert runtime.start_qwen_download() is None
+    assert checks == []
