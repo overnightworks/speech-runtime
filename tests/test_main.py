@@ -743,5 +743,7 @@ def test_serve_refuses_to_start_without_a_readable_caller_configuration(
         tmp_path, config_file=None if file_name is None else tmp_path / file_name
     )
 
+    serving = __main__.serve(settings)
+
     with pytest.raises(failure):
-        asyncio.run(__main__.serve(settings))
+        asyncio.run(serving)
