@@ -6,4 +6,6 @@ dependency_paths = [
   "packages/client/pyproject.toml",
   "providers/chatterbox/pyproject.toml",
   "providers/chatterbox/uv.lock",
+  "providers/magpie/pyproject.toml",
+  "providers/magpie/uv.lock",
 ]
