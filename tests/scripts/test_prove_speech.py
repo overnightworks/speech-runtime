@@ -145,11 +145,11 @@ def test_a_failed_proof_under_the_lock_keeps_its_own_exit_status() -> None:
 def test_term_stops_the_speech_server_through_its_teardown(tmp_path: Path) -> None:
     server = Mock(stdout=None, returncode=0)
     running = PROVE.speech_server(
-        tmp_path,
+        "http://127.0.0.1:1",
         {},
-        tmp_path / "speech.sock",
+        tmp_path,
         start=lambda *_, **__: server,
-        wait_ready=lambda _socket_path: {},
+        wait_ready=lambda _base_url: {},
     )
 
     def term_while_running() -> None:

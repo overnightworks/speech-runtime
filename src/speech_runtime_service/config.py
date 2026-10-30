@@ -49,15 +49,11 @@ class Settings(BaseSettings):
     provider_root: Path | None = None
     qwen_speaker: QwenSpeaker = QwenSpeaker.RYAN
     magpie_speaker: MagpieSpeaker = MagpieSpeaker.SOFIA
-    private_directory: Path = Path("/run/speech-runtime")
+    host: str = "127.0.0.1"
+    port: int = Field(default=8080, ge=1, le=65535)
     busy_wait_seconds: float = Field(default=5.0, ge=0, allow_inf_nan=False)
     max_input_characters: int = Field(default=4096, ge=1)
     config_file: Path | None = None
-    runtime_uid: int | None = Field(
-        default=None,
-        gt=0,
-        validation_alias="PRESENTATOR_RUNTIME_UID",
-    )
 
     @field_validator("config_file")
     @classmethod

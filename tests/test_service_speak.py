@@ -1,6 +1,5 @@
 """The speaking engines the runtime builds: the local Piper voice and the providers."""
 
-import os
 import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -17,9 +16,7 @@ if TYPE_CHECKING:
 
 
 def test_piper_voice_id_constructs_the_local_piper_engine() -> None:
-    engine = speaking_for_voice(
-        Settings(PRESENTATOR_RUNTIME_UID=os.geteuid()), VoiceId.PIPER
-    )
+    engine = speaking_for_voice(Settings(), VoiceId.PIPER)
 
     assert isinstance(engine, PiperSpeaking)
     assert engine.streams is False
@@ -28,10 +25,7 @@ def test_piper_voice_id_constructs_the_local_piper_engine() -> None:
 
 def test_chatterbox_voice_id_constructs_the_streaming_voice() -> None:
     engine = speaking_for_voice(
-        Settings(
-            device="cuda",
-            PRESENTATOR_RUNTIME_UID=os.geteuid(),
-        ),
+        Settings(device="cuda"),
         VoiceId.CHATTERBOX,
     )
 

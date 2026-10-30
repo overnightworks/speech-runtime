@@ -1,14 +1,13 @@
-"""A real private-socket speech server for tests."""
+"""A real TCP speech server on a free local port for tests."""
 
 import asyncio
-import os
+import socket
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import uvicorn
 
-from speech_runtime_service.__main__ import PrivateSocket
 from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
 from tests.support.fakes_support import GATE_TIMEOUT_SECONDS
@@ -16,34 +15,45 @@ from tests.support.identity_support import valid_callers
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-    from pathlib import Path
 
     from starlette.types import Message, Receive, Scope, Send
 
     from speech_runtime_service.callers import SpeechCallers
     from speech_runtime_service.service import Runtime
 
+_LOOPBACK = "127.0.0.1"
+
+
+def free_loopback_port() -> int:
+    """A port nothing listens on right now."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((_LOOPBACK, 0))
+        return probe.getsockname()[1]
+
+
+def listens_on(port: int) -> bool:
+    """Whether a TCP connection to the loopback port is accepted."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        return probe.connect_ex((_LOOPBACK, port)) == 0
+
 
 @dataclass(frozen=True, slots=True)
-class PrivateServer:
-    """A running private-socket server and the event its handler sets."""
+class TcpServer:
+    """A running TCP server and the event its handler sets."""
 
-    path: Path
+    base_url: str
     speak_disconnect_received: asyncio.Event
 
 
 @asynccontextmanager
-async def serving_privately(
-    directory: Path, runtime: Runtime, callers: SpeechCallers | None = None
-) -> AsyncIterator[PrivateServer]:
-    """Serve the private app on a real PrivateSocket and stop it on exit.
+async def serving_over_tcp(
+    runtime: Runtime, callers: SpeechCallers | None = None
+) -> AsyncIterator[TcpServer]:
+    """Serve the app on a free loopback port and stop it on exit.
 
     The callers default to ones that accept `valid_headers()`.
     """
-    settings = Settings(
-        private_directory=directory, PRESENTATOR_RUNTIME_UID=os.geteuid()
-    )
-    app = create_control_app(settings, runtime, callers or valid_callers())
+    app = create_control_app(Settings(), runtime, callers or valid_callers())
     speak_disconnect_received = asyncio.Event()
 
     async def observed(scope: Scope, receive: Receive, send: Send) -> None:
@@ -56,10 +66,15 @@ async def serving_privately(
         await app(scope, watched_receive, send)
 
     server = uvicorn.Server(uvicorn.Config(observed, log_level="warning"))
-    with PrivateSocket(directory, runtime_uid=os.geteuid()) as listener:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind((_LOOPBACK, 0))
+        listener.listen()
         serving = asyncio.create_task(server.serve(sockets=[listener]))
         try:
-            yield PrivateServer(directory / "speech.sock", speak_disconnect_received)
+            yield TcpServer(
+                f"http://{_LOOPBACK}:{listener.getsockname()[1]}",
+                speak_disconnect_received,
+            )
         finally:
             server.should_exit = True
             await asyncio.wait_for(serving, timeout=GATE_TIMEOUT_SECONDS)
