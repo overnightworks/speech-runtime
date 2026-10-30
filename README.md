@@ -4,7 +4,7 @@ Audience: the operator starting this process on the home server, and
 Presentator, which calls it.
 
 One process holds a German voice resident and offers `GET /health` and the
-speak wire over HTTP on a private Unix socket whose caller is Presentator. The
+speak wire over HTTP on a TCP address (`SPEECH_HOST`, `SPEECH_PORT`). The
 caller owns the address. The voice is the one `SPEECH_SPEAKING_MODEL` names:
 Piper, Chatterbox, Qwen3-TTS 0.6B, VoxCPM2 or NVIDIA Magpie, from weights that
 are already cached. The service stores no choice of its own.
@@ -84,10 +84,11 @@ Weights stay in:
 
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "card_memory_mb"}`. Answers while the model is still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
 - `POST /v1/audio/speech` → chunked `audio/wav`, German, with the AI mark. It needs a workload token and the person's token. The request, the tokens, the refusals and the settings that shape them are in [`docs/wire.md`](docs/wire.md).
-- `/health` and `/v1/audio/speech` answer only on `speech.sock` in
-  `SPEECH_PRIVATE_DIRECTORY`; the process binds no TCP port. The socket serves
-  nothing else (no `/docs`, no `/openapi.json`, no voice administration, no
-  hearing).
+- `/health` and `/v1/audio/speech` answer on `SPEECH_HOST:SPEECH_PORT` and
+  nothing else is mounted (no `/docs`, no `/openapi.json`, no voice
+  administration, no hearing). `python -m speech_runtime_service --help` (or the
+  `speech-runtime-service` command) prints usage; any other argument is a usage
+  error.
 
 The service never writes spoken text to its log. A speaking failure is logged with its exception types and stack frames, never with an exception message.
 
@@ -103,19 +104,16 @@ All `SPEECH_*`:
 | `SPEECH_HUGGINGFACE_CACHE` | Provider Hub cache (normally `~/.cache/huggingface/hub`) | The shared local Hub cache for provider loading and the artifact check |
 | `SPEECH_QWEN_SPEAKER` | `Ryan` | One of Vivian, Serena, Uncle_Fu, Dylan, Eric, Ryan, Aiden, Ono_Anna, or Sohee |
 | `SPEECH_MAGPIE_SPEAKER` | `Sofia` | One of Aria, Jason, John, Leo, or Sofia |
-| `SPEECH_PRIVATE_DIRECTORY` | `/run/speech-runtime` | Private directory that owns `speech.sock` |
+| `SPEECH_HOST` | `127.0.0.1` | Address the listener binds. A container sets `0.0.0.0` so the app network reaches it |
+| `SPEECH_PORT` | `8080` | TCP port the listener binds; a whole number from 1 to 65535. An address that cannot be bound ends the process before any model work |
 | `SPEECH_BUSY_WAIT_SECONDS` | `5.0` | How long a second speech request waits for the one synthesis before it answers 429 `busy`; at least 0, where 0 refuses at once |
 | `SPEECH_MAX_INPUT_CHARACTERS` | `4096` | The longest `input` a speech request may carry; a whole number of at least 1 |
 | `SPEECH_CONFIG_FILE` | none, required | Absolute path of the TOML file that names the issuer, the service group, the apps whose tokens the speak route trusts and the voices each app may name; the process does not start without it ([`docs/wire.md`](docs/wire.md)) |
 
 When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 
-`PRESENTATOR_RUNTIME_UID` is the positive runtime UID that Presentator
-shares with speech. Speech creates its private directory at mode 0700 and its socket at 0600.
-That UID guards the socket: the Presentator container and every process under
-it may reach the socket, and the speak route also needs both tokens.
-A dead leftover socket is replaced; a socket with a live listener, a foreign
-or non-socket path, or an unsafe directory refuses startup.
+One instance serves the one device `SPEECH_DEVICE` names, on one address; the
+platform starts one instance per card. The service holds no lock per card.
 
 If the voice cannot be loaded the process exits and names the model.
 

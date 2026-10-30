@@ -14,16 +14,16 @@ Presentator and to apps that speak for a person.
 
 ```mermaid
 flowchart LR
-    app[App holding both tokens] -->|speak| socket[speech.sock]
-    presentator[Presentator] -->|health| socket
-    socket --> service[speech_runtime_service]
+    app[App holding both tokens] -->|speak| listener[TCP listener]
+    edge[Edge, app network] -->|health| listener
+    listener --> service[speech_runtime_service]
     service -->|isolated processes| providers[providers/*]
     service -->|key set, https| issuer[Identity issuer]
 ```
 
 ## Building blocks
 
-- `src/speech_runtime_service`: the one process, the private socket and the
+- `src/speech_runtime_service`: the one process, its TCP listener and the
   routes. `callers.py` decides who may speak; `wire_route.py` serves the wire.
 - `packages/client`: the wire types an app and the service share.
 - `providers/*`: the voices that run in their own processes and environments.
@@ -32,8 +32,17 @@ flowchart LR
 
 ### Trust
 
-- The socket is private: its directory and socket belong to one UID, and the
-  process binds no TCP port.
+- Keycloak is the root. A registered app with valid tokens is trusted within
+  its config; one app can only slow another, bounded by the busy wait and the
+  input limit. Nothing is kept.
+- Every capability passes the caller check. Only `GET /health` and the wire's
+  refusals that carry no capability (404 `not_found`, 400 `unsupported_version`)
+  answer before it; nothing else is mounted.
+- `/health` is reachable only inside edge's app network: the code default binds
+  `127.0.0.1`, and the deployment sets `SPEECH_HOST` so the listener sits on
+  that network only.
+- One instance serves one address and one device; the platform starts one per
+  card, and the service keeps no lock per card.
 - The speak route admits only a person call. Both tokens are verified by
   webauth against the issuer's key set (signature, issuer, audience, lifetime);
   the workload token must carry the realm role, come from a registered app's
@@ -51,5 +60,4 @@ Residues:
   no sender constraint.
 - The issuer's `account` audience stays in a token's `aud` (webauth#516,
   invariant 3).
-- `/health` is guarded only by the socket's UID; the service mounts no `/hear`
-  and no `/voices*` route.
+- `/health` carries no token; the network boundary is its only guard.
