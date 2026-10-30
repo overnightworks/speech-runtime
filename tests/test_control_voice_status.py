@@ -435,7 +435,6 @@ async def _disconnect_after_request_reaches_child(
     disconnect = asyncio.Event()
     delivered = asyncio.Event()
     pcm_sent = asyncio.Event()
-    never = asyncio.Event()
 
     async def receive() -> dict[str, object]:
         nonlocal sent_body
@@ -457,7 +456,7 @@ async def _disconnect_after_request_reaches_child(
             body_chunks += 1
             if body_chunks == 1:
                 pcm_sent.set()
-                await never.wait()
+                await asyncio.Event().wait()
 
     call = asyncio.create_task(app(speak_scope(), receive, send))
     await asyncio.to_thread(_wait_for_request_count, request_ids, 3)
