@@ -1,0 +1,8 @@
+claim_id = "e4e19eb769de4df09b795a541f880c5a"
+agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
+role = "builder"
+base = "ba5cb64774e9cfd73862773d099dd6186544eae4"
+branch = "claude/issue-75-n4c1-the-service-serves-only-health-and"
+scope = ["README.md", "docs/ARCHITECTURE.md", "docs/wire.md", "pyproject.toml", "quality/baseline.toml", "scripts/contract_client.py", "scripts/prove_speech.py", "src/speech_runtime_service", "tests", "uv.lock"]
+opened_commit = "3a978dbe52b68d3766e3645507c43c32ab70d105"
+whole_reason = "One retirement: every route but health and the wire, the stored choice they wrote and the hearing nothing serves leave together, because the start path, the health shape and the proof each depend on all three; it is mostly deletion."
