@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -89,6 +90,25 @@ def test_a_bad_file_fails_naming_the_field_and_not_its_value(
 
     assert field in str(failure.value)
     assert SENTINEL not in str(failure.value)
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    ["", "/", "speech-service", "/services/", "//services", "/services//speech"],
+    ids=["empty", "root", "no slash", "trailing slash", "double lead", "double mid"],
+)
+def test_a_service_group_that_is_not_a_group_path_fails_at_startup(
+    tmp_path: Path, malformed: str
+) -> None:
+    text = caller_configuration_text().replace(
+        json.dumps(MINTING.service_group), json.dumps(malformed)
+    )
+    path = write_caller_configuration(tmp_path, text)
+
+    with pytest.raises(ValidationError) as failure:
+        load_caller_config(path)
+
+    assert "service_group" in str(failure.value)
 
 
 def test_the_key_set_address_stays_out_of_every_repr() -> None:

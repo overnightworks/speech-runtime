@@ -23,6 +23,7 @@ _PROVIDER_ROOT_ERROR = "provider root must be absolute"
 _SPEAKING_MODEL_ERROR = "speaking model must be a supported baseline"
 _CONFIG_FILE_ERROR = "config file must be absolute"
 _KEY_SET_URL_ERROR = "jwks_url must be an https URL"
+_SERVICE_GROUP_ERROR = "service_group must be a group path such as /services/name"
 _APP_NAME_ERROR = "an app name must be one group path segment"
 _SHARED_CLIENT_ERROR = "workload_client must belong to one app"
 
@@ -116,6 +117,13 @@ class IdentityConfig(_FileModel):
         if not is_https_url(url):
             raise ValueError(_KEY_SET_URL_ERROR)
         return url
+
+    @field_validator("service_group")
+    @classmethod
+    def _service_group_is_a_group_path(cls, group: str) -> str:
+        if not group.startswith("/") or "" in group[1:].split("/"):
+            raise ValueError(_SERVICE_GROUP_ERROR)
+        return group
 
 
 class AppConfig(_FileModel):
