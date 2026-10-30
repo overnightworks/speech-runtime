@@ -1,0 +1,7 @@
+claim_id = "98f446f70ef7442a8ddaf5f4d9657cd6"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "e9f5a70f2c19aa987cfa2907bd797363ebc9908e"
+branch = "claude/issue-48-n4a-lock-no-io-under-state-lock"
+scope = ["src/speech_runtime_service/qwen_download.py", "tests/test_qwen_download.py"]
+opened_commit = "97927e45d9f92e939bcd3aca4b14ac2d5dca0467"
