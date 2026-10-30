@@ -1,0 +1,7 @@
+claim_id = "704250c28fb44a5aaf5cdeaba375b39e"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "fc9685702db6d6ec52366c96c777f3f54e25b6af"
+branch = "claude/issue-51-probe-lock-fleet-form"
+scope = ["README.md", "scripts/prove_speech.py", "tests/scripts/test_prove_speech.py"]
+opened_commit = "451454ba9743dbe67b95e65b596aa49e465d9dec"
