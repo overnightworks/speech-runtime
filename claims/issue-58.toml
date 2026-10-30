@@ -3,6 +3,6 @@ agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
 role = "builder"
 base = "078fa29b30afa36de3e011d91e9142da55c05303"
 branch = "claude/issue-58-n4b2-identity"
-scope = ["README.md", "docs/ARCHITECTURE.md", "docs/wire.md", "packages/client/src/speech_runtime_client/wire.py", "pyproject.toml", "src/speech_runtime_service/__main__.py", "src/speech_runtime_service/callers.py", "src/speech_runtime_service/config.py", "src/speech_runtime_service/control.py", "src/speech_runtime_service/wire_route.py", "tests", "uv.lock"]
+scope = ["README.md", "docs/ARCHITECTURE.md", "docs/wire.md", "packages/client/src/speech_runtime_client/wire.py", "pyproject.toml", "quality/baseline.toml", "src/speech_runtime_service/__main__.py", "src/speech_runtime_service/callers.py", "src/speech_runtime_service/config.py", "src/speech_runtime_service/control.py", "src/speech_runtime_service/wire_route.py", "tests", "uv.lock"]
 opened_commit = "3438e5abfaef14e056ac4a69b347763d0883d7fc"
 whole_reason = "Six production files of about 150 lines: the refusal codes, the configuration, the caller check and the route are one behaviour, and the test support changes across every module that builds the app or calls serve."
