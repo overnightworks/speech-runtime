@@ -287,12 +287,12 @@ def speak_measured(
     byte. A body the service aborted raises `IncompleteRead` in `http.client`,
     and the proof fails rather than keep the partial WAV.
     """
+    pair = mint_pair(minting)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(SPEAK_TIMEOUT_SECONDS)
     sock.connect(str(socket_path))
     connection = http.client.HTTPConnection("speech", timeout=SPEAK_TIMEOUT_SECONDS)
     connection.sock = sock
-    pair = mint_pair(minting)
     try:
         start = time.perf_counter()
         connection.request(

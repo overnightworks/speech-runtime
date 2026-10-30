@@ -335,21 +335,25 @@ def _recording_speech_socket(
         thread.join()
 
 
+def _unverified_subject(token: str) -> str:
+    return jwt.decode(token, options={"verify_signature": False})["sub"]
+
+
 @pytest.mark.parametrize("speak", [CLIENT.speak, PROVE.speak_measured])
 def test_each_speaking_script_sends_the_workload_token_and_the_persons_bearer(
     tmp_path: Path, minting: Minting, speak: Callable[..., object]
 ) -> None:
     with _recording_speech_socket(tmp_path) as (path, requests):
         speak(path, "Hallo", PIPER, minting)
-        speak(path, "Hallo", PIPER, minting)
 
-    (first, second) = (request.headers for request in requests)
-    for headers in (first, second):
-        assert jwt.get_unverified_header(headers[WORKLOAD_TOKEN_HEADER])["kid"]
-        scheme, _, person = headers[AUTHORIZATION_HEADER].partition(" ")
-        assert scheme == "Bearer"
-        assert jwt.get_unverified_header(person)["kid"]
-        assert person != headers[WORKLOAD_TOKEN_HEADER]
+    (headers,) = (request.headers for request in requests)
+    scheme, _, person = headers[AUTHORIZATION_HEADER].partition(" ")
+    assert headers["Content-Type"] == "application/json"
+    assert scheme == "Bearer"
+    assert _unverified_subject(headers[WORKLOAD_TOKEN_HEADER]) == (
+        minting.workload_subject
+    )
+    assert _unverified_subject(person) == minting.person_subject
 
 
 def test_the_contract_client_command_passes_the_minting_file_path_and_no_secret(
