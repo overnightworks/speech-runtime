@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import threading
+import traceback
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -721,15 +722,14 @@ def test_invalid_runtime_uid_refuses_before_runtime_or_listener_work(
 
 
 @pytest.mark.parametrize(
-    ("file_name", "failure"),
-    [(None, ValueError), ("absent.toml", FileNotFoundError)],
+    "file_name",
+    [None, "absent.toml"],
     ids=["unset", "missing"],
 )
 def test_serve_refuses_to_start_without_a_readable_caller_configuration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     file_name: str | None,
-    failure: type[Exception],
 ) -> None:
     monkeypatch.setattr(
         __main__, "prepare_cuda_libraries", lambda: pytest.fail("prepared CUDA")
@@ -745,5 +745,7 @@ def test_serve_refuses_to_start_without_a_readable_caller_configuration(
 
     serving = __main__.serve(settings)
 
-    with pytest.raises(failure):
+    with pytest.raises(ValueError, match="SPEECH_CONFIG_FILE") as refusal:
         asyncio.run(serving)
+    rendered = "".join(traceback.format_exception(refusal.value))
+    assert str(tmp_path) not in rendered

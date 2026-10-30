@@ -26,6 +26,7 @@ _KEY_SET_URL_ERROR = "jwks_url must be an https URL"
 _SERVICE_GROUP_ERROR = "service_group must be a group path such as /services/name"
 _APP_NAME_ERROR = "an app name must be one group path segment"
 _SHARED_CLIENT_ERROR = "workload_client must belong to one app"
+_CONFIG_FILE_UNREADABLE_ERROR = "SPEECH_CONFIG_FILE must name a readable file"
 
 
 class Settings(BaseSettings):
@@ -157,4 +158,8 @@ class CallerConfig(_FileModel):
 
 def load_caller_config(path: Path) -> CallerConfig:
     """Read the caller configuration; a bad file fails naming a field, not a value."""
-    return CallerConfig.model_validate(tomllib.loads(path.read_text()))
+    try:
+        text = path.read_text()
+    except OSError:
+        raise ValueError(_CONFIG_FILE_UNREADABLE_ERROR) from None
+    return CallerConfig.model_validate(tomllib.loads(text))
