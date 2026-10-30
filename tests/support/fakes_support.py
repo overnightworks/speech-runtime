@@ -7,9 +7,8 @@ import struct
 import threading
 from typing import TYPE_CHECKING
 
-from speech_runtime_service.config import HEAR_SAMPLE_RATE, Settings
+from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
-from speech_runtime_service.hearing import HearingSession
 from speech_runtime_service.pcm import BYTES_PER_SAMPLE
 from speech_runtime_service.service import Runtime
 from tests.support.identity_support import valid_callers
@@ -19,14 +18,13 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from speech_runtime_service.service import HearingEngine, SpeakingEngine
+    from speech_runtime_service.service import SpeakingEngine
 
-SAMPLE_RATE = HEAR_SAMPLE_RATE
 SPEAK_SAMPLE_RATE = 22_050
 GATE_TIMEOUT_SECONDS = 5.0
 
 
-def sine_pcm(seconds: float, rate: int = SAMPLE_RATE, freq: float = 440.0) -> bytes:
+def sine_pcm(seconds: float, rate: int, freq: float = 440.0) -> bytes:
     n = int(seconds * rate)
     samples = [
         int(16_000 * math.sin(2 * math.pi * freq * index / rate)) for index in range(n)
@@ -132,55 +130,13 @@ class GatedSpeaking:
                 self.active_syntheses -= 1
 
 
-class FakeHearing:
-    """A hearing engine that transcribes by the length of the audio."""
-
-    model_name = "fake-ears"
-    ready = True
-
-    def __init__(self, *, ready: bool = True, fail: bool = False) -> None:
-        """Start ready or not, and optionally fail the load."""
-        self.ready = ready
-        self._fail = fail
-        self.sessions = 0
-        self.transcriptions = 0
-
-    def load(self) -> None:
-        """Load the fake weights, or raise when built to fail."""
-        if self._fail:
-            message = "weights missing"
-            raise RuntimeError(message)
-        self.ready = True
-
-    def open_session(self, language: str) -> HearingSession:
-        """Open a session that transcribes by the duration heard so far."""
-        del language
-        self.sessions += 1
-        spoken = "eins"
-        silent_below_seconds = 0.2
-        partial_below_seconds = 0.8
-
-        def transcribe(pcm: bytes) -> str:
-            self.transcriptions += 1
-            duration = len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
-            if duration < silent_below_seconds:
-                return ""
-            if duration < partial_below_seconds:
-                return spoken
-            return f"{spoken} zwei"
-
-        return HearingSession(transcribe, SAMPLE_RATE)
-
-
 def an_app(
     speaking: SpeakingEngine | None = None,
-    hearing: HearingEngine | None = None,
     *,
     memory_probe: Callable[[], int] | None = None,
 ) -> FastAPI:
     runtime = Runtime(
         speaking or FakeSpeaking(),
-        hearing or FakeHearing(),
         memory_probe=memory_probe if memory_probe is not None else (lambda: 0),
     )
     return create_control_app(Settings(), runtime, valid_callers())

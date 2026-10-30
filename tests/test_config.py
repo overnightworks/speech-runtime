@@ -1,26 +1,27 @@
-"""Configuration comes from the environment; a failed load names the model."""
+"""Configuration comes from the environment."""
 
 import os
 from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
+from speech_runtime_provider_contract import (
+    MAGPIE_MODEL_ID,
+    QWEN_MODEL_ID,
+    VOXCPM_MODEL_ID,
+)
 
 from speech_runtime_service.config import (
-    HEAR_SAMPLE_RATE,
     MagpieSpeaker,
     QwenSpeaker,
     Settings,
 )
 from speech_runtime_service.pcm import wav_header
-from speech_runtime_service.selection import VoiceSelectionStore
-from speech_runtime_service.service import (
-    Runtime,
-    RuntimeDependencies,
-    failed_to_load_message,
+from speech_runtime_service.voices import (
+    CHATTERBOX_SPEAKING_MODEL,
+    DEFAULT_SPEAKING_MODEL,
 )
-from speech_runtime_service.voices import VoiceId
-from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.fakes_support import SPEAK_SAMPLE_RATE
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
         ("SPEECH_HOST", "example.invalid"),
         ("SPEECH_PORT", "8090"),
         ("SPEECH_DEBUG", "true"),
+        ("SPEECH_HEARING_MODEL", "Systran/faster-whisper-large-v3"),
+        ("SPEECH_STATE_DIRECTORY", "relative/state"),
     ],
 )
 def test_a_stale_setting_in_the_environment_is_ignored(
@@ -45,14 +48,12 @@ def test_a_stale_setting_in_the_environment_is_ignored(
 def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SPEECH_DEVICE", "cpu")
     monkeypatch.setenv("SPEECH_SPEAKING_MODEL", "ResembleAI/chatterbox")
-    monkeypatch.setenv("SPEECH_HEARING_MODEL", "Systran/faster-whisper-large-v3")
     monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", str(os.geteuid()))
 
     settings = Settings()
 
     assert settings.device == "cpu"
     assert settings.speaking_model == "ResembleAI/chatterbox"
-    assert settings.hearing_model == "Systran/faster-whisper-large-v3"
 
 
 @pytest.mark.parametrize(
@@ -118,14 +119,31 @@ def test_settings_accepts_only_a_positive_shared_runtime_uid(
 
 
 @pytest.mark.parametrize(
+    "model",
+    [
+        DEFAULT_SPEAKING_MODEL,
+        CHATTERBOX_SPEAKING_MODEL,
+        QWEN_MODEL_ID,
+        VOXCPM_MODEL_ID,
+        MAGPIE_MODEL_ID,
+    ],
+)
+def test_every_catalogue_voice_model_is_a_speaking_model(
+    monkeypatch: pytest.MonkeyPatch, model: str
+) -> None:
+    monkeypatch.setenv("SPEECH_SPEAKING_MODEL", model)
+
+    assert Settings().speaking_model == model
+
+
+@pytest.mark.parametrize(
     ("environment", "value", "reason"),
     [
-        ("SPEECH_STATE_DIRECTORY", "relative/state", "state directory"),
         ("SPEECH_PROVIDER_ROOT", "relative/providers", "provider root"),
         ("SPEECH_SPEAKING_MODEL", "unsupported-baseline", "speaking model"),
     ],
 )
-def test_settings_refuses_unsafe_voice_selection_configuration(
+def test_settings_refuses_unsafe_voice_configuration(
     monkeypatch: pytest.MonkeyPatch, environment: str, value: str, reason: str
 ) -> None:
     monkeypatch.setenv(environment, value)
@@ -169,30 +187,9 @@ def test_magpie_speaker_is_a_closed_setting_with_sofia_as_its_default(
         Settings()
 
 
-def test_a_failed_hearing_load_names_the_model(tmp_path: Path) -> None:
-    runtime = Runtime(
-        None,
-        FakeHearing(fail=True),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=lambda _voice: FakeSpeaking(),
-            artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.PIPER,
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="hearing model fake-ears failed to load"):
-        runtime.load()
-
-    assert (
-        failed_to_load_message("hearing", "fake-ears")
-        == "hearing model fake-ears failed to load"
-    )
-
-
 def test_wav_header_is_sixteen_bit_mono() -> None:
-    header = wav_header(16_000, 100)
+    header = wav_header(SPEAK_SAMPLE_RATE, 100)
     assert header[20:22] == (1).to_bytes(2, "little")
     assert header[22:24] == (1).to_bytes(2, "little")
-    assert int.from_bytes(header[24:28], "little") == HEAR_SAMPLE_RATE
+    assert int.from_bytes(header[24:28], "little") == SPEAK_SAMPLE_RATE
     assert header[34:36] == (16).to_bytes(2, "little")

@@ -3,8 +3,6 @@
 import asyncio
 import json
 import logging
-import os
-import threading
 import traceback
 from typing import TYPE_CHECKING
 
@@ -25,16 +23,9 @@ from speech_runtime_client.wire import (
 from speech_runtime_service.config import Settings
 from speech_runtime_service.failures import SpeakingFailedError
 from speech_runtime_service.pcm import AI_MARK, is_silence, pcm_from_wav
-from speech_runtime_service.selection import VoiceSelectionStore
-from speech_runtime_service.service import Runtime, RuntimeDependencies
-from speech_runtime_service.voices import (
-    VoiceId,
-    VoiceLoadOutcome,
-    VoiceRecoveryKind,
-)
+from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import (
     SPEAK_SAMPLE_RATE,
-    FakeHearing,
     FakeSpeaking,
     GatedSpeaking,
 )
@@ -44,6 +35,7 @@ from tests.support.speak_support import (
     assert_refusal,
     assert_unavailable,
     fake_runtime,
+    gate_is_free,
     info_comment_before_data,
     post_speech,
     response_body,
@@ -58,9 +50,10 @@ from tests.support.speak_support import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from fastapi import FastAPI
+
+    from speech_runtime_service.service import Runtime
 
 SHORT_WAIT_SECONDS = 0.2
 SLACK_SECONDS = 0.5
@@ -171,11 +164,13 @@ def test_a_path_that_is_no_version_path_gets_the_apps_default_not_found(
     assert response.json() == {"detail": "Not Found"}
 
 
-def test_health_and_voices_still_answer_beside_the_wire() -> None:
+def test_health_answers_beside_the_wire_and_voice_administration_is_not_mounted() -> (
+    None
+):
     client = TestClient(speak_app())
 
     assert client.get("/health").status_code == HTTP_200_OK
-    assert client.get("/voices").status_code == HTTP_200_OK
+    assert client.get("/voices").status_code == HTTP_404_NOT_FOUND
 
 
 _REFUSED_BODIES = [
@@ -327,9 +322,6 @@ def test_a_failed_voice_is_unavailable_and_its_engine_is_closed_once_afterwards(
     assert_unavailable(first)
     assert_unavailable(second)
     assert speaking.closed == 1
-    recovery = runtime.snapshot(Settings()).recovery
-    assert recovery is not None
-    assert recovery.kind is VoiceRecoveryKind.LOAD_FAILED
 
 
 # TestClient's ASGITransport never delivers a mid-stream `http.disconnect`, so the
@@ -454,31 +446,26 @@ def test_speak_disconnect_during_synthesis_frees_the_voice() -> None:
     assert len(pcm) > 0
 
 
-def _runtime_for_deselection(
-    tmp_path: Path, speaking: FakeSpeaking
+def _runtime_closing_on_shutdown(
+    speaking: FakeSpeaking,
 ) -> tuple[Runtime, list[int]]:
-    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
-    store.write(VoiceId.CHATTERBOX)
     closed: list[int] = []
-    speaking.retain_when_inactive = False
     speaking.close = lambda: closed.append(1)
-    runtime = Runtime(
-        speaking,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=store,
-            engine_factory=lambda _voice: FakeSpeaking(),
-            artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.CHATTERBOX,
-        ),
-    )
-    return runtime, closed
+    return fake_runtime(speaking, VoiceId.CHATTERBOX), closed
 
 
-def test_speak_response_construction_failure_releases_admission_for_deselection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _assert_gate_free_and_shutdown_closes_once(
+    runtime: Runtime, closed: list[int]
 ) -> None:
-    runtime, closed = _runtime_for_deselection(tmp_path, FakeSpeaking())
+    assert gate_is_free(runtime)
+    runtime.close()
+    assert closed == [1]
+
+
+def test_speak_response_construction_failure_frees_the_gate_for_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, closed = _runtime_closing_on_shutdown(FakeSpeaking())
 
     def fail_response_construction(*_args: object, **_kwargs: object) -> None:
         raise _ResponseBoundaryError
@@ -487,31 +474,21 @@ def test_speak_response_construction_failure_releases_admission_for_deselection(
     with pytest.raises(_ResponseBoundaryError):
         speak_response(runtime, CHATTERBOX)
 
-    outcomes: list[VoiceLoadOutcome | None] = []
-    switching = threading.Thread(
-        target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
-    )
-    switching.start()
-    switching.join(timeout=ASGI_TIMEOUT_SECONDS)
-    assert not switching.is_alive()
-    assert outcomes == [VoiceLoadOutcome.ACTIVATED]
-    assert closed == [1]
+    _assert_gate_free_and_shutdown_closes_once(runtime, closed)
 
 
 @pytest.mark.parametrize(
     "close_path",
     ["normal", "pre-body", "send-failure", "between-chunks", "synthesis-error"],
 )
-def test_speak_close_paths_release_admission_for_deselection(
-    tmp_path: Path, close_path: str
-) -> None:
+def test_speak_close_paths_free_the_gate_for_shutdown(close_path: str) -> None:
     class ClosingPathVoice(FakeSpeaking):
         def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
             if close_path == "synthesis-error":
                 raise _ResponseBoundaryError
             yield from super().pcm_chunks(text, language)
 
-    runtime, closed = _runtime_for_deselection(tmp_path, ClosingPathVoice())
+    runtime, closed = _runtime_closing_on_shutdown(ClosingPathVoice())
     response = speak_response(runtime, CHATTERBOX)
 
     if close_path == "normal":
@@ -532,15 +509,7 @@ def test_speak_close_paths_release_admission_for_deselection(
     else:
         asyncio.run(_interrupt(response, close_path))
 
-    outcomes: list[VoiceLoadOutcome | None] = []
-    switching = threading.Thread(
-        target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
-    )
-    switching.start()
-    switching.join(timeout=ASGI_TIMEOUT_SECONDS)
-    assert not switching.is_alive()
-    assert outcomes == [VoiceLoadOutcome.ACTIVATED]
-    assert closed == [1]
+    _assert_gate_free_and_shutdown_closes_once(runtime, closed)
 
 
 async def _interrupt(response: StreamingResponse, close_path: str) -> None:

@@ -5,20 +5,17 @@ build-backend = "hatchling.build"
 [project]
 name = "overnightworks-speech-runtime-service"
 version = "0.0.0"
-description = "Local speaking and hearing, one process on the card."
+description = "Local speech synthesis, one process on the card."
 requires-python = ">=3.14"
 dependencies = [
     "fastapi==0.162.0",
-    "faster-whisper==1.2.1",
     "huggingface-hub==2.3.0",
-    "numpy==2.5.4",
     "overnightworks-webauth @ https://github.com/overnightworks/webauth/releases/download/v0.26.0/overnightworks_webauth-0.26.0-py3-none-any.whl#sha256=85191c4f41d1c287682f55625a4ad12f574dcc53c523376b48b419a2a469582f",
     "nvidia-cublas-cu12==12.9.2.10",
     "nvidia-cudnn-cu12==9.27.0.42",
     "piper-tts==1.8.0",
     "pydantic-settings==2.16.1",
     "uvicorn==0.54.0",
-    "websockets==17.3",
     "overnightworks-speech-runtime-client",
     "overnightworks-speech-runtime-provider-contract",
 ]
@@ -78,8 +75,8 @@ ignore = [
 runtime-evaluated-decorators = ["fastapi.FastAPI.get", "fastapi.FastAPI.post"]
 
 [tool.ruff.lint.flake8-tidy-imports]
-# Piper and faster-whisper stay unloaded until the process holds them.
-banned-module-level-imports = ["piper", "faster_whisper"]
+# Piper stays unloaded until the process holds it.
+banned-module-level-imports = ["piper"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

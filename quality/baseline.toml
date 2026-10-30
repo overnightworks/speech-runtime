@@ -1,8 +1,5 @@
 # Measured by `quality baseline write`. Entries only ever go down.
 
-[file_lines]
-"tests/test_control_voice_status.py" = 821
-
 [function_lines."providers/chatterbox/src/speech_runtime_chatterbox/model.py"]
 "speech_token_chunks" = 83
 
@@ -12,22 +9,11 @@
 [function_lines."providers/voxcpm/tests/test_main.py"]
 "test_entrypoint_reserves_stdout_before_importing_the_provider" = 69
 
-[function_lines."scripts/contract_client.py"]
-"_run" = 75
-
 [function_lines."src/speech_runtime_service/speaking.py"]
 "speaking_for_voice" = 75
 
 [function_lines."tests/test_main.py"]
-"test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks" = 90
+"test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks" = 88
 
 [function_lines."tests/test_provider_process.py"]
 "test_direct_closed_entrypoint_streams_after_transient_loader_exits" = 80
-
-[function_lines."tests/test_control_sample.py"]
-"test_sample_keeps_its_engine_and_rate_when_the_selection_changes" = 72
-
-[function_lines."tests/test_control_voice_status.py"]
-"test_magpie_load_restore_samples_public_speech_and_deselect_reap" = 70
-"test_voxcpm_catalogue_and_factory_import_no_provider_packages" = 64
-"test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child" = 67

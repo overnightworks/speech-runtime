@@ -16,18 +16,15 @@ import pytest
 
 from speech_runtime_service import __main__
 from speech_runtime_service.config import Settings
-from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import VoiceId
-from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.fakes_support import FakeSpeaking
 from tests.support.identity_support import (
     caller_configuration_text,
     write_caller_configuration,
 )
 
 if TYPE_CHECKING:
-    import threading
-
     import uvicorn
 
 _SIGTERM_SERVER = """
@@ -37,21 +34,18 @@ from pathlib import Path
 
 from speech_runtime_service import __main__
 from speech_runtime_service.config import Settings
-from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import VoiceId
-from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.fakes_support import FakeSpeaking
 
 directory = Path(os.environ["SPEECH_TEST_DIRECTORY"])
 __main__.prepare_cuda_libraries = lambda: None
 Runtime.from_settings = lambda _settings: Runtime(
     None,
-    FakeHearing(),
     dependencies=RuntimeDependencies(
-        selection=VoiceSelectionStore(directory / "state", owner_uid=os.geteuid()),
         engine_factory=lambda _voice: FakeSpeaking(),
         artifact_checker=lambda _voice: True,
-        default_voice=VoiceId.PIPER,
+        voice=VoiceId.PIPER,
     ),
 )
 settings = Settings(
@@ -145,7 +139,7 @@ def test_serve_listens_only_on_the_private_socket(
         built.append(server)
         return server
 
-    def install(stop: asyncio.Event, _loading_stop: threading.Event) -> None:
+    def install(stop: asyncio.Event) -> None:
         stopping.append(stop)
 
     async def scenario() -> tuple[int, list[socket.AddressFamily]]:
@@ -167,7 +161,7 @@ def test_serve_listens_only_on_the_private_socket(
         stopping[0].set()
         return await serving, families
 
-    runtime = _loadable_runtime(tmp_path)
+    runtime = _loadable_runtime()
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
     monkeypatch.setattr(__main__, "build_server", observed_server)
@@ -179,15 +173,13 @@ def test_serve_listens_only_on_the_private_socket(
     assert families == [socket.AF_UNIX]
 
 
-def _loadable_runtime(directory: Path) -> Runtime:
+def _loadable_runtime() -> Runtime:
     return Runtime(
         None,
-        FakeHearing(),
         dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(directory / "state", owner_uid=os.geteuid()),
             engine_factory=lambda _voice: FakeSpeaking(),
             artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.PIPER,
+            voice=VoiceId.PIPER,
         ),
     )
 

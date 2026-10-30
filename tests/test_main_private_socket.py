@@ -1,32 +1,27 @@
-"""speech.sock serves the speech routes and the voice controls over one runtime."""
+"""speech.sock serves the speech routes over one runtime."""
 
 import asyncio
-import json
 import os
 import stat
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx2
 import pytest
 from starlette.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED, HTTP_404_NOT_FOUND
-from websockets.asyncio.client import ClientConnection, unix_connect
 
 from speech_runtime_client.wire import AUTHORIZATION_HEADER, SPEECH_PATH
-from speech_runtime_service.config import HEAR_SAMPLE_RATE
-from speech_runtime_service.pcm import BYTES_PER_SAMPLE, WAV_HEADER_BYTES, pcm_from_wav
+from speech_runtime_service.pcm import WAV_HEADER_BYTES, pcm_from_wav
 from speech_runtime_service.service import Runtime
 from tests.support.fakes_support import (
     GATE_TIMEOUT_SECONDS,
     SPEAK_SAMPLE_RATE,
-    FakeHearing,
     FakeSpeaking,
     GatedSpeaking,
-    sine_pcm,
 )
 from tests.support.identity_support import valid_headers
 from tests.support.private_server_support import PrivateServer, serving_privately
-from tests.support.speak_support import FailingSpeaking, speak_body
+from tests.support.speak_support import FailingSpeaking, gate_is_free, speak_body
 
 if TYPE_CHECKING:
     import threading
@@ -57,10 +52,8 @@ def _socket_client(
     )
 
 
-def _gated_runtime(
-    voice: FakeSpeaking | GatedSpeaking, hearing: FakeHearing | None = None
-) -> Runtime:
-    return Runtime(voice, hearing or FakeHearing(), memory_probe=lambda: 0)
+def _gated_runtime(voice: FakeSpeaking | GatedSpeaking) -> Runtime:
+    return Runtime(voice, memory_probe=lambda: 0)
 
 
 async def _first_chunk(chunks: AsyncIterator[bytes]) -> bytes:
@@ -79,24 +72,6 @@ def _assert_whole_wav(status_code: int, body: bytes, voice: GatedSpeaking) -> No
     rate, pcm = pcm_from_wav(body)
     assert rate == SPEAK_SAMPLE_RATE
     assert pcm == voice.audio
-
-
-async def _receive_event(connection: ClientConnection) -> dict[str, Any]:
-    message = await asyncio.wait_for(connection.recv(), timeout=GATE_TIMEOUT_SECONDS)
-    return json.loads(message)
-
-
-async def _speak_then_pause(connection: ClientConnection) -> None:
-    await connection.send(sine_pcm(0.5))
-    partial = await _receive_event(connection)
-    assert partial["final"] is False
-    assert "eins" in partial["text"]
-    await connection.send(bytes(int(0.8 * HEAR_SAMPLE_RATE * BYTES_PER_SAMPLE)))
-    assert (await _receive_event(connection))["final"] is True
-
-
-def _hear_uri() -> str:
-    return "ws://speech/hear?language=de"
 
 
 def _modes_and_owners(directory: Path, socket_path: Path) -> list[int]:
@@ -166,9 +141,7 @@ def test_socket_speak_disconnect_frees_the_voice_for_the_next_caller(
 
 
 def test_a_speak_holds_the_one_synthesis_gate(tmp_path: Path) -> None:
-    async def scenario() -> tuple[
-        GatedSpeaking, httpx2.Response, httpx2.Response, httpx2.Response
-    ]:
+    async def scenario() -> tuple[GatedSpeaking, bool, httpx2.Response, bool]:
         voice = GatedSpeaking()
         runtime = _gated_runtime(voice)
         async with (
@@ -180,18 +153,17 @@ def test_a_speak_holds_the_one_synthesis_gate(tmp_path: Path) -> None:
                 socket_client.post(SPEECH_PATH, content=_SPEAK_BODY)
             )
             await _wait_for(voice.entered_first_step)
-            busy = await socket_client.post("/voices/piper/sample/de")
+            held = runtime.synthesis_gate.try_acquire() is None
             voice.release_first_step.set()
             talked = await asyncio.wait_for(talk, timeout=GATE_TIMEOUT_SECONDS)
-            free = await socket_client.post("/voices/piper/sample/de")
-        return voice, busy, talked, free
+            return voice, held, talked, gate_is_free(runtime)
 
-    voice, busy, talked, free = asyncio.run(scenario())
+    voice, held, talked, free = asyncio.run(scenario())
 
-    assert (busy.status_code, busy.json()) == (409, {"detail": "speech is busy"})
+    assert held
     assert voice.most_concurrent_syntheses == 1
     _assert_whole_wav(talked.status_code, talked.content, voice)
-    _assert_whole_wav(free.status_code, free.content, voice)
+    assert free
 
 
 @pytest.mark.parametrize("chunks_before_failing", [0, 1])
@@ -217,51 +189,6 @@ def test_socket_speak_failure_aborts_the_body_and_the_next_request_is_whole(
     assert aborted
     assert later.status_code == HTTP_200_OK
     assert pcm_from_wav(later.content)[1]
-
-
-def test_socket_hear_sends_partials_then_a_final_and_a_second_utterance(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> dict[str, Any]:
-        runtime = _gated_runtime(GatedSpeaking())
-        async with (
-            serving_privately(tmp_path, runtime) as server,
-            unix_connect(str(server.path), uri=_hear_uri()) as connection,
-        ):
-            await _speak_then_pause(connection)
-            await connection.send(sine_pcm(0.5))
-            return await _receive_event(connection)
-
-    second = asyncio.run(scenario())
-
-    assert second["final"] is False
-    assert "eins" in second["text"]
-
-
-def test_socket_hear_disconnect_runs_no_decode_and_frees_the_next_session(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> tuple[int, int]:
-        hearing = FakeHearing()
-        runtime = _gated_runtime(GatedSpeaking(), hearing)
-        async with serving_privately(tmp_path, runtime) as server:
-            async with unix_connect(str(server.path), uri=_hear_uri()) as leaving:
-                await leaving.send(sine_pcm(0.5))
-                assert (await _receive_event(leaving))["final"] is False
-                at_close = hearing.transcriptions
-                leaving.transport.abort()
-                await asyncio.wait_for(
-                    server.hear_handler_returned.wait(), timeout=GATE_TIMEOUT_SECONDS
-                )
-            after_handler = hearing.transcriptions
-            async with unix_connect(str(server.path), uri=_hear_uri()) as staying:
-                await _speak_then_pause(staying)
-        return at_close, after_handler
-
-    at_close, after_handler = asyncio.run(scenario())
-
-    # No audio follows the partial, so no poll decodes; a final decode would count.
-    assert after_handler == at_close
 
 
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])

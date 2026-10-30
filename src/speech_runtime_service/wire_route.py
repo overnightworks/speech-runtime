@@ -96,18 +96,13 @@ class _SpeechRoute:
         admission = self._admit(voice)
         if isinstance(admission, JSONResponse):
             return admission
-        try:
-            lease = await self._runtime.synthesis_gate.acquire(deadline)
-        except BaseException:
-            admission.close()
-            raise
+        lease = await self._runtime.synthesis_gate.acquire(deadline)
         if lease is None:
-            admission.close()
             return self._busy()
         chunks = wav_chunks(
             admission.speaking, text, SPEAKING_LANGUAGE, admission.sample_rate
         )
-        return ClosingWavResponse(chunks, admission, lease)
+        return ClosingWavResponse(chunks, lease)
 
     def _checked(self, raw: bytes) -> tuple[str, VoiceId] | JSONResponse:
         parsed = _parse(raw)
@@ -128,7 +123,6 @@ class _SpeechRoute:
                 background=BackgroundTask(self._runtime.reconcile_failed_active),
             )
         if admission.voice is not voice:
-            admission.close()
             return _refused(RefusalCode.UNAVAILABLE)
         return admission
 

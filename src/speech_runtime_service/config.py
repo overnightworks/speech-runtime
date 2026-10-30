@@ -15,22 +15,15 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from speech_runtime_provider_contract import (
-    QWEN_MODEL_ID,
-    MagpieSpeaker,
-    QwenSpeaker,
-)
+from speech_runtime_provider_contract import MagpieSpeaker, QwenSpeaker
 from webauth.https_client import is_https_url
 
 from speech_runtime_service.voices import (
-    CHATTERBOX_SPEAKING_MODEL,
     DEFAULT_SPEAKING_MODEL,
     VoiceId,
+    voice_for_model,
 )
 
-DEFAULT_HEARING_MODEL = "Systran/faster-whisper-large-v3"
-HEAR_SAMPLE_RATE = 16_000
-_STATE_DIRECTORY_ERROR = "state directory must be absolute"
 _PROVIDER_ROOT_ERROR = "provider root must be absolute"
 _SPEAKING_MODEL_ERROR = "speaking model must be a supported baseline"
 _CONFIG_FILE_ERROR = "config file must be absolute"
@@ -49,7 +42,6 @@ class Settings(BaseSettings):
 
     device: str = "cuda"
     speaking_model: str = DEFAULT_SPEAKING_MODEL
-    hearing_model: str = DEFAULT_HEARING_MODEL
     voice_cache: Path = Field(default_factory=lambda: Path.home() / ".cache" / "piper")
     huggingface_cache: Path = Field(
         default_factory=lambda: Path(huggingface_hub_constants.HF_HUB_CACHE)
@@ -58,9 +50,6 @@ class Settings(BaseSettings):
     qwen_speaker: QwenSpeaker = QwenSpeaker.RYAN
     magpie_speaker: MagpieSpeaker = MagpieSpeaker.SOFIA
     private_directory: Path = Path("/run/speech-runtime")
-    state_directory: Path = Field(
-        default_factory=lambda: Path.home() / ".local/state/speech-runtime"
-    )
     busy_wait_seconds: float = Field(default=5.0, ge=0, allow_inf_nan=False)
     max_input_characters: int = Field(default=4096, ge=1)
     config_file: Path | None = None
@@ -69,13 +58,6 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="PRESENTATOR_RUNTIME_UID",
     )
-
-    @field_validator("state_directory")
-    @classmethod
-    def _state_directory_is_absolute(cls, directory: Path) -> Path:
-        if not directory.is_absolute():
-            raise ValueError(_STATE_DIRECTORY_ERROR)
-        return directory
 
     @field_validator("config_file")
     @classmethod
@@ -94,12 +76,10 @@ class Settings(BaseSettings):
     @field_validator("speaking_model")
     @classmethod
     def _speaking_model_is_a_baseline(cls, model: str) -> str:
-        if model not in {
-            DEFAULT_SPEAKING_MODEL,
-            CHATTERBOX_SPEAKING_MODEL,
-            QWEN_MODEL_ID,
-        }:
-            raise ValueError(_SPEAKING_MODEL_ERROR)
+        try:
+            voice_for_model(model)
+        except KeyError:
+            raise ValueError(_SPEAKING_MODEL_ERROR) from None
         return model
 
 

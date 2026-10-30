@@ -14,20 +14,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
-import uvicorn
 from fastapi.testclient import TestClient
 from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
 from speech_runtime_service import __main__
 from speech_runtime_service.__main__ import PrivateSocket
 from speech_runtime_service.config import Settings
-from speech_runtime_service.control import create_control_app
 from speech_runtime_service.provider_process import ProviderLaunch, ProviderProcess
-from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import CHATTERBOX_SPEAKING_MODEL, VoiceId
-from tests.support.fakes_support import FakeHearing, FakeSpeaking
-from tests.support.identity_support import valid_callers, write_caller_configuration
+from tests.support.fakes_support import FakeSpeaking
+from tests.support.identity_support import write_caller_configuration
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -91,76 +88,6 @@ class _CloseOrderingServer:
         if not closed_first:
             self.scenario.cache.mkdir(parents=True, exist_ok=True)
             (self.scenario.cache / "allow-ready").touch()
-
-
-def test_closed_uds_client_does_not_abandon_an_accepted_voice_load(
-    tmp_path: Path,
-) -> None:
-    asyncio.run(_closed_uds_client_finishes_load(tmp_path))
-
-
-async def _closed_uds_client_finishes_load(tmp_path: Path) -> None:
-    entered = threading.Event()
-    release = threading.Event()
-    completed = threading.Event()
-
-    class HeldSpeaking(FakeSpeaking):
-        def load(self) -> None:
-            entered.set()
-            assert release.wait(timeout=5)
-            self.ready = True
-            completed.set()
-
-    selection = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
-    engine = HeldSpeaking(ready=False)
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=selection,
-            engine_factory=lambda _voice: engine,
-            artifact_checker=lambda _voice: True,
-        ),
-    )
-    settings = Settings(
-        private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid()
-    )
-    shutdown_started = asyncio.Event()
-
-    class ObservingServer(uvicorn.Server):
-        async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
-            shutdown_started.set()
-            await super().shutdown(sockets=sockets)
-
-    server = ObservingServer(
-        uvicorn.Config(create_control_app(settings, runtime, valid_callers()))
-    )
-    with PrivateSocket(tmp_path, runtime_uid=os.geteuid()) as listener:
-        serving = asyncio.create_task(server.serve(sockets=[listener]))
-        await asyncio.to_thread(_close_after_posting_load, tmp_path / "speech.sock")
-        assert await asyncio.to_thread(entered.wait, 5)
-        assert not completed.is_set()
-        server.should_exit = True
-        await shutdown_started.wait()
-        release.set()
-        assert await asyncio.to_thread(completed.wait, 5)
-        await serving
-
-    assert selection.read() is VoiceId.CHATTERBOX
-    admission = runtime.capture_speaking()
-    assert admission is not None
-    assert admission.speaking is engine
-    admission.close()
-
-
-def _close_after_posting_load(path: Path) -> None:
-    request = (
-        b"POST /voices/chatterbox/load HTTP/1.1\r\n"
-        b"Host: speech\r\nContent-Length: 0\r\n\r\n"
-    )
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.connect(str(path))
-        client.sendall(request)
 
 
 class _HealthServer:
@@ -343,12 +270,10 @@ def test_failed_loader_stops_the_server_and_cleans_the_owned_socket(
 ) -> None:
     runtime = Runtime(
         None,
-        FakeHearing(fail=True),
         dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=lambda _voice: FakeSpeaking(),
+            engine_factory=lambda _voice: FakeSpeaking(fail=True),
             artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.PIPER,
+            voice=VoiceId.PIPER,
         ),
     )
 
@@ -374,9 +299,7 @@ def test_failed_loader_stops_the_server_and_cleans_the_owned_socket(
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
     monkeypatch.setattr(__main__, "build_server", lambda _app: Server())
-    monkeypatch.setattr(
-        __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
-    )
+    monkeypatch.setattr(__main__, "_install_signal_handlers", lambda _stopping: None)
     monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", str(os.geteuid()))
 
     outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
@@ -433,12 +356,10 @@ while True:
     )
     runtime = Runtime(
         None,
-        FakeHearing(),
         dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
             engine_factory=lambda _voice: engine,
             artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.CHATTERBOX,
+            voice=VoiceId.CHATTERBOX,
         ),
     )
     real_popen = subprocess.Popen
@@ -459,7 +380,7 @@ while True:
     )
     server = _CloseOrderingServer(scenario=scenario)
 
-    def install(stop: asyncio.Event, _loading_stop: threading.Event) -> None:
+    def install(stop: asyncio.Event) -> None:
         stopping.append(stop)
 
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
@@ -491,12 +412,10 @@ def test_owned_speaking_failure_stops_the_server_and_returns_failure(
     speaking = FatalSpeaking()
     runtime = Runtime(
         speaking,
-        FakeHearing(),
         dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
             engine_factory=lambda _voice: speaking,
             artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.PIPER,
+            voice=VoiceId.PIPER,
         ),
     )
 
@@ -522,44 +441,13 @@ def test_owned_speaking_failure_stops_the_server_and_returns_failure(
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
     monkeypatch.setattr(__main__, "build_server", lambda _app: server)
-    monkeypatch.setattr(
-        __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
-    )
+    monkeypatch.setattr(__main__, "_install_signal_handlers", lambda _stopping: None)
 
     outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 
     assert outcome == 1
     assert server.should_exit
     assert not (tmp_path / "speech.sock").exists()
-
-
-def test_runtime_skips_hearing_after_a_stop_during_speaking_load(
-    tmp_path: Path,
-) -> None:
-    started = threading.Event()
-    release = threading.Event()
-    stop = threading.Event()
-
-    hearing = FakeHearing(ready=False)
-    runtime = Runtime(
-        None,
-        hearing,
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=lambda _voice: _BlockedSpeaking(started, release),
-            artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.PIPER,
-        ),
-    )
-    loader = threading.Thread(target=runtime.load, args=(stop,))
-    loader.start()
-    assert started.wait(timeout=5)
-    stop.set()
-    release.set()
-    loader.join(timeout=5)
-
-    assert not loader.is_alive()
-    assert hearing.ready is False
 
 
 def test_orchestrator_serves_health_from_its_loading_runtime(
@@ -572,13 +460,11 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
 
     runtime = Runtime(
         None,
-        FakeHearing(ready=False),
         memory_probe=lambda: card_memory_mb,
         dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
             engine_factory=lambda _voice: _BlockedSpeaking(started, release),
             artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.PIPER,
+            voice=VoiceId.PIPER,
         ),
     )
 
@@ -590,9 +476,7 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
     monkeypatch.setattr(__main__, "build_server", healthy_server)
-    monkeypatch.setattr(
-        __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
-    )
+    monkeypatch.setattr(__main__, "_install_signal_handlers", lambda _stopping: None)
 
     outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 
@@ -603,11 +487,10 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
         "streams": False,
         "sample_rate": 0,
     }
-    assert observed["hearing"] == {"model": "fake-ears", "ready": False}
     assert observed["card_memory_mb"] == card_memory_mb
 
 
-def test_signal_handler_stops_the_runtime_loader_and_async_orchestrator(
+def test_signal_handler_stops_the_async_orchestrator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     handlers: dict[signal.Signals, Callable[[], None]] = {}
@@ -619,7 +502,6 @@ def test_signal_handler_stops_the_runtime_loader_and_async_orchestrator(
             handlers[received] = callback
 
     stopping = asyncio.Event()
-    loading_stop = threading.Event()
 
     def running_loop() -> Loop:
         return Loop()
@@ -628,17 +510,16 @@ def test_signal_handler_stops_the_runtime_loader_and_async_orchestrator(
 
     handler_name = "_install_signal_handlers"
     install_handlers = getattr(__main__, handler_name)
-    install_handlers(stopping, loading_stop)
+    install_handlers(stopping)
     handlers[signal.SIGTERM]()
 
     assert stopping.is_set()
-    assert loading_stop.is_set()
 
 
 def test_signal_exit_is_zero_and_cleans_the_owned_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime = Runtime(FakeSpeaking(), FakeHearing())
+    runtime = Runtime(FakeSpeaking())
 
     class Server:
         def __init__(self) -> None:
@@ -663,7 +544,7 @@ def test_signal_exit_is_zero_and_cleans_the_owned_socket(
     monkeypatch.setattr(
         __main__,
         "_install_signal_handlers",
-        lambda stopping, loading_stop: (loading_stop.set(), stopping.set()),
+        lambda stopping: stopping.set(),
     )
 
     outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
@@ -675,7 +556,7 @@ def test_signal_exit_is_zero_and_cleans_the_owned_socket(
 def test_server_ending_on_its_own_returns_failure_and_cleans_the_owned_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime = Runtime(FakeSpeaking(), FakeHearing())
+    runtime = Runtime(FakeSpeaking())
 
     class Server:
         should_exit = False
@@ -686,9 +567,7 @@ def test_server_ending_on_its_own_returns_failure_and_cleans_the_owned_socket(
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
     monkeypatch.setattr(__main__, "build_server", lambda _app: Server())
-    monkeypatch.setattr(
-        __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
-    )
+    monkeypatch.setattr(__main__, "_install_signal_handlers", lambda _stopping: None)
 
     outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 

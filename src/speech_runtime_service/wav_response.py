@@ -21,17 +21,11 @@ class Closeable(Protocol):
 
 
 class ClosingWavResponse(StreamingResponse):
-    """Close a WAV generator and its leases when ASGI delivery ends."""
+    """Close a WAV generator and its lease when ASGI delivery ends."""
 
-    def __init__(
-        self,
-        chunks: Generator[bytes],
-        admission: Closeable,
-        lease: Closeable | None = None,
-    ) -> None:
+    def __init__(self, chunks: Generator[bytes], lease: Closeable) -> None:
         """Attach every already-owned response-lifetime resource."""
         self._chunks = chunks
-        self._admission = admission
         self._lease = lease
         try:
             super().__init__(iterate_in_threadpool(chunks), media_type="audio/wav")
@@ -50,8 +44,4 @@ class ClosingWavResponse(StreamingResponse):
         try:
             self._chunks.close()
         finally:
-            try:
-                if self._lease is not None:
-                    self._lease.close()
-            finally:
-                self._admission.close()
+            self._lease.close()

@@ -139,7 +139,6 @@ class ProviderProcess:
         self.model_name = launch.model_name
         self.sample_rate = launch.sample_rate
         self.streams = launch.streams
-        self.retain_when_inactive = False
         self._executable = launch.executable
         self._arguments = launch.arguments
         self._fatal_callback = fatal_callback or (lambda: None)
@@ -478,13 +477,6 @@ def provider_entrypoint(
         / "bin"
         / (f"speech-runtime-{provider.value}-worker")
     )
-
-
-def provider_entrypoint_is_usable(
-    provider_root: Path | None, provider: ProviderId
-) -> bool:
-    """Report whether the configured closed worker is a regular executable."""
-    return _is_executable_file(provider_entrypoint(provider_root, provider))
 
 
 def _is_executable_file(entrypoint: Path | None) -> bool:

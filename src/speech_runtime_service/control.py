@@ -1,22 +1,10 @@
-"""The private Unix-socket app: the speech wire and the voice controls."""
+"""The private Unix-socket app: health and the speech wire."""
 
-from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
-from speech_runtime_service.service import (
-    Runtime,
-    SynthesisBusyError,
-    mount_speech_routes,
-)
-from speech_runtime_service.voices import (
-    VoiceDownloadOutcome,
-    VoiceId,
-    VoiceLoadOutcome,
-    VoiceSnapshot,
-)
-from speech_runtime_service.wav_response import ClosingWavResponse
+from speech_runtime_service.service import Runtime, mount_health_route
 from speech_runtime_service.wire_route import mount_wire_routes
 
 if TYPE_CHECKING:
@@ -24,73 +12,16 @@ if TYPE_CHECKING:
     from speech_runtime_service.config import Settings
 
 
-class SampleLanguage(StrEnum):
-    """The two fixed phrases the private sample endpoint can synthesize."""
-
-    GERMAN = "de"
-    ENGLISH = "en"
-
-
-_SAMPLE_TEXT: dict[SampleLanguage, str] = {
-    SampleLanguage.GERMAN: "Hallo, ich bin die Stimme deiner Präsentation.",
-    SampleLanguage.ENGLISH: "Hello, I am the voice of your presentation.",
-}
-
-
 def create_control_app(
     settings: Settings, runtime: Runtime, callers: SpeechCallers
 ) -> FastAPI:
-    """Build the private app: the speech routes and the voice controls, no docs."""
+    """Build the private app: health and the speech wire, no docs."""
     app = FastAPI(
         title="speech-runtime-private",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
     )
-    mount_speech_routes(app, runtime)
+    mount_health_route(app, runtime)
     mount_wire_routes(app, runtime, settings, callers)
-
-    @app.get("/voices")
-    def voices() -> VoiceSnapshot:
-        return runtime.snapshot(settings)
-
-    @app.post(
-        "/voices/{voice}/load",
-        responses={409: {"description": "A voice transition is in progress."}},
-    )
-    def load(voice: VoiceId) -> dict[str, VoiceLoadOutcome]:
-        outcome = runtime.load_voice(voice)
-        if outcome is None:
-            raise HTTPException(
-                status_code=409, detail="voice transition is in progress"
-            )
-        return {"outcome": outcome}
-
-    @app.post(
-        "/voices/qwen3-tts-0.6b/download",
-        responses={409: {"description": "The Qwen download is unavailable."}},
-    )
-    def download() -> dict[str, VoiceDownloadOutcome]:
-        outcome = runtime.start_qwen_download()
-        if outcome is None:
-            raise HTTPException(status_code=409, detail="Qwen download is unavailable")
-        return {"outcome": outcome}
-
-    @app.post(
-        "/voices/{voice}/sample/{language}",
-        responses={
-            404: {"description": "The active voice is unavailable."},
-            409: {"description": "Speech is busy."},
-        },
-    )
-    def sample(voice: VoiceId, language: SampleLanguage) -> ClosingWavResponse:
-        try:
-            voice_sample = runtime.preacquire_sample(voice)
-        except SynthesisBusyError:
-            raise HTTPException(status_code=409, detail="speech is busy") from None
-        if voice_sample is None:
-            raise HTTPException(status_code=404, detail="active voice is unavailable")
-        chunks = voice_sample.wav_chunks(_SAMPLE_TEXT[language], language.value)
-        return ClosingWavResponse(chunks, voice_sample)
-
     return app

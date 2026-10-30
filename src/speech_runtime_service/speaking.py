@@ -37,7 +37,6 @@ class PiperSpeaking:
     """One Piper voice, loaded once and held for the process."""
 
     streams = False
-    retain_when_inactive = True
 
     def __init__(self, model_name: str, cache: Path) -> None:
         """Remember the catalogue name and where ONNX files are kept."""
