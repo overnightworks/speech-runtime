@@ -42,6 +42,7 @@ from speech_runtime_service.voices import (
     statuses,
 )
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.identity_support import valid_callers
 from tests.support.speak_support import (
     ASGI_TIMEOUT_SECONDS,
     speak_body,
@@ -434,7 +435,6 @@ async def _disconnect_after_request_reaches_child(
     disconnect = asyncio.Event()
     delivered = asyncio.Event()
     pcm_sent = asyncio.Event()
-    never = asyncio.Event()
 
     async def receive() -> dict[str, object]:
         nonlocal sent_body
@@ -456,7 +456,7 @@ async def _disconnect_after_request_reaches_child(
             body_chunks += 1
             if body_chunks == 1:
                 pcm_sent.set()
-                await never.wait()
+                await asyncio.Event().wait()
 
     call = asyncio.create_task(app(speak_scope(), receive, send))
     await asyncio.to_thread(_wait_for_request_count, request_ids, 3)
@@ -505,7 +505,7 @@ def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
     initial = runtime()
     restored: Runtime | None = None
     try:
-        control = TestClient(create_control_app(settings, initial))
+        control = TestClient(create_control_app(settings, initial, valid_callers()))
         rows = control.get("/voices").json()["voices"]
         voxcpm = next(row for row in rows if row["id"] == VoiceId.VOXCPM)
         assert voxcpm == {
@@ -528,7 +528,7 @@ def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
 
         restored = runtime()
         restored.load()
-        public = create_control_app(settings, restored)
+        public = create_control_app(settings, restored, valid_callers())
         request_ids = cache / "request-ids"
         disconnected = asyncio.run(
             _disconnect_after_request_reaches_child(public, VoiceId.VOXCPM, request_ids)
@@ -578,7 +578,7 @@ def test_magpie_load_restore_samples_public_speech_and_deselect_reap(
     initial = runtime()
     restored: Runtime | None = None
     try:
-        control = TestClient(create_control_app(settings, initial))
+        control = TestClient(create_control_app(settings, initial, valid_callers()))
         assert control.post("/voices/nvidia-magpie/load").json() == {
             "outcome": VoiceLoadOutcome.ACTIVATED
         }
@@ -594,7 +594,7 @@ def test_magpie_load_restore_samples_public_speech_and_deselect_reap(
 
         restored = runtime()
         restored.load()
-        public = create_control_app(settings, restored)
+        public = create_control_app(settings, restored, valid_callers())
         request_ids = cache / "request-ids"
         disconnected = asyncio.run(
             _disconnect_after_request_reaches_child(public, VoiceId.MAGPIE, request_ids)
@@ -787,7 +787,7 @@ def test_private_endpoint_reports_loading_and_active_from_the_shared_runtime(
     )
     runtime = Runtime(FakeSpeaking(ready=False), FakeHearing())
     runtime.loading = True
-    client = TestClient(create_control_app(settings, runtime))
+    client = TestClient(create_control_app(settings, runtime, valid_callers()))
 
     loading = client.get("/voices").json()["voices"]
     runtime.loading = False

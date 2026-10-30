@@ -18,9 +18,10 @@ from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import VoiceId, VoiceLoadOutcome
 from tests.support.fakes_support import FakeHearing, FakeSpeaking, GatedSpeaking
+from tests.support.identity_support import valid_callers, valid_headers
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
     from pathlib import Path
 
     from fastapi import FastAPI
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from httpx2 import Response as ClientResponse
     from starlette.responses import Response, StreamingResponse
 
+    from speech_runtime_service.callers import SpeechCallers
     from speech_runtime_service.service import SpeakingEngine
     from speech_runtime_service.synthesis_gate import Lease
 
@@ -55,16 +57,20 @@ ASGI_TIMEOUT_SECONDS = 5.0
 
 
 def speak_app(
-    speaking: SpeakingEngine | None = None, settings: Settings | None = None
+    speaking: SpeakingEngine | None = None,
+    settings: Settings | None = None,
+    callers: SpeechCallers | None = None,
 ) -> FastAPI:
-    """The private app over a fake runtime, with the wire settings a test needs."""
+    """The private app over a fake runtime; its callers accept `valid_headers()`."""
     runtime = Runtime(speaking or FakeSpeaking(), FakeHearing(), memory_probe=lambda: 0)
-    return create_control_app(settings or Settings(), runtime)
+    return create_control_app(
+        settings or Settings(), runtime, callers or valid_callers()
+    )
 
 
 def speak_response(runtime: Runtime, voice: str = VoiceId.PIPER.value) -> Response:
     """Drive the wire route's endpoint with the default body for `voice`."""
-    app = create_control_app(Settings(), runtime)
+    app = create_control_app(Settings(), runtime, valid_callers())
     route = next(
         route
         for route in app.routes
@@ -101,7 +107,9 @@ def response_body(response: StreamingResponse) -> bytes:
     return asyncio.run(deliver())
 
 
-def speak_scope() -> dict[str, object]:
+def speak_scope(headers: Mapping[str, str] | None = None) -> dict[str, object]:
+    """The scope of a speak request; `headers` default to a valid pair of tokens."""
+    sent = valid_headers() if headers is None else headers
     return {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -110,7 +118,10 @@ def speak_scope() -> dict[str, object]:
         "path": SPEECH_PATH,
         "raw_path": SPEECH_PATH.encode(),
         "query_string": b"",
-        "headers": [(b"content-type", b"application/json")],
+        "headers": [
+            (b"content-type", b"application/json"),
+            *((name.lower().encode(), value.encode()) for name, value in sent.items()),
+        ],
         "client": ("test", 123),
         "server": ("test", 80),
     }
@@ -212,7 +223,7 @@ def fake_runtime(speaking: SpeakingEngine | None = None) -> Runtime:
 
 def app_over(runtime: Runtime, **settings: float) -> FastAPI:
     """The private app over `runtime` with the wire settings a test sets."""
-    return create_control_app(Settings(**settings), runtime)
+    return create_control_app(Settings(**settings), runtime, valid_callers())
 
 
 class CommittingSelectionStore(VoiceSelectionStore):
@@ -283,10 +294,15 @@ def switch_completes(runtime: Runtime) -> bool:
     return not switching.is_alive() and outcomes == [VoiceLoadOutcome.ACTIVATED]
 
 
-def post_speech(client: TestClient, body: bytes) -> ClientResponse:
-    """POST `body` to the wire's speech path."""
+def post_speech(
+    client: TestClient, body: bytes, headers: Mapping[str, str] | None = None
+) -> ClientResponse:
+    """POST `body` to the wire's speech path; `headers` default to a valid pair."""
+    sent = valid_headers() if headers is None else headers
     return client.post(
-        SPEECH_PATH, content=body, headers={"content-type": "application/json"}
+        SPEECH_PATH,
+        content=body,
+        headers={"content-type": "application/json", **sent},
     )
 
 

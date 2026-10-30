@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
-from starlette.status import HTTP_200_OK, HTTP_404_NOT_FOUND
+from starlette.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED, HTTP_404_NOT_FOUND
 from websockets.asyncio.client import ClientConnection, unix_connect
 
-from speech_runtime_client.wire import SPEECH_PATH
+from speech_runtime_client.wire import AUTHORIZATION_HEADER, SPEECH_PATH
 from speech_runtime_service.config import HEAR_SAMPLE_RATE
 from speech_runtime_service.pcm import BYTES_PER_SAMPLE, WAV_HEADER_BYTES, pcm_from_wav
 from speech_runtime_service.service import Runtime
@@ -24,12 +24,13 @@ from tests.support.fakes_support import (
     GatedSpeaking,
     sine_pcm,
 )
+from tests.support.identity_support import valid_headers
 from tests.support.private_server_support import PrivateServer, serving_privately
 from tests.support.speak_support import FailingSpeaking, speak_body
 
 if TYPE_CHECKING:
     import threading
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Mapping
     from pathlib import Path
 
 _SPEAK_BODY = speak_body()
@@ -44,11 +45,15 @@ async def _gates_released(voice: GatedSpeaking) -> AsyncIterator[None]:
         voice.release_all()
 
 
-def _socket_client(server: PrivateServer) -> httpx2.AsyncClient:
+def _socket_client(
+    server: PrivateServer, headers: Mapping[str, str] | None = None
+) -> httpx2.AsyncClient:
+    """A client on the socket; `headers` default to a valid pair of tokens."""
     return httpx2.AsyncClient(
         transport=httpx2.AsyncHTTPTransport(uds=str(server.path)),
         base_url="http://speech",
         timeout=GATE_TIMEOUT_SECONDS,
+        headers=valid_headers() if headers is None else headers,
     )
 
 
@@ -269,3 +274,25 @@ def test_socket_serves_no_api_documentation(tmp_path: Path, path: str) -> None:
             return await client.get(path)
 
     assert asyncio.run(scenario()).status_code == HTTP_404_NOT_FOUND
+
+
+def test_the_socket_refuses_a_speak_without_the_persons_token(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> tuple[httpx2.Response, httpx2.Response]:
+        headers = valid_headers()
+        del headers[AUTHORIZATION_HEADER]
+        async with (
+            serving_privately(tmp_path, _gated_runtime(FakeSpeaking())) as server,
+            _socket_client(server, headers) as client,
+            _socket_client(server) as admitted,
+        ):
+            return (
+                await client.post(SPEECH_PATH, content=_SPEAK_BODY),
+                await admitted.post(SPEECH_PATH, content=_SPEAK_BODY),
+            )
+
+    refused, served = asyncio.run(scenario())
+
+    assert refused.status_code == HTTP_401_UNAUTHORIZED
+    assert served.status_code == HTTP_200_OK

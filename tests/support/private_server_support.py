@@ -12,6 +12,7 @@ from speech_runtime_service.__main__ import PrivateSocket
 from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
 from tests.support.fakes_support import GATE_TIMEOUT_SECONDS
+from tests.support.identity_support import valid_callers
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 
     from starlette.types import Message, Receive, Scope, Send
 
+    from speech_runtime_service.callers import SpeechCallers
     from speech_runtime_service.service import Runtime
 
 
@@ -33,13 +35,16 @@ class PrivateServer:
 
 @asynccontextmanager
 async def serving_privately(
-    directory: Path, runtime: Runtime
+    directory: Path, runtime: Runtime, callers: SpeechCallers | None = None
 ) -> AsyncIterator[PrivateServer]:
-    """Serve the private app on a real PrivateSocket and stop it on exit."""
+    """Serve the private app on a real PrivateSocket and stop it on exit.
+
+    The callers default to ones that accept `valid_headers()`.
+    """
     settings = Settings(
         private_directory=directory, PRESENTATOR_RUNTIME_UID=os.geteuid()
     )
-    app = create_control_app(settings, runtime)
+    app = create_control_app(settings, runtime, callers or valid_callers())
     hear_handler_returned = asyncio.Event()
     speak_disconnect_received = asyncio.Event()
 

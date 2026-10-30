@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import threading
+import traceback
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -26,10 +27,23 @@ from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.identity_support import valid_callers, write_caller_configuration
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+
+def _serving_settings(directory: Path, **changes: object) -> Settings:
+    """Settings that start `serve` in `directory` with a valid caller configuration."""
+    return Settings(
+        **{
+            "private_directory": directory,
+            "PRESENTATOR_RUNTIME_UID": os.geteuid(),
+            "config_file": write_caller_configuration(directory),
+        }
+        | changes
+    )
 
 
 class _BlockedSpeaking(FakeSpeaking):
@@ -118,7 +132,9 @@ async def _closed_uds_client_finishes_load(tmp_path: Path) -> None:
             shutdown_started.set()
             await super().shutdown(sockets=sockets)
 
-    server = ObservingServer(uvicorn.Config(create_control_app(settings, runtime)))
+    server = ObservingServer(
+        uvicorn.Config(create_control_app(settings, runtime, valid_callers()))
+    )
     with PrivateSocket(tmp_path, runtime_uid=os.geteuid()) as listener:
         serving = asyncio.create_task(server.serve(sockets=[listener]))
         await asyncio.to_thread(_close_after_posting_load, tmp_path / "speech.sock")
@@ -363,7 +379,7 @@ def test_failed_loader_stops_the_server_and_cleans_the_owned_socket(
     )
     monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", str(os.geteuid()))
 
-    outcome = asyncio.run(__main__.serve(Settings(private_directory=tmp_path)))
+    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 
     assert outcome == 1
     assert not (tmp_path / "speech.sock").exists()
@@ -454,11 +470,7 @@ while True:
         "speech_runtime_service.provider_process.subprocess.Popen", observed_popen
     )
 
-    outcome = asyncio.run(
-        __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
-        )
-    )
+    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 
     assert outcome == 0
     assert close_before_await == [True]
@@ -514,11 +526,7 @@ def test_owned_speaking_failure_stops_the_server_and_returns_failure(
         __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
     )
 
-    outcome = asyncio.run(
-        __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
-        )
-    )
+    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 
     assert outcome == 1
     assert server.should_exit
@@ -586,11 +594,7 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
         __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
     )
 
-    outcome = asyncio.run(
-        __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
-        )
-    )
+    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 
     assert outcome == 1
     assert observed["speaking"] == {
@@ -662,11 +666,7 @@ def test_signal_exit_is_zero_and_cleans_the_owned_socket(
         lambda stopping, loading_stop: (loading_stop.set(), stopping.set()),
     )
 
-    outcome = asyncio.run(
-        __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
-        )
-    )
+    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 
     assert outcome == 0
     assert not (tmp_path / "speech.sock").exists()
@@ -690,11 +690,7 @@ def test_server_ending_on_its_own_returns_failure_and_cleans_the_owned_socket(
         __main__, "_install_signal_handlers", lambda _stopping, _loading_stop: None
     )
 
-    outcome = asyncio.run(
-        __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
-        )
-    )
+    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 
     assert outcome == 1
     assert not (tmp_path / "speech.sock").exists()
@@ -719,7 +715,37 @@ def test_invalid_runtime_uid_refuses_before_runtime_or_listener_work(
         lambda _settings: pytest.fail("constructed runtime"),
     )
 
-    settings = Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=runtime_uid)
+    settings = _serving_settings(tmp_path, PRESENTATOR_RUNTIME_UID=runtime_uid)
     serving = __main__.serve(settings)
     with pytest.raises(PermissionError, match=reason):
         asyncio.run(serving)
+
+
+@pytest.mark.parametrize(
+    "file_name",
+    [None, "absent.toml"],
+    ids=["unset", "missing"],
+)
+def test_serve_refuses_to_start_without_a_readable_caller_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    file_name: str | None,
+) -> None:
+    monkeypatch.setattr(
+        __main__, "prepare_cuda_libraries", lambda: pytest.fail("prepared CUDA")
+    )
+    monkeypatch.setattr(
+        Runtime,
+        "from_settings",
+        lambda _settings: pytest.fail("constructed runtime"),
+    )
+    settings = _serving_settings(
+        tmp_path, config_file=None if file_name is None else tmp_path / file_name
+    )
+
+    serving = __main__.serve(settings)
+
+    with pytest.raises(ValueError, match="SPEECH_CONFIG_FILE") as refusal:
+        asyncio.run(serving)
+    rendered = "".join(traceback.format_exception(refusal.value))
+    assert str(tmp_path) not in rendered
