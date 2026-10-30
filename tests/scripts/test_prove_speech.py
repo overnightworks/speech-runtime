@@ -137,8 +137,10 @@ def test_a_run_outside_the_lock_hands_over_to_the_fleet_form(
 
 
 def test_a_busy_lock_fails_the_run_and_says_why() -> None:
+    busy_lock = run_returning(PROVE.FLOCK_TIMED_OUT_STATUS)
+
     with pytest.raises(SystemExit) as failure:
-        PROVE.run_under_lock([], run_returning(PROVE.FLOCK_TIMED_OUT_STATUS))
+        PROVE.run_under_lock([], busy_lock)
 
     assert "busy" in str(failure.value)
     assert str(PROVE.LOCK_WAIT_SECONDS) in str(failure.value)
@@ -153,17 +155,15 @@ def test_a_failed_proof_under_the_lock_keeps_its_own_exit_status() -> None:
 @pytest.mark.usefixtures("terminate_handler")
 def test_term_stops_the_speech_server_through_its_teardown(tmp_path: Path) -> None:
     server = Mock(stdout=None, returncode=0)
+    running = PROVE.speech_server(
+        tmp_path,
+        {},
+        tmp_path / "speech.sock",
+        start=lambda *_, **__: server,
+        wait_ready=lambda _socket_path: {},
+    )
 
-    with (
-        pytest.raises(SystemExit),
-        PROVE.speech_server(
-            tmp_path,
-            {},
-            tmp_path / "speech.sock",
-            start=lambda *_, **__: server,
-            wait_ready=lambda _socket_path: {},
-        ),
-    ):
+    with pytest.raises(SystemExit), running:
         os.kill(os.getpid(), signal.SIGTERM)
 
     server.terminate.assert_called_once_with()
@@ -180,9 +180,11 @@ def test_a_load_that_never_falls_ends_at_term() -> None:
 
 @pytest.mark.usefixtures("restored_terminate_handler")
 def test_term_during_the_proof_under_the_lock_runs_its_teardown(
-    tmp_path_factory: pytest.TempPathFactory,
+    tmp_path: Path,
 ) -> None:
-    token = tmp_path_factory.mktemp(PROVE.LOCK_DIRECTORY_PREFIX) / "acquired"
+    lock_directory = tmp_path / f"{PROVE.LOCK_DIRECTORY_PREFIX}test"
+    lock_directory.mkdir()
+    token = lock_directory / "acquired"
     torn_down: list[bool] = []
 
     def proof_body() -> None:
