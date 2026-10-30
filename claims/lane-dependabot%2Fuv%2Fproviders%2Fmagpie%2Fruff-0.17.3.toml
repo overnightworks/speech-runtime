@@ -1,0 +1,7 @@
+claim_id = "9719164b0b824dcc82a72fa48a74c820"
+agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
+role = "builder"
+base = "8a97a0a54c6929890bc546cbbd12febfae898507"
+branch = "dependabot/uv/providers/magpie/ruff-0.17.3"
+scope = ["providers/magpie/pyproject.toml", "providers/magpie/uv.lock"]
+opened_commit = "8aeaad8a6f57d968fb7a85243a410b34b80d0990"
