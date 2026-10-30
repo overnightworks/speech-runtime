@@ -175,13 +175,11 @@ def an_app(
     speaking: SpeakingEngine | None = None,
     hearing: HearingEngine | None = None,
     *,
-    debug: bool = False,
     memory_probe: Callable[[], int] | None = None,
 ) -> FastAPI:
     runtime = Runtime(
         speaking or FakeSpeaking(),
         hearing or FakeHearing(),
-        debug=debug,
         memory_probe=memory_probe if memory_probe is not None else (lambda: 0),
     )
     return create_control_app(Settings(), runtime)

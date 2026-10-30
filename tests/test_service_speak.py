@@ -1,9 +1,11 @@
 """POST /speak streams 16-bit mono WAV that is not silence."""
 
 import asyncio
+import logging
 import os
 import sys
 import threading
+import traceback
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -18,6 +20,7 @@ from starlette.status import (
 )
 
 from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from speech_runtime_service.failures import SpeakingFailedError
 from speech_runtime_service.pcm import AI_MARK, is_silence, pcm_from_wav
 from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import (
@@ -47,6 +50,8 @@ from tests.support.speak_support import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from fastapi import FastAPI
 
 
 def test_speak_streams_wav_that_plays_as_tone() -> None:
@@ -366,7 +371,12 @@ def test_speak_close_paths_release_admission_for_deselection(
             if close_path == "send-failure"
             else _deliver(response)
         )
-        with pytest.raises(_ResponseBoundaryError):
+        expected = (
+            SpeakingFailedError
+            if close_path == "synthesis-error"
+            else _ResponseBoundaryError
+        )
+        with pytest.raises(expected):
             asyncio.run(delivery)
     else:
         asyncio.run(_interrupt(response, close_path))
@@ -419,3 +429,162 @@ async def _deliver(response: StreamingResponse) -> None:
         receive,
         send,
     )
+
+
+_SPOKEN = "Nur dieser Satz darf nicht in den Logs stehen"
+
+
+class _SentenceCarryingError(RuntimeError):
+    """A third-party failure that holds the input in its message."""
+
+
+def _error_holding_the_sentence() -> _SentenceCarryingError:
+    cause = KeyError(_SPOKEN)
+    error = _SentenceCarryingError(_SPOKEN)
+    error.__cause__ = cause
+    return error
+
+
+class _FailingOnceSpeaking(FakeSpeaking):
+    """Fails with the sentence in its error, optionally after one chunk."""
+
+    def __init__(self, *, after_first_chunk: bool = False) -> None:
+        super().__init__()
+        self.fails = True
+        self._after_first_chunk = after_first_chunk
+
+    def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
+        if not self.fails:
+            yield from super().pcm_chunks(text, language)
+            return
+        if self._after_first_chunk:
+            yield next(iter(super().pcm_chunks(text, language)))
+        raise _error_holding_the_sentence()
+
+
+def _assert_failure_logged_without_text(
+    caplog: pytest.LogCaptureFixture, raised: BaseException
+) -> None:
+    assert "speaking failed" in caplog.text
+    assert "_SentenceCarryingError" in caplog.text
+    assert "KeyError" in caplog.text
+    assert 'File "' in caplog.text
+    assert _SPOKEN not in caplog.text
+    assert _SPOKEN not in "".join(traceback.format_exception(raised))
+
+
+def _speak_collecting(
+    app: FastAPI,
+) -> tuple[list[dict[str, object]], BaseException | None]:
+    async def scenario() -> tuple[list[dict[str, object]], BaseException | None]:
+        messages: list[dict[str, object]] = []
+        sent = False
+        never = asyncio.Event()
+
+        async def receive() -> dict[str, object]:
+            nonlocal sent
+            if not sent:
+                sent = True
+                return {
+                    "type": "http.request",
+                    "body": speak_body(),
+                    "more_body": False,
+                }
+            await never.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, object]) -> None:
+            messages.append(message)
+
+        try:
+            await asyncio.wait_for(
+                app(speak_scope(), receive, send), timeout=ASGI_TIMEOUT_SECONDS
+            )
+        except SpeakingFailedError as error:
+            return messages, error
+        return messages, None
+
+    return asyncio.run(scenario())
+
+
+def test_speak_writes_no_sentence_to_the_log_whatever_the_environment_says(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SPEECH_DEBUG", "true")
+    caplog.set_level(logging.DEBUG)
+
+    response = TestClient(an_app()).post(
+        "/speak", json={"text": _SPOKEN, "language": "de"}
+    )
+
+    assert response.status_code == HTTP_200_OK
+    assert _SPOKEN not in caplog.text
+
+
+def test_speak_failure_before_the_first_chunk_logs_types_and_never_the_sentence(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+
+    _messages, raised = _speak_collecting(an_app(_FailingOnceSpeaking()))
+
+    assert isinstance(raised, SpeakingFailedError)
+    _assert_failure_logged_without_text(caplog, raised)
+
+
+def test_speak_failure_after_a_chunk_never_ends_the_body_and_the_next_request_is_served(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    speaking = _FailingOnceSpeaking(after_first_chunk=True)
+    app = an_app(speaking)
+
+    messages, raised = _speak_collecting(app)
+    speaking.fails = False
+    later = asyncio.run(speak_once(app))
+
+    assert isinstance(raised, SpeakingFailedError)
+    _assert_failure_logged_without_text(caplog, raised)
+    bodies = [m for m in messages if m["type"] == "http.response.body"]
+    assert bodies
+    assert all(body.get("more_body") is True for body in bodies)
+    assert _status(later) == HTTP_200_OK
+
+
+def test_speak_cleanup_failure_after_a_disconnect_logs_no_sentence_and_frees_the_voice(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+
+    class CleanupFails(FakeSpeaking):
+        failing_cleanup = True
+
+        def pcm_chunks(self, text: str, language: str) -> Iterator[bytes]:
+            try:
+                yield from super().pcm_chunks(text, language)
+            finally:
+                if self.failing_cleanup:
+                    raise _error_holding_the_sentence()
+
+    speaking = CleanupFails()
+    app = an_app(speaking)
+
+    async def scenario() -> tuple[BaseException | None, list[dict[str, object]]]:
+        receive = _DisconnectingReceive()
+        send = _HoldingSend(hold_after_first_chunk=True)
+        call = asyncio.create_task(app(speak_scope(), receive, send))
+        await asyncio.wait_for(send.entered_hold.wait(), timeout=ASGI_TIMEOUT_SECONDS)
+        receive.disconnect()
+        failure: BaseException | None = None
+        try:
+            await asyncio.wait_for(call, timeout=ASGI_TIMEOUT_SECONDS)
+        except SpeakingFailedError as error:
+            failure = error
+        speaking.failing_cleanup = False
+        return failure, await speak_once(app)
+
+    failure, later = asyncio.run(scenario())
+
+    assert isinstance(failure, SpeakingFailedError)
+    _assert_failure_logged_without_text(caplog, failure)
+    assert _status(later) == HTTP_200_OK

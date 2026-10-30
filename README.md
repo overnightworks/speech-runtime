@@ -167,6 +167,8 @@ sent even where the decode is slow.
 
 `sample_rate` is the hear rate. Speak is a WAV, so its rate is in the header. A caller that feeds speak output into hear must resample.
 
+The service never writes spoken or heard text to its log. A speaking or hearing failure is logged with its exception types and stack frames, never with an exception message.
+
 ## Settings
 
 All `SPEECH_*`:
@@ -176,7 +178,6 @@ All `SPEECH_*`:
 | `SPEECH_DEVICE` | `cuda` | Device for hearing and isolated providers. Chatterbox and VoxCPM2 accept `cuda` or `cpu`; Qwen accepts only `cuda` and maps it to `cuda:0`. Piper stays on CPU. |
 | `SPEECH_SPEAKING_MODEL` | `de_DE-thorsten-medium` | First-run default only, used when `selected-voice` is absent |
 | `SPEECH_HEARING_MODEL` | `Systran/faster-whisper-large-v3` | Hugging Face id or faster-whisper size name |
-| `SPEECH_DEBUG` | `false` | When true, logs the text of what was spoken or heard. Audio is never logged. |
 | `SPEECH_VOICE_CACHE` | `~/.cache/piper` | Where Piper ONNX files are kept |
 | `SPEECH_HUGGINGFACE_CACHE` | Provider Hub cache (normally `~/.cache/huggingface/hub`) | The shared local Hub cache for provider loading and status lookup |
 | `SPEECH_QWEN_SPEAKER` | `Ryan` | One of Vivian, Serena, Uncle_Fu, Dylan, Eric, Ryan, Aiden, Ono_Anna, or Sohee |

@@ -171,13 +171,19 @@ def _same_socket_inode(
     )
 
 
+def configure_logging() -> None:
+    """Log at INFO and hold Piper back: it logs its input and phonemes below ERROR."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    logging.getLogger("piper").setLevel(logging.ERROR)
+
+
 def main() -> None:
     """Read one configuration and exit nonzero after a fatal lifecycle error."""
     settings = load_settings()
-    logging.basicConfig(
-        level=logging.DEBUG if settings.debug else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging()
     raise SystemExit(asyncio.run(serve(settings)))
 
 
