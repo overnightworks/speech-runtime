@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import struct
 import subprocess
@@ -31,7 +32,6 @@ from speech_runtime_provider_contract import (
     write_frame,
 )
 
-from speech_runtime_service.config import Settings
 from speech_runtime_service.provider_process import (
     ProviderFailedError,
     ProviderLaunch,
@@ -40,15 +40,11 @@ from speech_runtime_service.provider_process import (
     ProviderProtocolError,
     UnsupportedLanguageError,
 )
-from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import (
     CHATTERBOX_SPEAKING_MODEL,
     VoiceId,
-    VoiceLoadOutcome,
-    VoiceRecoveryKind,
 )
-from tests.support.fakes_support import FakeHearing, FakeSpeaking
 from tests.support.worker_support import assert_reaped, closed_provider, observed
 
 
@@ -362,7 +358,6 @@ def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
         "speech_runtime_service.provider_process.TERMINATE_GRACE_SECONDS", 0.05
     )
     root, cache = closed_provider(tmp_path, "partial-cancel", "qwen")
-    engines_built = 2
     constructed: list[ProviderProcess] = []
 
     def factory(_voice: VoiceId) -> ProviderProcess:
@@ -374,35 +369,24 @@ def test_qwen_cancel_beyond_drain_reaps_then_runtime_loads_a_fresh_worker(
         constructed.append(engine)
         return engine
 
-    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     runtime = Runtime(
         None,
-        FakeHearing(),
         dependencies=RuntimeDependencies(
-            selection=store,
             engine_factory=factory,
             artifact_checker=lambda _voice: True,
         ),
     )
-    assert runtime.load_voice(VoiceId.QWEN) is VoiceLoadOutcome.ACTIVATED
+    runtime.load()
     first = constructed[0]
     chunks = first.pcm_chunks("cancel", "de")
     assert next(chunks) == b"\x00\x01"
     chunks.close()
     _, _, first_pid, _ = observed(cache)
 
-    snapshot = runtime.snapshot(Settings(huggingface_cache=tmp_path))
+    runtime.health()
 
-    assert snapshot.recovery is not None
-    assert snapshot.recovery.kind is VoiceRecoveryKind.LOAD_FAILED
-    assert snapshot.recovery.voice is VoiceId.QWEN
-    assert store.read() is VoiceId.QWEN
     assert runtime.capture_speaking() is None
     assert_reaped(first_pid)
-
-    closed_provider(tmp_path, "normal", "qwen")
-    assert runtime.load_voice(VoiceId.QWEN) is VoiceLoadOutcome.ACTIVATED
-    assert len(constructed) == engines_built
     runtime.close()
 
 
@@ -424,71 +408,26 @@ def test_constructor_has_no_thread_process_or_filesystem_side_effect(
     assert list(tmp_path.iterdir()) == []
 
 
-def test_startup_provider_failure_preserves_piper_without_fatal_exit(
-    tmp_path: Path,
-) -> None:
+def test_startup_provider_failure_raises_without_fatal_exit(tmp_path: Path) -> None:
     fatal = threading.Event()
-    piper = FakeSpeaking()
     engine = _engine(tmp_path, "startup-failed")
     runtime = Runtime(
-        piper,
-        FakeHearing(),
+        None,
         dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
             engine_factory=lambda _voice: engine,
             artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.PIPER,
+            voice=VoiceId.CHATTERBOX,
         ),
     )
     runtime.set_fatal_callback(fatal.set)
 
-    assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.NOT_ACTIVATED
-    admission = runtime.capture_speaking()
-    assert admission is not None
-    assert admission.speaking is piper
-    admission.close()
+    with pytest.raises(RuntimeError, match="failed to load"):
+        runtime.load()
+
+    assert runtime.capture_speaking() is None
     assert fatal.is_set() is False
     _, _, pid, _ = observed(tmp_path / "cache")
     assert_reaped(pid)
-
-
-def test_deselecting_chatterbox_reaps_provider_before_load_returns(
-    tmp_path: Path,
-) -> None:
-    piper = FakeSpeaking()
-    engines_built = 2
-    chatterboxes: list[ProviderProcess] = []
-    root, cache = closed_provider(tmp_path)
-
-    def factory(voice: VoiceId) -> FakeSpeaking | ProviderProcess:
-        if voice is VoiceId.PIPER:
-            return piper
-        engine = _provider_process(root, cache)
-        chatterboxes.append(engine)
-        return engine
-
-    runtime = Runtime(
-        None,
-        FakeHearing(),
-        dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
-            engine_factory=factory,
-            artifact_checker=lambda _voice: True,
-        ),
-    )
-    try:
-        assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
-        _, _, first_pid, _ = observed(tmp_path / "cache")
-
-        assert runtime.load_voice(VoiceId.PIPER) is VoiceLoadOutcome.ACTIVATED
-        assert_reaped(first_pid)
-        assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
-        _, _, second_pid, _ = observed(tmp_path / "cache")
-
-        assert second_pid != first_pid
-        assert len(chatterboxes) == engines_built
-    finally:
-        runtime.close()
 
 
 @pytest.mark.parametrize("failure", ["request", "idle-exit"])
@@ -497,18 +436,15 @@ def test_active_provider_failure_reconciles_without_fatal_exit(
 ) -> None:
     fatal = threading.Event()
     engine = _engine(tmp_path, "idle-exit" if failure == "idle-exit" else "normal")
-    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     runtime = Runtime(
         None,
-        FakeHearing(),
         dependencies=RuntimeDependencies(
-            selection=store,
             engine_factory=lambda _voice: engine,
             artifact_checker=lambda _voice: True,
         ),
     )
     runtime.set_fatal_callback(fatal.set)
-    assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.ACTIVATED
+    runtime.load()
     if failure == "request":
         with pytest.raises(RuntimeError, match="speech provider synthesis failed"):
             list(engine.pcm_chunks("failed", "de"))
@@ -518,11 +454,8 @@ def test_active_provider_failure_reconciles_without_fatal_exit(
     while engine.ready and time.monotonic() < deadline:
         threading.Event().wait(0.01)
 
-    snapshot = runtime.snapshot(Settings(huggingface_cache=tmp_path))
+    runtime.health()
 
-    assert snapshot.recovery is not None
-    assert snapshot.recovery.kind is VoiceRecoveryKind.LOAD_FAILED
-    assert store.read() is VoiceId.CHATTERBOX
     assert runtime.capture_speaking() is None
     assert fatal.is_set() is False
 
@@ -582,17 +515,19 @@ def test_shutdown_during_handshake_closes_pending_without_publication(
         ),
         encoding="utf-8",
     )
-    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
     runtime = Runtime(
         None,
-        FakeHearing(),
         dependencies=RuntimeDependencies(
-            selection=store,
             engine_factory=lambda _voice: _provider_process(root, cache),
             artifact_checker=lambda _voice: True,
         ),
     )
-    activation = threading.Thread(target=runtime.load_voice, args=(VoiceId.CHATTERBOX,))
+
+    def start() -> None:
+        with contextlib.suppress(RuntimeError):
+            runtime.load()
+
+    activation = threading.Thread(target=start)
     activation.start()
     deadline = time.monotonic() + 5
     while not (cache / "worker-observed").exists() and time.monotonic() < deadline:
@@ -604,7 +539,6 @@ def test_shutdown_during_handshake_closes_pending_without_publication(
 
     assert not activation.is_alive()
     assert runtime.capture_speaking() is None
-    assert not store.path.exists()
     _, _, pid, _ = observed(cache)
     assert_reaped(pid)
 
@@ -615,9 +549,7 @@ def test_missing_entrypoint_failed_exec_leaves_no_retained_engine(
     fatal = threading.Event()
     runtime = Runtime(
         None,
-        FakeHearing(),
         dependencies=RuntimeDependencies(
-            selection=VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid()),
             engine_factory=lambda _voice: ProviderProcess(
                 ProviderLaunch(
                     model_name=CHATTERBOX_SPEAKING_MODEL,
@@ -631,7 +563,8 @@ def test_missing_entrypoint_failed_exec_leaves_no_retained_engine(
         ),
     )
     runtime.set_fatal_callback(fatal.set)
-    assert runtime.load_voice(VoiceId.CHATTERBOX) is VoiceLoadOutcome.NOT_ACTIVATED
+    with pytest.raises(RuntimeError, match="failed to load"):
+        runtime.load()
     assert runtime.capture_speaking() is None
     assert not any(
         thread.name == "speech-provider-owner" and thread.is_alive()
@@ -731,6 +664,7 @@ def test_parent_death_signal_follows_the_real_creator_thread(tmp_path: Path) -> 
     provider_source = Path(__file__).parents[1] / "providers/chatterbox/src"
     contract_source = Path(__file__).parents[1] / "providers/provider-contract/src"
     helper = r'''
+import contextlib
 import os
 import subprocess
 import sys

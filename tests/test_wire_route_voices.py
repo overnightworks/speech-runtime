@@ -23,7 +23,7 @@ from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import VoiceId
-from tests.support.fakes_support import FakeHearing, FakeSpeaking, GatedSpeaking
+from tests.support.fakes_support import FakeSpeaking, GatedSpeaking
 from tests.support.identity_support import (
     APP,
     MINTING,
@@ -59,9 +59,8 @@ def _runtime_with_active(
 ) -> Runtime:
     return Runtime(
         speaking or FakeSpeaking(),
-        FakeHearing(),
         memory_probe=lambda: 0,
-        dependencies=RuntimeDependencies(default_voice=voice),
+        dependencies=RuntimeDependencies(voice=voice),
     )
 
 

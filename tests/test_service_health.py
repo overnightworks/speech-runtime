@@ -1,12 +1,10 @@
-"""GET /health answers the contract, including while models are still loading."""
+"""GET /health answers the contract, including while the model is still loading."""
 
 from fastapi.testclient import TestClient
 from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
-from speech_runtime_service.config import HEAR_SAMPLE_RATE
 from tests.support.fakes_support import (
     SPEAK_SAMPLE_RATE,
-    FakeHearing,
     FakeSpeaking,
     an_app,
 )
@@ -17,21 +15,19 @@ def test_health_answers_while_models_are_not_ready() -> None:
     client = TestClient(
         an_app(
             FakeSpeaking(ready=False),
-            FakeHearing(ready=False),
             memory_probe=lambda: card_memory_mb,
         ),
     )
 
     body = client.get("/health").json()
 
+    assert set(body) == {"speaking", "card_memory_mb"}
     assert body["speaking"] == {
         "model": "fake-voice",
         "ready": False,
         "streams": False,
         "sample_rate": SPEAK_SAMPLE_RATE,
     }
-    assert body["hearing"] == {"model": "fake-ears", "ready": False}
-    assert body["sample_rate"] == HEAR_SAMPLE_RATE
     assert body["card_memory_mb"] == card_memory_mb
 
 
@@ -44,7 +40,6 @@ def test_health_reports_a_streaming_voice_and_its_sample_rate() -> None:
 
     assert body["speaking"]["streams"] is True
     assert body["speaking"]["sample_rate"] == CHATTERBOX_SAMPLE_RATE
-    assert body["sample_rate"] == HEAR_SAMPLE_RATE
 
 
 def test_health_reports_ready_models() -> None:
@@ -54,6 +49,4 @@ def test_health_reports_ready_models() -> None:
     assert body["speaking"]["ready"] is True
     assert body["speaking"]["streams"] is False
     assert body["speaking"]["sample_rate"] == SPEAK_SAMPLE_RATE
-    assert body["hearing"]["ready"] is True
-    assert body["sample_rate"] == HEAR_SAMPLE_RATE
     assert body["card_memory_mb"] == card_memory_mb

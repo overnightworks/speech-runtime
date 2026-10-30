@@ -1,1 +1,1 @@
-"""Local speaking and hearing, one process, both models resident."""
+"""Local speech synthesis, one process on the card."""

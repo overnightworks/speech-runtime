@@ -3,8 +3,6 @@
 import asyncio
 import itertools
 import json
-import os
-import threading
 import time
 from http import HTTPStatus
 from typing import TYPE_CHECKING
@@ -14,15 +12,13 @@ from starlette.requests import Request
 from speech_runtime_client.wire import SPEECH_PATH, RefusalCode, speech_request_body
 from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
-from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
-from speech_runtime_service.voices import VoiceId, VoiceLoadOutcome
-from tests.support.fakes_support import FakeHearing, FakeSpeaking, GatedSpeaking
+from speech_runtime_service.voices import VoiceId
+from tests.support.fakes_support import FakeSpeaking
 from tests.support.identity_support import valid_callers, valid_headers
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
-    from pathlib import Path
 
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -62,7 +58,7 @@ def speak_app(
     callers: SpeechCallers | None = None,
 ) -> FastAPI:
     """The private app over a fake runtime; its callers accept `valid_headers()`."""
-    runtime = Runtime(speaking or FakeSpeaking(), FakeHearing(), memory_probe=lambda: 0)
+    runtime = Runtime(speaking or FakeSpeaking(), memory_probe=lambda: 0)
     return create_control_app(
         settings or Settings(), runtime, callers or valid_callers()
     )
@@ -216,53 +212,20 @@ class SpeakCall:
         return wav_body(self.messages)
 
 
-def fake_runtime(speaking: SpeakingEngine | None = None) -> Runtime:
-    """A runtime over a fake voice whose active voice is Piper."""
-    return Runtime(speaking or FakeSpeaking(), FakeHearing(), memory_probe=lambda: 0)
+def fake_runtime(
+    speaking: SpeakingEngine | None = None, voice: VoiceId = VoiceId.PIPER
+) -> Runtime:
+    """A runtime over a fake engine that speaks as `voice`."""
+    return Runtime(
+        speaking or FakeSpeaking(),
+        memory_probe=lambda: 0,
+        dependencies=RuntimeDependencies(voice=voice),
+    )
 
 
 def app_over(runtime: Runtime, **settings: float) -> FastAPI:
     """The private app over `runtime` with the wire settings a test sets."""
     return create_control_app(Settings(**settings), runtime, valid_callers())
-
-
-class CommittingSelectionStore(VoiceSelectionStore):
-    """A selection store that tells when a switch to Piper has been written."""
-
-    def __init__(self, directory: Path, *, owner_uid: int) -> None:
-        """Start unsignalled."""
-        super().__init__(directory, owner_uid=owner_uid)
-        self.piper_committed = threading.Event()
-
-    def write(self, voice: VoiceId) -> None:
-        """Write the selection, then signal a switch to Piper."""
-        super().write(voice)
-        if voice is VoiceId.PIPER:
-            self.piper_committed.set()
-
-
-def switchable_runtime(
-    tmp_path: Path,
-    speaking: FakeSpeaking | GatedSpeaking,
-    store: CommittingSelectionStore | None = None,
-) -> Runtime:
-    """A runtime whose active voice is Chatterbox and that can switch to Piper."""
-    store = store or CommittingSelectionStore(
-        tmp_path / "state", owner_uid=os.geteuid()
-    )
-    store.write(VoiceId.CHATTERBOX)
-    speaking.retain_when_inactive = True
-    return Runtime(
-        speaking,
-        FakeHearing(),
-        memory_probe=lambda: 0,
-        dependencies=RuntimeDependencies(
-            selection=store,
-            engine_factory=lambda _voice: FakeSpeaking(),
-            artifact_checker=lambda _voice: True,
-            default_voice=VoiceId.CHATTERBOX,
-        ),
-    )
 
 
 def gate_acquisition_began(runtime: Runtime) -> asyncio.Event:
@@ -283,15 +246,13 @@ def gate_acquisition_began(runtime: Runtime) -> asyncio.Event:
     return began
 
 
-def switch_completes(runtime: Runtime) -> bool:
-    """Whether a switch to Piper finishes: no admission is left behind."""
-    outcomes: list[VoiceLoadOutcome | None] = []
-    switching = threading.Thread(
-        target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
-    )
-    switching.start()
-    switching.join(timeout=ASGI_TIMEOUT_SECONDS)
-    return not switching.is_alive() and outcomes == [VoiceLoadOutcome.ACTIVATED]
+def gate_is_free(runtime: Runtime) -> bool:
+    """Whether the synthesis gate is free: no request left its lease behind."""
+    lease = runtime.synthesis_gate.try_acquire()
+    if lease is None:
+        return False
+    lease.close()
+    return True
 
 
 def post_speech(

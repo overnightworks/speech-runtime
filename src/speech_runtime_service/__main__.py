@@ -9,7 +9,6 @@ import os
 import signal
 import socket
 import stat
-import threading
 import time
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING
@@ -206,12 +205,11 @@ async def serve(settings: Settings) -> int:
     runtime.set_fatal_callback(lambda: loop.call_soon_threadsafe(fatal.set))
     server = build_server(create_control_app(settings, runtime, callers))
     stopping = asyncio.Event()
-    loading_stop = threading.Event()
-    _install_signal_handlers(stopping, loading_stop)
+    _install_signal_handlers(stopping)
     with PrivateSocket(settings.private_directory, runtime_uid=runtime_uid) as uds:
         server_task = asyncio.create_task(server.serve(sockets=[uds]))
         runtime.begin_loading()
-        loader = asyncio.create_task(asyncio.to_thread(runtime.load, loading_stop))
+        loader = asyncio.create_task(asyncio.to_thread(runtime.load))
         stopped = asyncio.create_task(stopping.wait())
         fatal_task = asyncio.create_task(fatal.wait())
         result = 1
@@ -238,7 +236,6 @@ async def serve(settings: Settings) -> int:
                     result = 0 if stopped in done else 1
         finally:
             runtime.begin_shutdown()
-            loading_stop.set()
             server.should_exit = True
             stopped.cancel()
             fatal_task.cancel()
@@ -275,16 +272,10 @@ def _require_runtime_uid(settings: Settings) -> int:
     return settings.runtime_uid
 
 
-def _install_signal_handlers(
-    stopping: asyncio.Event, loading_stop: threading.Event
-) -> None:
-    def stop() -> None:
-        loading_stop.set()
-        stopping.set()
-
+def _install_signal_handlers(stopping: asyncio.Event) -> None:
     loop = asyncio.get_running_loop()
     for received in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(received, stop)
+        loop.add_signal_handler(received, stopping.set)
 
 
 if __name__ == "__main__":

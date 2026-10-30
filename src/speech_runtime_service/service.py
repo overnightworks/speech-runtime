@@ -1,65 +1,27 @@
-"""HTTP contract: health, the runtime that speaks, and a socket that hears."""
+"""HTTP contract: health and the runtime that speaks."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from speech_runtime_provider_contract import QWEN_MODEL_ID
-from starlette.status import (
-    WS_1009_MESSAGE_TOO_BIG,
-    WS_1011_INTERNAL_ERROR,
-    WS_1013_TRY_AGAIN_LATER,
-)
-from starlette.websockets import WebSocketState
-
 from speech_runtime_service.card import card_memory_mb
-from speech_runtime_service.config import HEAR_SAMPLE_RATE
 from speech_runtime_service.failures import PayloadFreeFailure, SpeakingFailedError
-from speech_runtime_service.hearing import (
-    POLL_WAIT_SECONDS,
-    FrameTooLargeError,
-    HearingSession,
-    hearing_from_settings,
-)
 from speech_runtime_service.pcm import wav_header
-from speech_runtime_service.qwen_download import _QwenDownload, download_qwen
-from speech_runtime_service.selection import (
-    DurabilityUnconfirmedError,
-    SelectionError,
-    VoiceSelectionStore,
-)
 from speech_runtime_service.speaking import speaking_for_voice
-from speech_runtime_service.synthesis_gate import Lease, SynthesisGate
-from speech_runtime_service.voices import (
-    CHATTERBOX_SPEAKING_MODEL,
-    DEFAULT_SPEAKING_MODEL,
-    VoiceDownloadOutcome,
-    VoiceId,
-    VoiceLoadOutcome,
-    VoiceRecovery,
-    VoiceRecoveryKind,
-    VoiceRuntimeState,
-    VoiceSnapshot,
-    installed_voice_ids,
-    qwen_worker_is_usable,
-    statuses,
-)
+from speech_runtime_service.synthesis_gate import SynthesisGate
+from speech_runtime_service.voices import VoiceId, installed_voice_ids, voice_for_model
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
 
+    from fastapi import FastAPI
+
     from speech_runtime_service.config import Settings
 
 logger = logging.getLogger(__name__)
-
-HEARING_FAILED_REASON = "hearing failed"
-FRAME_TOO_LARGE_REASON = "frame too large"
 
 
 class SpeakingEngine(Protocol):
@@ -69,7 +31,6 @@ class SpeakingEngine(Protocol):
     sample_rate: int
     ready: bool
     streams: bool
-    retain_when_inactive: bool
 
     def load(self) -> None:
         """Load weights and become ready, or raise."""
@@ -78,99 +39,67 @@ class SpeakingEngine(Protocol):
         """16-bit mono PCM as soon as the model produces it."""
 
     def close(self) -> None:
-        """Release owned resources once; retained pure engines may do nothing."""
+        """Release owned resources once."""
 
 
-class HearingEngine(Protocol):
-    """A resident transcriber."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RuntimeDependencies:
+    """The configured voice and the seams that check and build its engine."""
 
-    model_name: str
-    ready: bool
-
-    def load(self) -> None:
-        """Load weights and become ready, or raise."""
-
-    def open_session(self, language: str) -> HearingSession:
-        """A new utterance stream on the already-loaded model."""
+    voice: VoiceId = VoiceId.PIPER
+    engine_factory: Callable[[VoiceId], SpeakingEngine] | None = None
+    artifact_checker: Callable[[VoiceId], bool] | None = None
 
 
 class Runtime:
-    """The two resident models and the flags a caller waits on."""
+    """The resident speaking model and the flags a caller waits on."""
 
     def __init__(
         self,
         speaking: SpeakingEngine | None,
-        hearing: HearingEngine,
         *,
         memory_probe: Callable[[], int] | None = None,
         dependencies: RuntimeDependencies | None = None,
     ) -> None:
-        """Hold the two engines. They are not loaded until `load`."""
+        """Hold the speaking engine. It is not loaded until `load`."""
         self.speaking = speaking
-        self.hearing = hearing
         self.loading = False
         self._memory_probe = memory_probe or card_memory_mb
-        dependencies = dependencies or RuntimeDependencies()
-        self._selection = dependencies.selection
-        self._engine_factory = dependencies.engine_factory
-        self._artifact_checker = dependencies.artifact_checker
+        self._dependencies = dependencies or RuntimeDependencies()
         self._state_lock = threading.Lock()
-        self._qwen_download = _QwenDownload(
-            dependencies.qwen_download,
-            dependencies.qwen_worker_is_usable,
-            lambda: (
-                self._artifact_checker is not None
-                and self._artifact_checker(VoiceId.QWEN)
-            ),
-            self._state_lock,
-        )
-        self._default_voice = dependencies.default_voice
-        self._selected = dependencies.default_voice if speaking is not None else None
+        self._state_changed = threading.Condition(self._state_lock)
         self._ready_speaking = speaking if speaking and speaking.ready else None
-        self._pending: VoiceId | None = None
         self._pending_engine: SpeakingEngine | None = None
         self._closing_engine: SpeakingEngine | None = None
-        self._admitted = 0
         self._stopping = False
-        self._recovery: VoiceRecovery | None = None
-        self._engines: dict[VoiceId, SpeakingEngine] = {}
-        if speaking is not None and dependencies.default_voice is not None:
-            self._engines[dependencies.default_voice] = speaking
-        self._state_changed = threading.Condition(self._state_lock)
-        self._transition_guard = threading.Lock()
         self.synthesis_gate = SynthesisGate()
         self._fatal_callback: Callable[[], None] = lambda: None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Runtime:
-        """Build the production engines from the environment."""
-        default_voice = voice_for_model(settings.speaking_model)
+        """Build the production engine for the configured voice from the environment."""
         return cls(
             None,
-            hearing_from_settings(settings),
             dependencies=RuntimeDependencies(
-                selection=VoiceSelectionStore(
-                    settings.state_directory, owner_uid=os.geteuid()
-                ),
+                voice=voice_for_model(settings.speaking_model),
                 engine_factory=lambda voice: speaking_for_voice(settings, voice),
                 artifact_checker=lambda voice: voice in installed_voice_ids(settings),
-                qwen_download=lambda: download_qwen(settings),
-                qwen_worker_is_usable=lambda: qwen_worker_is_usable(settings),
-                default_voice=default_voice,
             ),
         )
 
-    def load(self, stopping: threading.Event | None = None) -> None:
-        """Load both models, leaving process ownership to the orchestrator."""
+    def load(self) -> None:
+        """Start the configured voice, leaving process ownership to the orchestrator."""
         self.begin_loading()
+        engine: SpeakingEngine | None = None
+        registered = False
         try:
-            self._load_saved_selection()
-            if stopping is not None and stopping.is_set():
-                return
-            _load_or_raise("hearing", self.hearing.model_name, self.hearing.load)
+            engine = self._construct_engine()
+            registered = self._register_pending_engine(engine)
+            if registered:
+                _load_or_raise(engine)
+                self._publish(engine)
         finally:
-            with self._state_lock:
-                self.loading = False
+            self._finish_loading(engine, registered=registered)
 
     def begin_loading(self) -> None:
         """Publish startup before its background task can be scheduled."""
@@ -182,67 +111,8 @@ class Runtime:
         self.reconcile_failed_active()
         return {
             "speaking": self._speaking_health(),
-            "hearing": {
-                "model": self.hearing.model_name,
-                "ready": self.hearing.ready,
-            },
-            "sample_rate": HEAR_SAMPLE_RATE,
             "card_memory_mb": self._memory_probe(),
         }
-
-    def snapshot(self, settings: Settings) -> VoiceSnapshot:
-        """Read all public row state while holding one short state lock."""
-        self.reconcile_failed_active()
-        with self._state_lock:
-            speaking = self.speaking
-            selected = self._selected
-            recovery = self._recovery
-            loading = self.loading
-            pending = self._pending
-            qwen_downloading, qwen_download_failed = self._qwen_download.state()
-        failed = (
-            recovery.voice
-            if recovery and recovery.kind is VoiceRecoveryKind.LOAD_FAILED
-            else None
-        )
-        return VoiceSnapshot(
-            voices=statuses(
-                settings,
-                VoiceRuntimeState(
-                    selected=selected,
-                    ready=speaking is not None and speaking.ready,
-                    loading=loading,
-                    pending=pending,
-                    failed=failed,
-                    qwen_downloading=qwen_downloading,
-                    qwen_download_failed=qwen_download_failed,
-                ),
-            ),
-            recovery=recovery,
-        )
-
-    def load_voice(self, voice: VoiceId) -> VoiceLoadOutcome | None:
-        """Synchronously load, atomically select, and retain one downloaded baseline."""
-        if voice is VoiceId.QWEN and not self._qwen_download.acquire():
-            return None
-        qwen_locked = voice is VoiceId.QWEN
-        if not self._transition_guard.acquire(blocking=False):
-            if qwen_locked:
-                self._qwen_download.release()
-            return None
-        try:
-            return self._activate_voice(voice)
-        finally:
-            self._transition_guard.release()
-            if qwen_locked:
-                self._qwen_download.release()
-
-    def start_qwen_download(self) -> VoiceDownloadOutcome | None:
-        """Acknowledge one nonblocking Qwen download when it can start."""
-        return self._qwen_download.start(self._may_start_qwen_download)
-
-    def _may_start_qwen_download(self) -> bool:
-        return not self._stopping and not self.loading
 
     def capture_speaking(self) -> VoiceAdmission | None:
         """Capture one stable engine for an entire streaming response.
@@ -255,38 +125,7 @@ class Runtime:
             speaking = self.speaking
             if self.loading or self._stopping or speaking is None or not speaking.ready:
                 return None
-            return self._admit_locked(speaking)
-
-    def preacquire_sample(self, voice: VoiceId) -> VoiceSample | None:
-        """Reserve one verified active voice without delaying an ongoing talk."""
-        self.reconcile_failed_active()
-        with self._state_lock:
-            speaking = self.speaking
-            if (
-                self.loading
-                or self._stopping
-                or self._selected is not voice
-                or speaking is None
-                or not speaking.ready
-            ):
-                return None
-            admission = self._admit_locked(speaking)
-        lease = self.synthesis_gate.try_acquire()
-        if lease is None:
-            admission.close()
-            raise SynthesisBusyError from None
-        return VoiceSample(admission, lease)
-
-    def _admit_locked(self, speaking: SpeakingEngine) -> VoiceAdmission:
-        self._admitted += 1
-        lifetime = Lease(self._release_admission)
-        return VoiceAdmission(speaking, self._selected, speaking.sample_rate, lifetime)
-
-    def _release_admission(self) -> None:
-        with self._state_changed:
-            self._admitted -= 1
-            if self._admitted == 0:
-                self._state_changed.notify_all()
+            return VoiceAdmission(speaking, self._dependencies.voice)
 
     def begin_shutdown(self) -> None:
         """Refuse new work before the server starts its own shutdown."""
@@ -298,24 +137,23 @@ class Runtime:
         """Route an owned speaking-engine failure to the service orchestrator."""
         with self._state_lock:
             self._fatal_callback = callback
-            engines = [self._pending_engine, self.speaking, *self._engines.values()]
+            engines = [self._pending_engine, self.speaking]
         for engine in _unique_engines(engines):
             setter = getattr(engine, "set_fatal_callback", None)
             if callable(setter):
                 setter(callback)
 
     def close(self) -> None:
-        """Close every retained or pending engine outside the state lock."""
+        """Close the pending and the active engine outside the state lock."""
         with self._state_changed:
             self._stopping = True
             self._state_changed.notify_all()
             while self._closing_engine is not None:
                 self._state_changed.wait()
-            engines = [self._pending_engine, self.speaking, *self._engines.values()]
+            engines = [self._pending_engine, self.speaking]
             self._pending_engine = None
             self.speaking = None
             self._ready_speaking = None
-            self._engines.clear()
         failed = False
         for engine in _unique_engines(engines):
             try:
@@ -328,229 +166,75 @@ class Runtime:
             message = "speaking engine cleanup failed"
             raise RuntimeError(message)
 
-    def _load_saved_selection(self) -> None:
-        selection = self._selection
-        if selection is None:
-            raise RuntimeError from None
-        with self._transition_guard:
-            try:
-                voice = selection.read()
-            except SelectionError:
-                with self._state_lock:
-                    self._recovery = VoiceRecovery(
-                        kind=VoiceRecoveryKind.INVALID_SELECTION
-                    )
-                return
-            selected = self._default_voice if voice is None else voice
-            if selected is None:
-                with self._state_lock:
-                    self._recovery = VoiceRecovery(
-                        kind=VoiceRecoveryKind.INVALID_SELECTION
-                    )
-                return
-            if selected is VoiceId.QWEN:
-                if not self._qwen_download.acquire():
-                    return
-                try:
-                    self._activate_voice(selected)
-                finally:
-                    self._qwen_download.release()
-            else:
-                self._activate_voice(selected)
-
-    def _activate_voice(self, voice: VoiceId) -> VoiceLoadOutcome:
+    def reconcile_failed_active(self) -> None:
+        """Close an active engine that stopped being ready."""
         with self._state_lock:
-            if self._stopping:
-                return VoiceLoadOutcome.NOT_ACTIVATED
-            self.loading = True
-            self._pending = voice
-        engine: SpeakingEngine | None = None
-        newly_constructed = False
-        registered = False
-        committed = False
+            active = self.speaking
+            if active is None:
+                return
+            if active.ready:
+                self._ready_speaking = active
+                return
+            if active is not self._ready_speaking or self.loading or self._stopping:
+                return
+            self.speaking = None
+            self._ready_speaking = None
+            self._closing_engine = active
         try:
-            try:
-                if not self._voice_dependencies_ready(voice):
-                    return self._not_activated(voice)
-                with self._state_lock:
-                    engine = self._engines.get(voice)
-                if engine is None:
-                    engine = self._engine_factory(voice)
-                    newly_constructed = True
-                    setter = getattr(engine, "set_fatal_callback", None)
-                    if callable(setter):
-                        setter(self._fatal_callback)
-                registered = self._register_pending_engine(engine)
-                if not registered:
-                    return VoiceLoadOutcome.NOT_ACTIVATED
-                if newly_constructed or not engine.ready:
-                    engine.load()
-                with self._state_lock:
-                    if self._stopping:
-                        return VoiceLoadOutcome.NOT_ACTIVATED
-                self._selection.write(voice)
-                committed = True
-                recovery = None
-            except DurabilityUnconfirmedError:
-                committed = True
-                recovery = VoiceRecovery(
-                    kind=VoiceRecoveryKind.DURABILITY_UNCONFIRMED, voice=voice
-                )
-            except Exception:
-                logger.exception("voice %s failed to load", voice.value)
-                return self._not_activated(voice)
-            return self._replace_voice(voice, engine, recovery)
-        finally:
-            self._finish_activation(
-                engine,
-                newly_constructed=newly_constructed,
-                registered=registered,
-                committed=committed,
-            )
-
-    def _finish_activation(
-        self,
-        engine: SpeakingEngine | None,
-        *,
-        newly_constructed: bool,
-        registered: bool,
-        committed: bool,
-    ) -> None:
-        with self._state_lock:
-            self.loading = False
-            self._pending = None
-            owns_pending = not committed and self._pending_engine is engine
-            if owns_pending:
-                self._pending_engine = None
-            should_close = newly_constructed and (owns_pending or not registered)
-        if should_close and engine is not None:
-            try:
-                engine.close()
-            except Exception:
-                logger.exception("uncommitted speaking engine cleanup failed")
-                self._fatal_callback()
-
-    def _voice_dependencies_ready(self, voice: VoiceId) -> bool:
-        if (
-            not self._selection
-            or not self._engine_factory
-            or not self._artifact_checker
-        ):
-            return False
-        self._selection.preflight()
-        return self._artifact_checker(voice)
-
-    def _replace_voice(
-        self, voice: VoiceId, engine: SpeakingEngine, recovery: VoiceRecovery | None
-    ) -> VoiceLoadOutcome:
-        with self._state_changed:
-            while self._admitted and not self._stopping:
-                self._state_changed.wait()
-            if self._stopping:
-                return VoiceLoadOutcome.NOT_ACTIVATED
-            closing = self._detach_replaced_engine(voice, engine, recovery)
-        if closing is not None:
-            self._close_replaced_engine(closing)
-            with self._state_changed:
-                self._closing_engine = None
-                self._state_changed.notify_all()
-                if self._stopping:
-                    return VoiceLoadOutcome.NOT_ACTIVATED
-                self._publish_voice(voice, engine, recovery)
-        if recovery is None:
-            return VoiceLoadOutcome.ACTIVATED
-        return VoiceLoadOutcome.ACTIVATED_DURABILITY_UNCONFIRMED
-
-    def _detach_replaced_engine(
-        self, voice: VoiceId, engine: SpeakingEngine, recovery: VoiceRecovery | None
-    ) -> SpeakingEngine | None:
-        """Return the active engine to close first, else publish the new one."""
-        closing = self.speaking
-        if closing is None or closing is engine or closing.retain_when_inactive:
-            self._publish_voice(voice, engine, recovery)
-            return None
-        self.speaking = None
-        if self._engines.get(self._selected) is closing:
-            self._engines.pop(self._selected)
-        self._closing_engine = closing
-        return closing
-
-    def _close_replaced_engine(self, closing: SpeakingEngine) -> None:
-        try:
-            closing.close()
+            active.close()
         except Exception:
+            logger.exception("failed speaking engine cleanup failed")
+            self._fatal_callback()
+        finally:
             with self._state_changed:
                 self._closing_engine = None
-                if self._selected is not None:
-                    self._engines[self._selected] = closing
                 self._state_changed.notify_all()
-            self._fatal_callback()
-            raise
 
-    def _publish_voice(
-        self, voice: VoiceId, engine: SpeakingEngine, recovery: VoiceRecovery | None
-    ) -> None:
-        self.speaking = engine
-        self._ready_speaking = engine if engine.ready else None
-        self._selected = voice
-        self._engines[voice] = engine
-        self._pending_engine = None
-        self._recovery = recovery
+    def _construct_engine(self) -> SpeakingEngine:
+        voice = self._dependencies.voice
+        engine_factory = self._dependencies.engine_factory
+        artifact_checker = self._dependencies.artifact_checker
+        if engine_factory is None or artifact_checker is None:
+            message = "the runtime has no engine factory"
+            raise RuntimeError(message)
+        if not artifact_checker(voice):
+            message = f"voice {voice.value} is not installed"
+            raise RuntimeError(message)
+        engine = engine_factory(voice)
+        setter = getattr(engine, "set_fatal_callback", None)
+        if callable(setter):
+            setter(self._fatal_callback)
+        return engine
 
     def _register_pending_engine(self, engine: SpeakingEngine) -> bool:
         with self._state_lock:
             if self._stopping:
                 return False
-            if self._pending_engine is not None:
-                message = "voice activation already owns a pending engine"
-                raise RuntimeError(message)
             self._pending_engine = engine
             return True
 
-    def _not_activated(self, voice: VoiceId) -> VoiceLoadOutcome:
+    def _publish(self, engine: SpeakingEngine) -> None:
         with self._state_lock:
-            self._recovery = VoiceRecovery(
-                kind=VoiceRecoveryKind.LOAD_FAILED, voice=voice
-            )
-        return VoiceLoadOutcome.NOT_ACTIVATED
+            if self._stopping:
+                return
+            self.speaking = engine
+            self._ready_speaking = engine if engine.ready else None
+            self._pending_engine = None
 
-    def reconcile_failed_active(self) -> None:
-        """Close an active engine that stopped being ready, and record the failure."""
-        if not self._transition_guard.acquire(blocking=False):
-            return
-        try:
-            with self._state_lock:
-                active = self.speaking
-                if active is None:
-                    return
-                if active.ready:
-                    self._ready_speaking = active
-                    return
-                if active is not self._ready_speaking or self.loading or self._stopping:
-                    return
-                failed_voice = self._selected
-                self.speaking = None
-                self._ready_speaking = None
-                if self._engines.get(failed_voice) is active:
-                    self._engines.pop(failed_voice)
-                self._recovery = VoiceRecovery(
-                    kind=VoiceRecoveryKind.LOAD_FAILED, voice=failed_voice
-                )
-                self._closing_engine = active
+    def _finish_loading(
+        self, engine: SpeakingEngine | None, *, registered: bool
+    ) -> None:
+        with self._state_lock:
+            self.loading = False
+            still_pending = registered and self._pending_engine is engine
+            if still_pending:
+                self._pending_engine = None
+        if engine is not None and (still_pending or not registered):
             try:
-                active.close()
+                engine.close()
             except Exception:
-                with self._state_lock:
-                    if failed_voice is not None:
-                        self._engines[failed_voice] = active
-                logger.exception("failed speaking engine cleanup failed")
+                logger.exception("uncommitted speaking engine cleanup failed")
                 self._fatal_callback()
-            finally:
-                with self._state_changed:
-                    self._closing_engine = None
-                    self._state_changed.notify_all()
-        finally:
-            self._transition_guard.release()
 
     def _speaking_health(self) -> dict[str, object]:
         with self._state_lock:
@@ -570,34 +254,6 @@ class Runtime:
         }
 
 
-def failed_to_load_message(which: str, model: str) -> str:
-    """The line written when a named model cannot be loaded."""
-    return f"{which} model {model} failed to load"
-
-
-def voice_for_model(model: str) -> VoiceId | None:
-    """The voice whose speaking model is `model`, if it is a baseline."""
-    if model == DEFAULT_SPEAKING_MODEL:
-        return VoiceId.PIPER
-    if model == CHATTERBOX_SPEAKING_MODEL:
-        return VoiceId.CHATTERBOX
-    if model == QWEN_MODEL_ID:
-        return VoiceId.QWEN
-    return None
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class RuntimeDependencies:
-    """Mutable-voice seams owned by the runtime's composition root."""
-
-    selection: VoiceSelectionStore | None = None
-    engine_factory: Callable[[VoiceId], SpeakingEngine] | None = None
-    artifact_checker: Callable[[VoiceId], bool] | None = None
-    qwen_download: Callable[[], None] | None = None
-    qwen_worker_is_usable: Callable[[], bool] | None = None
-    default_voice: VoiceId | None = VoiceId.PIPER
-
-
 def _unique_engines(
     engines: list[SpeakingEngine | None],
 ) -> list[SpeakingEngine]:
@@ -610,47 +266,24 @@ def _unique_engines(
     return unique
 
 
-class SynthesisBusyError(RuntimeError):
-    """The active voice is already generating a request."""
-
-
 @dataclass(frozen=True, slots=True)
 class VoiceAdmission:
-    """One captured engine, the voice it speaks for and the lifetime that holds it."""
+    """One captured engine and the voice it speaks for."""
 
     speaking: SpeakingEngine
-    voice: VoiceId | None
-    sample_rate: int
-    lifetime: Lease
+    voice: VoiceId
 
-    def close(self) -> None:
-        """Release the hold on the captured engine."""
-        self.lifetime.close()
-
-
-@dataclass(frozen=True, slots=True)
-class VoiceSample:
-    """One close-idempotent public sample lifetime."""
-
-    admission: VoiceAdmission
-    lease: Lease
-
-    def wav_chunks(self, text: str, language: str) -> Iterator[bytes]:
-        """Yield one WAV from the captured voice."""
-        engine = self.admission.speaking
-        return wav_chunks(engine, text, language, self.admission.sample_rate)
-
-    def close(self) -> None:
-        """Release its admission and synthesis lease."""
-        self.admission.close()
-        self.lease.close()
+    @property
+    def sample_rate(self) -> int:
+        """The captured engine's rate."""
+        return self.speaking.sample_rate
 
 
-def _load_or_raise(which: str, model: str, load: Callable[[], None]) -> None:
+def _load_or_raise(engine: SpeakingEngine) -> None:
     try:
-        load()
+        engine.load()
     except Exception:
-        message = failed_to_load_message(which, model)
+        message = f"speaking model {engine.model_name} failed to load"
         logger.exception("%s", message)
         raise RuntimeError(message) from None
 
@@ -676,71 +309,9 @@ def wav_chunks(
             synthesis.close()
 
 
-def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
-    """Mount /health and /hear over the one runtime."""
+def mount_health_route(app: FastAPI, runtime: Runtime) -> None:
+    """Mount /health over the one runtime."""
 
     @app.get("/health")
     def health() -> dict[str, object]:
         return runtime.health()
-
-    @app.websocket("/hear")
-    async def hear(websocket: WebSocket, language: str = "de") -> None:
-        await websocket.accept()
-        if not runtime.hearing.ready:
-            await websocket.close(code=WS_1013_TRY_AGAIN_LATER)
-            return
-        hearing = PayloadFreeFailure(
-            logger,
-            "hearing failed",
-            expected=(WebSocketDisconnect, FrameTooLargeError),
-        )
-        try:
-            with hearing:
-                session = runtime.hearing.open_session(language)
-                await _hear_loop(websocket, session)
-        except WebSocketDisconnect:
-            return
-        except FrameTooLargeError:
-            await _close_open(
-                websocket,
-                code=WS_1009_MESSAGE_TOO_BIG,
-                reason=FRAME_TOO_LARGE_REASON,
-            )
-        if hearing.failed:
-            await _close_open(
-                websocket,
-                code=WS_1011_INTERNAL_ERROR,
-                reason=HEARING_FAILED_REASON,
-            )
-
-
-async def _close_open(websocket: WebSocket, *, code: int, reason: str) -> None:
-    if websocket.client_state == WebSocketState.CONNECTED:
-        await websocket.close(code=code, reason=reason)
-
-
-async def _hear_loop(websocket: WebSocket, session: HearingSession) -> None:
-    receive = asyncio.create_task(websocket.receive())
-    tick = asyncio.create_task(asyncio.sleep(POLL_WAIT_SECONDS))
-    try:
-        while True:
-            done, _pending = await asyncio.wait(
-                {receive, tick},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if receive in done:
-                message = receive.result()
-                if message.get("type") == "websocket.disconnect":
-                    return
-                data = message.get("bytes")
-                if isinstance(data, (bytes, bytearray)):
-                    session.add_pcm(bytes(data))
-                receive = asyncio.create_task(websocket.receive())
-            if tick in done:
-                event = await asyncio.to_thread(session.poll)
-                if event is not None:
-                    await websocket.send_json(event)
-                tick = asyncio.create_task(asyncio.sleep(POLL_WAIT_SECONDS))
-    finally:
-        receive.cancel()
-        tick.cancel()

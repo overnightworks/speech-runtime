@@ -1,8 +1,7 @@
-"""The closed voice catalogue and its side-effect-free local status check."""
+"""The closed voice catalogue and its side-effect-free artifact check."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -24,11 +23,6 @@ from speech_runtime_provider_contract import (
     VOXCPM_REVISION,
 )
 
-from speech_runtime_service.provider_process import (
-    ProviderId,
-    provider_entrypoint_is_usable,
-)
-
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -39,7 +33,7 @@ CHATTERBOX_SPEAKING_MODEL = "ResembleAI/chatterbox"
 
 
 class VoiceId(StrEnum):
-    """The only models the administration page may name."""
+    """The closed catalogue of voices the service can speak with."""
 
     PIPER = "piper"
     CHATTERBOX = "chatterbox"
@@ -48,126 +42,18 @@ class VoiceId(StrEnum):
     MAGPIE = "nvidia-magpie"
 
 
-class VoiceState(StrEnum):
-    """A status whose meaning is established by local evidence."""
-
-    ACTIVE = "active"
-    LOADING = "loading"
-    FAILED = "failed"
-    DOWNLOADED = "downloaded"
-    NOT_DOWNLOADED = "not_downloaded"
-    DOWNLOADING = "downloading"
-    DOWNLOAD_FAILED = "download_failed"
-    UNAVAILABLE = "unavailable"
+_VOICES_BY_MODEL: dict[str, VoiceId] = {
+    DEFAULT_SPEAKING_MODEL: VoiceId.PIPER,
+    CHATTERBOX_SPEAKING_MODEL: VoiceId.CHATTERBOX,
+    QWEN_MODEL_ID: VoiceId.QWEN,
+    VOXCPM_MODEL_ID: VoiceId.VOXCPM,
+    MAGPIE_MODEL_ID: VoiceId.MAGPIE,
+}
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class VoiceStatus:
-    """One catalogue row the private endpoint may reveal."""
-
-    id: VoiceId
-    name: str
-    language: str
-    state: VoiceState
-
-
-class VoiceRecoveryKind(StrEnum):
-    """Why speaking currently has no active engine."""
-
-    INVALID_SELECTION = "invalid_selection"
-    LOAD_FAILED = "load_failed"
-    DURABILITY_UNCONFIRMED = "durability_unconfirmed"
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class VoiceRecovery:
-    """Typed, non-sensitive recovery detail for the private snapshot."""
-
-    kind: VoiceRecoveryKind
-    voice: VoiceId | None = None
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class VoiceSnapshot:
-    """The complete private status and any recoverable selection fact."""
-
-    voices: tuple[VoiceStatus, ...]
-    recovery: VoiceRecovery | None
-
-
-class VoiceLoadOutcome(StrEnum):
-    """The only outcomes a Load caller receives."""
-
-    ACTIVATED = "activated"
-    ACTIVATED_DURABILITY_UNCONFIRMED = "activated_durability_unconfirmed"
-    NOT_ACTIVATED = "not_activated"
-
-
-class VoiceDownloadOutcome(StrEnum):
-    """The bounded result of starting the one Qwen download."""
-
-    STARTED = "started"
-    ALREADY_COMPLETE = "already_complete"
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class VoiceRuntimeState:
-    """The runtime facts that determine the closed catalogue's row states."""
-
-    selected: VoiceId | None
-    ready: bool
-    loading: bool
-    pending: VoiceId | None
-    failed: VoiceId | None
-    qwen_downloading: bool = False
-    qwen_download_failed: bool = False
-
-
-def statuses(settings: Settings, runtime: VoiceRuntimeState) -> tuple[VoiceStatus, ...]:
-    """Report the complete catalogue, refusing to guess after a failed lookup."""
-    installed = installed_voice_ids(settings)
-    usable_providers = frozenset(
-        voice
-        for voice, provider in (
-            (VoiceId.CHATTERBOX, ProviderId.CHATTERBOX),
-            (VoiceId.QWEN, ProviderId.QWEN),
-            (VoiceId.VOXCPM, ProviderId.VOXCPM),
-            (VoiceId.MAGPIE, ProviderId.MAGPIE),
-        )
-        if provider_entrypoint_is_usable(settings.provider_root, provider)
-    )
-    return tuple(
-        VoiceStatus(
-            id=voice_id,
-            name=name,
-            language=language,
-            state=_state(
-                voice_id,
-                runtime=runtime,
-                installed=installed,
-                usable_providers=usable_providers,
-            ),
-        )
-        for voice_id, name, language in _catalogue(settings)
-    )
-
-
-def _catalogue(settings: Settings) -> tuple[tuple[VoiceId, str, str], ...]:
-    return (
-        (VoiceId.PIPER, "Piper", "German — Thorsten voice"),
-        (VoiceId.CHATTERBOX, "Chatterbox", "Multilingual"),
-        (
-            VoiceId.QWEN,
-            "Qwen3-TTS 0.6B",
-            f"German and English — {settings.qwen_speaker.value} preset",
-        ),
-        (VoiceId.VOXCPM, "VoxCPM2", "German and English — text-only"),
-        (
-            VoiceId.MAGPIE,
-            "NVIDIA Magpie",
-            f"German and English — {settings.magpie_speaker.value} fixed voice",
-        ),
-    )
+def voice_for_model(model: str) -> VoiceId:
+    """The voice whose speaking model is `model`; a model outside it is a KeyError."""
+    return _VOICES_BY_MODEL[model]
 
 
 def installed_voice_ids(settings: Settings) -> frozenset[VoiceId]:
@@ -184,11 +70,6 @@ def installed_voice_ids(settings: Settings) -> frozenset[VoiceId]:
     if _magpie_is_present(settings.huggingface_cache):
         installed.add(VoiceId.MAGPIE)
     return frozenset(installed)
-
-
-def qwen_worker_is_usable(settings: Settings) -> bool:
-    """Read whether the configured Qwen worker can serve a later Load."""
-    return provider_entrypoint_is_usable(settings.provider_root, ProviderId.QWEN)
 
 
 def _piper_is_present(cache: Path, model: str) -> bool:
@@ -257,54 +138,4 @@ def _magpie_is_present(cache: Path) -> bool:
             (MAGPIE_MODEL_ID, MAGPIE_MODEL_FILENAME, MAGPIE_MODEL_REVISION),
             (MAGPIE_CODEC_ID, MAGPIE_CODEC_FILENAME, MAGPIE_CODEC_REVISION),
         )
-    )
-
-
-def _state(
-    voice_id: VoiceId,
-    *,
-    runtime: VoiceRuntimeState,
-    installed: frozenset[VoiceId],
-    usable_providers: frozenset[VoiceId],
-) -> VoiceState:
-    active = voice_id is runtime.selected and runtime.ready
-    if voice_id is runtime.failed or active:
-        return VoiceState.FAILED if voice_id is runtime.failed else VoiceState.ACTIVE
-    if runtime.loading and voice_id is (runtime.pending or runtime.selected):
-        return VoiceState.LOADING
-    if voice_id is VoiceId.QWEN:
-        return _qwen_state(voice_id, runtime, installed, usable_providers)
-    is_provider = voice_id in {
-        VoiceId.CHATTERBOX,
-        VoiceId.QWEN,
-        VoiceId.VOXCPM,
-        VoiceId.MAGPIE,
-    }
-    if is_provider and voice_id not in usable_providers:
-        return VoiceState.UNAVAILABLE
-    if voice_id not in installed:
-        return (
-            VoiceState.UNAVAILABLE
-            if voice_id in {VoiceId.QWEN, VoiceId.VOXCPM, VoiceId.MAGPIE}
-            else VoiceState.NOT_DOWNLOADED
-        )
-    return VoiceState.DOWNLOADED
-
-
-def _qwen_state(
-    voice_id: VoiceId,
-    runtime: VoiceRuntimeState,
-    installed: frozenset[VoiceId],
-    usable_providers: frozenset[VoiceId],
-) -> VoiceState:
-    if voice_id not in usable_providers:
-        return VoiceState.UNAVAILABLE
-    if runtime.qwen_downloading:
-        return VoiceState.DOWNLOADING
-    if voice_id in installed:
-        return VoiceState.DOWNLOADED
-    return (
-        VoiceState.DOWNLOAD_FAILED
-        if runtime.qwen_download_failed
-        else VoiceState.NOT_DOWNLOADED
     )
