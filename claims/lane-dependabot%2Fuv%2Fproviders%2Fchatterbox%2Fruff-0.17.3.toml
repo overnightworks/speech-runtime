@@ -1,7 +1,0 @@
-claim_id = "a84b841d34904c3eae50bc5c7f971236"
-agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
-role = "builder"
-base = "89563351089a302a39e974cc9f3003d117c11afd"
-branch = "dependabot/uv/providers/chatterbox/ruff-0.17.3"
-scope = ["providers/chatterbox/pyproject.toml", "providers/chatterbox/uv.lock"]
-opened_commit = "93f2b6b9bbc0b076df32bb862fb55f2c448dd0b4"
