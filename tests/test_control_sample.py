@@ -1,7 +1,6 @@
 """The private fixed-phrase sample endpoint shares Runtime synthesis ownership."""
 
 import asyncio
-import json
 import os
 import threading
 from typing import TYPE_CHECKING, Any
@@ -25,6 +24,7 @@ from tests.support.fakes_support import FakeHearing, FakeSpeaking
 from tests.support.speak_support import (
     ASGI_TIMEOUT_SECONDS,
     info_comment_before_data,
+    speak_body,
     speak_scope,
 )
 
@@ -130,7 +130,7 @@ def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(
                 sent = True
                 return {
                     "type": "http.request",
-                    "body": json.dumps({"text": "talk", "language": "de"}).encode(),
+                    "body": speak_body(),
                     "more_body": False,
                 }
             await stopped.wait()

@@ -1,7 +1,8 @@
 """Drive the three speech endpoints over the private socket.
 
 This process must not import the `speech_runtime_service` package. It is the
-parallel-lane proof: a caller that only knows the HTTP contract.
+parallel-lane proof: a caller that only knows the HTTP contract, through the
+types of `speech_runtime_client`.
 """
 
 # ruff: noqa: T201 - the client prints its measurements as the command line output
@@ -23,6 +24,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from websockets.asyncio.client import ClientConnection, unix_connect
+
+from speech_runtime_client.wire import SPEECH_PATH, speech_request_body
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -66,6 +69,9 @@ def _request(
         connection.request(method, target, body, {"Content-Type": "application/json"})
         response = connection.getresponse()
         data = response.read()
+    except http.client.IncompleteRead:
+        message = f"{method} {target} ended before its body was complete"
+        raise SystemExit(message) from None
     finally:
         connection.close()
     if response.status != http.client.OK:
@@ -115,10 +121,9 @@ def _resample(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
     return out.tobytes()
 
 
-def speak(path: Path, text: str) -> bytes:
-    """POST German text to the speech socket and return the WAV bytes."""
-    body = json.dumps({"text": text, "language": "de"}).encode("utf-8")
-    return _request(path, "POST", "/speak", body, 60)
+def speak(path: Path, text: str, voice: str) -> bytes:
+    """POST German text to the speech socket and return the whole WAV bytes."""
+    return _request(path, "POST", SPEECH_PATH, speech_request_body(text, voice), 60)
 
 
 def _rms(pcm: bytes) -> float:
@@ -367,11 +372,11 @@ async def _measure_utterance(
     )
 
 
-async def _run_measure(path: Path) -> None:
+async def _run_measure(path: Path, voice: str) -> None:
     """Repeat the first sentence on one socket and print what each repetition cost."""
     health = get_json(path, "/health")
     sample_rate = int(health["sample_rate"])
-    rate, pcm = _pcm_from_wav(speak(path, SENTENCE))
+    rate, pcm = _pcm_from_wav(speak(path, SENTENCE, voice))
     pcm = _resample(pcm, rate, sample_rate)
     repetitions: list[Repetition] = []
     async with unix_connect(
@@ -396,7 +401,7 @@ async def _run_measure(path: Path) -> None:
     print("measure_summary", json.dumps(summarize(repetitions), sort_keys=True))
 
 
-async def _run(path: Path) -> None:
+async def _run(path: Path, voice: str) -> None:
     health = get_json(path, "/health")
     print("contract_health", json.dumps(health, sort_keys=True))
     speaking = health["speaking"]
@@ -409,7 +414,7 @@ async def _run(path: Path) -> None:
         raise SystemExit(message)
     sample_rate = int(health["sample_rate"])
 
-    wav = speak(path, SENTENCE)
+    wav = speak(path, SENTENCE, voice)
     rate, pcm = _pcm_from_wav(wav)
     pcm = _resample(pcm, rate, sample_rate)
     print(
@@ -451,7 +456,7 @@ async def _run(path: Path) -> None:
             f"t={time.perf_counter() - first_started:.3f}s",
             json.dumps(first_final, ensure_ascii=False),
         )
-        second_wav = speak(path, SECOND)
+        second_wav = speak(path, SECOND, voice)
         rate2, pcm2 = _pcm_from_wav(second_wav)
         pcm2 = _resample(pcm2, rate2, sample_rate)
         second_started = time.perf_counter()
@@ -478,11 +483,11 @@ def main() -> None:
     _must_not_have_imported_speech()
     arguments = sys.argv[1:]
     measure = arguments[:1] == ["--measure"]
-    if len(arguments) != 1 + measure:
-        message = "usage: contract_client.py [--measure] SOCKET_PATH"
+    if len(arguments) != 2 + measure:
+        message = "usage: contract_client.py [--measure] SOCKET_PATH VOICE"
         raise SystemExit(message)
     run = _run_measure if measure else _run
-    asyncio.run(run(Path(arguments[-1])))
+    asyncio.run(run(Path(arguments[-2]), arguments[-1]))
 
 
 if __name__ == "__main__":

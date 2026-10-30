@@ -18,6 +18,7 @@ dependencies = [
     "pydantic-settings==2.16.1",
     "uvicorn==0.54.0",
     "websockets==17.3",
+    "overnightworks-speech-runtime-client",
     "overnightworks-speech-runtime-provider-contract",
 ]
 
@@ -35,7 +36,12 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/speech_runtime_service"]
 
+[tool.uv.workspace]
+members = ["packages/client"]
+exclude = ["providers/*"]
+
 [tool.uv.sources]
+overnightworks-speech-runtime-client = { workspace = true }
 overnightworks-speech-runtime-provider-contract = { path = "providers/provider-contract", editable = true }
 
 [tool.pytest.ini_options]
@@ -46,11 +52,11 @@ testpaths = ["tests"]
 [tool.coverage.run]
 branch = true
 relative_files = true
-include = ["src/*", "providers/*/src/*"]
+include = ["src/*", "packages/*/src/*", "providers/*/src/*"]
 
 [tool.ruff]
 target-version = "py314"
-src = [".", "src", "tests"]
+src = [".", "src", "packages/client/src", "tests"]
 # The gate's layout rules forbid package markers in these directories.
 namespace-packages = ["scripts", "tests/scripts", "tests/support"]
 

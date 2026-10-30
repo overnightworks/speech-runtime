@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     state_directory: Path = Field(
         default_factory=lambda: Path.home() / ".local/state/speech-runtime"
     )
+    busy_wait_seconds: float = Field(default=5.0, ge=0, allow_inf_nan=False)
+    max_input_characters: int = Field(default=4096, ge=1)
     runtime_uid: int | None = Field(
         default=None,
         gt=0,
