@@ -15,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.status import (
     HTTP_200_OK,
+    HTTP_422_UNPROCESSABLE_CONTENT,
     HTTP_429_TOO_MANY_REQUESTS,
     HTTP_503_SERVICE_UNAVAILABLE,
 )
@@ -378,6 +379,50 @@ def test_a_voice_switch_waits_for_a_waiting_request_which_speaks_with_its_own_vo
     assert (
         post_speech(after, speak_body(VoiceId.PIPER.value)).status_code == HTTP_200_OK
     )
+
+
+def _leave_gate_free(_runtime: Runtime) -> Lease | None:
+    return None
+
+
+def _hold_gate(runtime: Runtime) -> Lease | None:
+    return runtime.synthesis_gate.try_acquire()
+
+
+@pytest.mark.parametrize(
+    ("body", "hold_gate", "status"),
+    [
+        pytest.param(
+            b"{}", _leave_gate_free, HTTP_422_UNPROCESSABLE_CONTENT, id="invalid-body"
+        ),
+        pytest.param(
+            speak_body(VoiceId.PIPER.value),
+            _leave_gate_free,
+            HTTP_503_SERVICE_UNAVAILABLE,
+            id="voice-is-not-the-active-one",
+        ),
+        pytest.param(
+            speak_body(CHATTERBOX),
+            _hold_gate,
+            HTTP_429_TOO_MANY_REQUESTS,
+            id="gate-is-held",
+        ),
+    ],
+)
+def test_a_refusal_leaves_no_admission_behind_so_a_voice_switch_completes(
+    tmp_path: Path,
+    body: bytes,
+    hold_gate: Callable[[Runtime], Lease | None],
+    status: int,
+) -> None:
+    runtime = switchable_runtime(tmp_path, FakeSpeaking())
+    _held = hold_gate(runtime)
+    client = TestClient(app_over(runtime, busy_wait_seconds=0))
+
+    response = post_speech(client, body)
+
+    assert response.status_code == status
+    assert switch_completes(runtime)
 
 
 def test_a_request_cancelled_while_it_waits_for_the_gate_leaves_nothing_behind(
