@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse
 
 from speech_runtime_client.wire import (
     API_VERSION,
+    AUTHENTICATE_HEADER,
     RETRY_AFTER_HEADER,
     SPEECH_PATH,
     RefusalCode,
@@ -29,11 +30,13 @@ if TYPE_CHECKING:
     from starlette.responses import Response
     from starlette.types import Receive, Scope, Send
 
+    from speech_runtime_service.callers import SpeechCallers
     from speech_runtime_service.config import Settings
     from speech_runtime_service.service import Runtime, VoiceAdmission
 
 SPEAKING_LANGUAGE: Final = "de"
 _VERSION_PREFIX: Final = "/v{version:int}"
+_BEARER_CHALLENGE: Final = "Bearer"
 
 
 def _refused(
@@ -44,6 +47,8 @@ def _refused(
     background: BackgroundTask | None = None,
 ) -> JSONResponse:
     body = refusal(code, param)
+    if code is RefusalCode.UNAUTHORIZED:
+        headers = {**(headers or {}), AUTHENTICATE_HEADER: _BEARER_CHALLENGE}
     return JSONResponse(
         body.model_dump(mode="json"),
         status_code=body.status,
@@ -70,11 +75,17 @@ def _parse(raw: bytes) -> SpeechRequest | JSONResponse:
 
 
 class _SpeechRoute:
-    def __init__(self, runtime: Runtime, settings: Settings) -> None:
+    def __init__(
+        self, runtime: Runtime, settings: Settings, callers: SpeechCallers
+    ) -> None:
         self._runtime = runtime
         self._settings = settings
+        self._callers = callers
 
     async def speak(self, request: Request) -> Response:
+        admitted = await self._callers.admit(request.headers)
+        if isinstance(admitted, RefusalCode):
+            return _refused(admitted)
         deadline = time.monotonic() + self._settings.busy_wait_seconds
         parsed = self._checked(await request.body())
         if isinstance(parsed, JSONResponse):
@@ -135,9 +146,11 @@ class _NotARoute:
         await response(scope, receive, send)
 
 
-def mount_wire_routes(app: FastAPI, runtime: Runtime, settings: Settings) -> None:
+def mount_wire_routes(
+    app: FastAPI, runtime: Runtime, settings: Settings, callers: SpeechCallers
+) -> None:
     """Mount the speech route, then the catch-alls that refuse the rest of /v{n}."""
-    speech = _SpeechRoute(runtime, settings)
+    speech = _SpeechRoute(runtime, settings, callers)
     app.add_route(SPEECH_PATH, speech.speak, methods=["POST"], include_in_schema=False)
     for path in (_VERSION_PREFIX, f"{_VERSION_PREFIX}/{{rest:path}}"):
         app.add_route(path, _NotARoute(), include_in_schema=False)

@@ -26,6 +26,7 @@ from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.identity_support import valid_callers, write_caller_configuration
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -118,7 +119,9 @@ async def _closed_uds_client_finishes_load(tmp_path: Path) -> None:
             shutdown_started.set()
             await super().shutdown(sockets=sockets)
 
-    server = ObservingServer(uvicorn.Config(create_control_app(settings, runtime)))
+    server = ObservingServer(
+        uvicorn.Config(create_control_app(settings, runtime, valid_callers()))
+    )
     with PrivateSocket(tmp_path, runtime_uid=os.geteuid()) as listener:
         serving = asyncio.create_task(server.serve(sockets=[listener]))
         await asyncio.to_thread(_close_after_posting_load, tmp_path / "speech.sock")
@@ -363,7 +366,14 @@ def test_failed_loader_stops_the_server_and_cleans_the_owned_socket(
     )
     monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", str(os.geteuid()))
 
-    outcome = asyncio.run(__main__.serve(Settings(private_directory=tmp_path)))
+    outcome = asyncio.run(
+        __main__.serve(
+            Settings(
+                private_directory=tmp_path,
+                config_file=write_caller_configuration(tmp_path),
+            )
+        )
+    )
 
     assert outcome == 1
     assert not (tmp_path / "speech.sock").exists()
@@ -456,7 +466,11 @@ while True:
 
     outcome = asyncio.run(
         __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
+            Settings(
+                private_directory=tmp_path,
+                PRESENTATOR_RUNTIME_UID=os.geteuid(),
+                config_file=write_caller_configuration(tmp_path),
+            )
         )
     )
 
@@ -516,7 +530,11 @@ def test_owned_speaking_failure_stops_the_server_and_returns_failure(
 
     outcome = asyncio.run(
         __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
+            Settings(
+                private_directory=tmp_path,
+                PRESENTATOR_RUNTIME_UID=os.geteuid(),
+                config_file=write_caller_configuration(tmp_path),
+            )
         )
     )
 
@@ -588,7 +606,11 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
 
     outcome = asyncio.run(
         __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
+            Settings(
+                private_directory=tmp_path,
+                PRESENTATOR_RUNTIME_UID=os.geteuid(),
+                config_file=write_caller_configuration(tmp_path),
+            )
         )
     )
 
@@ -664,7 +686,11 @@ def test_signal_exit_is_zero_and_cleans_the_owned_socket(
 
     outcome = asyncio.run(
         __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
+            Settings(
+                private_directory=tmp_path,
+                PRESENTATOR_RUNTIME_UID=os.geteuid(),
+                config_file=write_caller_configuration(tmp_path),
+            )
         )
     )
 
@@ -692,7 +718,11 @@ def test_server_ending_on_its_own_returns_failure_and_cleans_the_owned_socket(
 
     outcome = asyncio.run(
         __main__.serve(
-            Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid())
+            Settings(
+                private_directory=tmp_path,
+                PRESENTATOR_RUNTIME_UID=os.geteuid(),
+                config_file=write_caller_configuration(tmp_path),
+            )
         )
     )
 
@@ -719,7 +749,40 @@ def test_invalid_runtime_uid_refuses_before_runtime_or_listener_work(
         lambda _settings: pytest.fail("constructed runtime"),
     )
 
-    settings = Settings(private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=runtime_uid)
+    settings = Settings(
+        private_directory=tmp_path,
+        PRESENTATOR_RUNTIME_UID=runtime_uid,
+        config_file=write_caller_configuration(tmp_path),
+    )
     serving = __main__.serve(settings)
     with pytest.raises(PermissionError, match=reason):
         asyncio.run(serving)
+
+
+@pytest.mark.parametrize(
+    ("file_name", "failure"),
+    [(None, ValueError), ("absent.toml", FileNotFoundError)],
+    ids=["unset", "missing"],
+)
+def test_serve_refuses_to_start_without_a_readable_caller_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    file_name: str | None,
+    failure: type[Exception],
+) -> None:
+    monkeypatch.setattr(
+        __main__, "prepare_cuda_libraries", lambda: pytest.fail("prepared CUDA")
+    )
+    monkeypatch.setattr(
+        Runtime,
+        "from_settings",
+        lambda _settings: pytest.fail("constructed runtime"),
+    )
+    settings = Settings(
+        private_directory=tmp_path,
+        PRESENTATOR_RUNTIME_UID=os.geteuid(),
+        config_file=None if file_name is None else tmp_path / file_name,
+    )
+
+    with pytest.raises(failure):
+        asyncio.run(__main__.serve(settings))

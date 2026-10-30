@@ -21,6 +21,7 @@ from speech_runtime_service.service import (
 )
 from speech_runtime_service.voices import VoiceId, VoiceLoadOutcome
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.identity_support import valid_callers
 from tests.support.speak_support import (
     ASGI_TIMEOUT_SECONDS,
     info_comment_before_data,
@@ -64,7 +65,7 @@ def test_private_sample_uses_its_fixed_phrase_and_native_rate(
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
 
-    private = TestClient(create_control_app(settings, runtime)).post(
+    private = TestClient(create_control_app(settings, runtime, valid_callers())).post(
         f"/voices/piper/sample/{language}"
     )
 
@@ -87,7 +88,7 @@ def test_sample_refuses_a_stale_voice_without_synthesising(tmp_path: Path) -> No
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
 
-    response = TestClient(create_control_app(settings, runtime)).post(
+    response = TestClient(create_control_app(settings, runtime, valid_callers())).post(
         f"/voices/{VoiceId.CHATTERBOX}/sample/en"
     )
 
@@ -120,7 +121,7 @@ def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(
     )
 
     async def scenario() -> int:
-        public = create_control_app(settings, runtime)
+        public = create_control_app(settings, runtime, valid_callers())
         sent = False
         stopped = asyncio.Event()
 
@@ -142,15 +143,15 @@ def test_sample_waits_for_an_actual_public_speak_stream_then_succeeds(
         scope = speak_scope()
         speaking_task = asyncio.create_task(public(scope, receive, send))
         assert await asyncio.to_thread(speaking.entered.wait, ASGI_TIMEOUT_SECONDS)
-        waiting = TestClient(create_control_app(settings, runtime)).post(
-            "/voices/piper/sample/de"
-        )
+        waiting = TestClient(
+            create_control_app(settings, runtime, valid_callers())
+        ).post("/voices/piper/sample/de")
         speaking.release.set()
         await asyncio.wait_for(speaking_task, timeout=ASGI_TIMEOUT_SECONDS)
         return waiting.status_code
 
     assert asyncio.run(scenario()) == HTTP_409_CONFLICT
-    later = TestClient(create_control_app(settings, runtime)).post(
+    later = TestClient(create_control_app(settings, runtime, valid_callers())).post(
         "/voices/piper/sample/de"
     )
     assert later.status_code == HTTP_200_OK
@@ -175,7 +176,7 @@ def test_second_sample_refuses_while_the_first_sample_streams(tmp_path: Path) ->
         huggingface_cache=tmp_path,
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
-    app = create_control_app(settings, runtime)
+    app = create_control_app(settings, runtime, valid_callers())
 
     async def scenario() -> int:
         sent = False
@@ -232,7 +233,7 @@ def test_sample_synthesis_error_releases_the_next_sample(tmp_path: Path) -> None
         huggingface_cache=tmp_path,
         PRESENTATOR_RUNTIME_UID=os.geteuid(),
     )
-    client = TestClient(create_control_app(settings, runtime))
+    client = TestClient(create_control_app(settings, runtime, valid_callers()))
 
     with pytest.raises(SpeakingFailedError):
         client.post("/voices/piper/sample/de")
@@ -283,7 +284,7 @@ def test_sample_keeps_its_engine_and_rate_when_the_selection_changes(
     result: list[bytes] = []
 
     def sample() -> None:
-        client = TestClient(create_control_app(settings, runtime))
+        client = TestClient(create_control_app(settings, runtime, valid_callers()))
         result.append(client.post("/voices/piper/sample/de").content)
 
     request = threading.Thread(target=sample)
@@ -335,7 +336,7 @@ def test_sample_response_construction_failure_releases_admission_for_deselection
             default_voice=VoiceId.CHATTERBOX,
         ),
     )
-    app = create_control_app(Settings(voice_cache=tmp_path), runtime)
+    app = create_control_app(Settings(voice_cache=tmp_path), runtime, valid_callers())
     route = next(
         route
         for route in app.routes
@@ -360,7 +361,9 @@ def test_sample_response_construction_failure_releases_admission_for_deselection
     assert closed == [1]
 
     monkeypatch.undo()
-    client = TestClient(create_control_app(Settings(voice_cache=tmp_path), runtime))
+    client = TestClient(
+        create_control_app(Settings(voice_cache=tmp_path), runtime, valid_callers())
+    )
     response = client.post("/voices/piper/sample/de")
     assert response.status_code == HTTP_200_OK
 
@@ -375,7 +378,7 @@ def test_sample_send_failure_before_pcm_releases_the_admitted_voice(
             huggingface_cache=tmp_path,
             PRESENTATOR_RUNTIME_UID=os.geteuid(),
         )
-        app = create_control_app(settings, runtime)
+        app = create_control_app(settings, runtime, valid_callers())
         received = False
 
         async def receive() -> dict[str, Any]:
@@ -417,7 +420,7 @@ def test_sample_pre_body_disconnect_releases_the_voice(tmp_path: Path) -> None:
             huggingface_cache=tmp_path,
             PRESENTATOR_RUNTIME_UID=os.geteuid(),
         )
-        app = create_control_app(settings, runtime)
+        app = create_control_app(settings, runtime, valid_callers())
 
         async def receive() -> dict[str, Any]:
             return {"type": "http.disconnect"}

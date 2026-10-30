@@ -28,6 +28,7 @@ from speech_runtime_service.voices import (
     VoiceState,
 )
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.identity_support import valid_callers
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -225,7 +226,7 @@ def test_private_download_can_be_discarded_and_revisited_through_truthful_status
     _patch_catalogue(monkeypatch, complete=lambda: complete)
     caplog.set_level(logging.ERROR)
 
-    with TestClient(create_control_app(settings, runtime)) as client:
+    with TestClient(create_control_app(settings, runtime, valid_callers())) as client:
         workers = _record_daemon_threads(monkeypatch)
         response = client.post("/voices/qwen3-tts-0.6b/download")
 
@@ -265,7 +266,7 @@ def test_failed_download_releases_ownership_for_a_complete_retry(
     _patch_catalogue(monkeypatch, complete=lambda: complete)
     settings = Settings(voice_cache=tmp_path, huggingface_cache=tmp_path)
 
-    with TestClient(create_control_app(settings, runtime)) as client:
+    with TestClient(create_control_app(settings, runtime, valid_callers())) as client:
         workers = _record_daemon_threads(monkeypatch)
         assert client.post("/voices/qwen3-tts-0.6b/download").status_code == HTTP_200_OK
         _join(workers[-1])
@@ -312,7 +313,7 @@ def test_any_failure_ends_the_download_as_failed_without_a_thread_traceback(
 
     with (
         caplog.at_level(logging.ERROR),
-        TestClient(create_control_app(settings, runtime)) as client,
+        TestClient(create_control_app(settings, runtime, valid_callers())) as client,
     ):
         workers = _record_daemon_threads(monkeypatch)
         assert client.post("/voices/qwen3-tts-0.6b/download").status_code == HTTP_200_OK

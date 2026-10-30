@@ -619,6 +619,7 @@ dependencies = [
     { name = "nvidia-cudnn-cu12" },
     { name = "overnightworks-speech-runtime-client" },
     { name = "overnightworks-speech-runtime-provider-contract" },
+    { name = "overnightworks-webauth" },
     { name = "piper-tts" },
     { name = "pydantic-settings" },
     { name = "uvicorn" },
@@ -645,6 +646,7 @@ requires-dist = [
     { name = "nvidia-cudnn-cu12", specifier = "==9.27.0.42" },
     { name = "overnightworks-speech-runtime-client", editable = "packages/client" },
     { name = "overnightworks-speech-runtime-provider-contract", editable = "providers/provider-contract" },
+    { name = "overnightworks-webauth", git = "https://github.com/overnightworks/webauth?rev=16b63abd14a56848ccaaaa170e091f9ae6e3e7c3" },
     { name = "piper-tts", specifier = "==1.8.0" },
     { name = "pydantic-settings", specifier = "==2.16.1" },
     { name = "uvicorn", specifier = "==0.54.0" },
@@ -659,6 +661,20 @@ dev = [
     { name = "pytest", specifier = "==9.1.1" },
     { name = "pytest-cov", specifier = "==7.1.0" },
     { name = "ruff", specifier = "==0.17.2" },
+]
+
+[[package]]
+name = "overnightworks-webauth"
+version = "0.25.0"
+source = { git = "https://github.com/overnightworks/webauth?rev=16b63abd14a56848ccaaaa170e091f9ae6e3e7c3#16b63abd14a56848ccaaaa170e091f9ae6e3e7c3" }
+dependencies = [
+    { name = "anyio" },
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "pydantic" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "starlette" },
+    { name = "urllib3" },
 ]
 
 [[package]]
@@ -999,6 +1015,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a3/26/b09b8010994eccc3c09092e6b34058f36a460eea2d4c3e8b910c695975a0/typing_inspection-0.4.4.tar.gz", hash = "sha256:547274fa6b0a561ccf549cc9524b999a578e737d015d8709d021f9d0d13bea47", size = 76928, upload-time = "2026-08-12T12:37:25.997Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac40d8ed5ff580409a7801a4fe26d529bdd915401dabfbe/typing_inspection-0.4.4-py3-none-any.whl", hash = "sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147", size = 14750, upload-time = "2026-08-12T12:37:24.648Z" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.8.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz", hash = "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63", size = 458972, upload-time = "2026-09-15T19:29:36.253Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl", hash = "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3", size = 135717, upload-time = "2026-09-15T19:29:34.577Z" },
 ]
 
 [[package]]

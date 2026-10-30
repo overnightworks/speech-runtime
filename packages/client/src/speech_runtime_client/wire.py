@@ -22,6 +22,7 @@ RETRY_AFTER_HEADER: Final = "Retry-After"
 CONTENT_TYPE_HEADER: Final = "Content-Type"
 WORKLOAD_TOKEN_HEADER: Final = "Speech-Workload-Token"  # noqa: S105 - a header name and no secret
 AUTHORIZATION_HEADER: Final = "Authorization"
+AUTHENTICATE_HEADER: Final = "WWW-Authenticate"
 
 RequestField = Literal["model", "input", "voice", "response_format"]
 _INPUT_WITHOUT_CONTENT: Final = "input must hold a letter or a digit"
@@ -77,6 +78,8 @@ class RefusalCode(StrEnum):
 
     UNSUPPORTED_VERSION = "unsupported_version"
     NOT_FOUND = "not_found"
+    UNAUTHORIZED = "unauthorized"
+    FORBIDDEN = "forbidden"
     INVALID_REQUEST = "invalid_request"
     BUSY = "busy"
     UNAVAILABLE = "unavailable"
@@ -85,6 +88,8 @@ class RefusalCode(StrEnum):
 REFUSAL_STATUS: Final[dict[RefusalCode, HTTPStatus]] = {
     RefusalCode.UNSUPPORTED_VERSION: HTTPStatus.BAD_REQUEST,
     RefusalCode.NOT_FOUND: HTTPStatus.NOT_FOUND,
+    RefusalCode.UNAUTHORIZED: HTTPStatus.UNAUTHORIZED,
+    RefusalCode.FORBIDDEN: HTTPStatus.FORBIDDEN,
     RefusalCode.INVALID_REQUEST: HTTPStatus.UNPROCESSABLE_ENTITY,
     RefusalCode.BUSY: HTTPStatus.TOO_MANY_REQUESTS,
     RefusalCode.UNAVAILABLE: HTTPStatus.SERVICE_UNAVAILABLE,
@@ -93,9 +98,13 @@ REFUSAL_STATUS: Final[dict[RefusalCode, HTTPStatus]] = {
 _REFUSAL_MESSAGE: Final[dict[RefusalCode, str]] = {
     RefusalCode.UNSUPPORTED_VERSION: "This API version is not supported.",
     RefusalCode.NOT_FOUND: "There is nothing at this path.",
+    RefusalCode.UNAUTHORIZED: (
+        "A workload token and the person's token are required, and both must be valid."
+    ),
+    RefusalCode.FORBIDDEN: "The tokens do not permit this request.",
     RefusalCode.INVALID_REQUEST: "The request is not valid.",
     RefusalCode.BUSY: "The service is busy speaking; try again.",
-    RefusalCode.UNAVAILABLE: "The voice is not available.",
+    RefusalCode.UNAVAILABLE: "The service cannot serve this request right now.",
 }
 
 

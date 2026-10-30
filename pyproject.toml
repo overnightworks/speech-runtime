@@ -12,6 +12,7 @@ dependencies = [
     "faster-whisper==1.2.1",
     "huggingface-hub==2.3.0",
     "numpy==2.5.4",
+    "overnightworks-webauth @ git+https://github.com/overnightworks/webauth@16b63abd14a56848ccaaaa170e091f9ae6e3e7c3",
     "nvidia-cublas-cu12==12.9.2.10",
     "nvidia-cudnn-cu12==9.27.0.42",
     "piper-tts==1.8.0",
@@ -34,6 +35,9 @@ dev = [
     "pytest-cov==7.1.0",
     "ruff==0.17.2",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/speech_runtime_service"]

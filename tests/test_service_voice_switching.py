@@ -31,6 +31,7 @@ from speech_runtime_service.voices import (
     VoiceState,
 )
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.identity_support import valid_callers
 from tests.support.speak_support import (
     post_speech,
     response_body,
@@ -436,7 +437,7 @@ def test_startup_selection_holds_load_guard_until_its_activation_finishes(
     assert entered.wait(timeout=5)
 
     response = TestClient(
-        create_control_app(Settings(voice_cache=tmp_path), runtime)
+        create_control_app(Settings(voice_cache=tmp_path), runtime, valid_callers())
     ).post("/voices/chatterbox/load")
     release.set()
     loader.join(timeout=5)
@@ -473,7 +474,7 @@ def test_duplicate_load_is_refused_and_retained_chatterbox_is_not_rebuilt(
     first.start()
     assert entered.wait(timeout=5)
     response = TestClient(
-        create_control_app(Settings(voice_cache=tmp_path), runtime)
+        create_control_app(Settings(voice_cache=tmp_path), runtime, valid_callers())
     ).post("/voices/chatterbox/load")
     release.set()
     first.join(timeout=5)
@@ -507,7 +508,9 @@ def test_recoverable_startup_keeps_hearing_live_and_refuses_speaking(
     )
 
     runtime.load()
-    private = TestClient(create_control_app(Settings(voice_cache=tmp_path), runtime))
+    private = TestClient(
+        create_control_app(Settings(voice_cache=tmp_path), runtime, valid_callers())
+    )
 
     assert private.get("/health").json()["speaking"] == {
         "model": "unavailable",
@@ -591,7 +594,7 @@ def test_every_speaking_surface_reconciles_a_dead_active_without_fallback(
     elif surface == "snapshot":
         runtime.snapshot(settings)
     elif surface == "wire":
-        wire = TestClient(create_control_app(settings, runtime))
+        wire = TestClient(create_control_app(settings, runtime, valid_callers()))
         refused = post_speech(wire, speak_body(VoiceId.CHATTERBOX.value))
         assert refused.status_code == HTTP_503_SERVICE_UNAVAILABLE
     else:

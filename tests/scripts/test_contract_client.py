@@ -22,6 +22,7 @@ from speech_runtime_service.pcm import pcm_from_wav
 from speech_runtime_service.service import Runtime
 from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import SPEAK_SAMPLE_RATE, FakeHearing, FakeSpeaking
+from tests.support.identity_support import callers_trusting
 from tests.support.private_server_support import serving_privately
 from tests.support.script_support import script_module
 from tests.support.speak_support import FailingSpeaking
@@ -71,11 +72,12 @@ def test_no_credential_holder_shows_a_key_or_token_when_represented(
 
 
 def test_both_proof_scripts_reach_a_running_speech_over_its_socket(
-    tmp_path: Path, minting: Minting
+    tmp_path: Path, minting: Minting, identity: ProofIdentity
 ) -> None:
     async def scenario() -> tuple[object, object, bytes, bytes]:
         runtime = Runtime(FakeSpeaking(), FakeHearing(), memory_probe=lambda: 0)
-        async with serving_privately(tmp_path, runtime) as server:
+        callers = callers_trusting(identity.configuration_path, minting)
+        async with serving_privately(tmp_path, runtime, callers) as server:
             return (
                 await asyncio.to_thread(CLIENT.get_json, server.path, "/health"),
                 await asyncio.to_thread(PROVE.get_json, server.path, "/health"),
