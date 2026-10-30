@@ -45,10 +45,10 @@ from speech_runtime_client.wire import (
     speech_request_body,
     speech_request_headers,
 )
-from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL
 from speech_runtime_service.cuda_libs import cuda_library_dirs
 from speech_runtime_service.pcm import BYTES_PER_SAMPLE
 from speech_runtime_service.service import voice_for_model
+from speech_runtime_service.voices import CHATTERBOX_SPEAKING_MODEL
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -734,7 +734,7 @@ def _prove(options: argparse.Namespace) -> None:
     )
     project = Path(__file__).resolve().parents[1]
     try:
-        with proof_identity(private_directory) as identity:
+        with proof_identity(private_directory, _voice_id(speaking_model)) as identity:
             minting = load_minting(identity.minting_path)
             env = speech_environment(private_directory, speaking_model, identity)
             with speech_server(project, env, socket_path) as running:

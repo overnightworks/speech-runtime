@@ -19,11 +19,7 @@ from starlette.status import (
 from starlette.websockets import WebSocketState
 
 from speech_runtime_service.card import card_memory_mb
-from speech_runtime_service.config import (
-    CHATTERBOX_SPEAKING_MODEL,
-    DEFAULT_SPEAKING_MODEL,
-    HEAR_SAMPLE_RATE,
-)
+from speech_runtime_service.config import HEAR_SAMPLE_RATE
 from speech_runtime_service.failures import PayloadFreeFailure, SpeakingFailedError
 from speech_runtime_service.hearing import (
     POLL_WAIT_SECONDS,
@@ -41,6 +37,8 @@ from speech_runtime_service.selection import (
 from speech_runtime_service.speaking import speaking_for_voice
 from speech_runtime_service.synthesis_gate import Lease, SynthesisGate
 from speech_runtime_service.voices import (
+    CHATTERBOX_SPEAKING_MODEL,
+    DEFAULT_SPEAKING_MODEL,
     VoiceDownloadOutcome,
     VoiceId,
     VoiceLoadOutcome,

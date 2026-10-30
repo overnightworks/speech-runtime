@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from speech_runtime_service.config import Settings, load_caller_config
 from tests.support.identity_support import (
+    ALL_VOICES,
     APP,
     ISSUER,
     MINTING,
@@ -25,7 +26,9 @@ if TYPE_CHECKING:
 SENTINEL = "SENTINEL-KEY-SET-CREDENTIAL"
 HTTP_ADDRESS = f"http://identity.test/certs?credential={SENTINEL}"
 LARGE_LEEWAY = 100_000_000
-QUIZ_TABLE = f'[apps.{APP}]\nworkload_client = "{MINTING.client_id}"\n'
+QUIZ_TABLE = (
+    f'[apps.{APP}]\nworkload_client = "{MINTING.client_id}"\nvoices = ["piper"]\n'
+)
 
 
 def test_the_file_is_read_into_the_identity_and_the_apps(tmp_path: Path) -> None:
@@ -35,6 +38,7 @@ def test_the_file_is_read_into_the_identity_and_the_apps(tmp_path: Path) -> None
     assert config.identity.service_group == MINTING.service_group
     assert config.identity.leeway_seconds == 0
     assert config.apps[APP].workload_client == MINTING.client_id
+    assert config.apps[APP].voices == ALL_VOICES
 
 
 def test_leeway_has_no_upper_cap(tmp_path: Path) -> None:
@@ -56,17 +60,22 @@ def test_leeway_has_no_upper_cap(tmp_path: Path) -> None:
             caller_configuration_text(
                 apps=QUIZ_TABLE
                 + f'\n[apps.second]\nworkload_client = "{MINTING.client_id}"\n'
+                + 'voices = ["piper"]\n'
             ),
         ),
         ("apps", caller_configuration_text(apps="")),
         (
             "workload_client",
-            caller_configuration_text(apps=f"[apps.{APP}]\nworkload_client = 7\n"),
+            caller_configuration_text(
+                apps=f'[apps.{APP}]\nworkload_client = 7\nvoices = ["piper"]\n'
+            ),
         ),
         ("leeway_seconds", caller_configuration_text(identity="leeway_seconds = -1")),
         (
             "apps",
-            caller_configuration_text(apps='[apps."a/b"]\nworkload_client = "other"\n'),
+            caller_configuration_text(
+                apps='[apps."a/b"]\nworkload_client = "other"\nvoices = ["piper"]\n'
+            ),
         ),
     ],
     ids=[
@@ -122,3 +131,25 @@ def test_the_key_set_address_stays_out_of_every_repr() -> None:
 def test_the_configuration_file_must_be_absolute() -> None:
     with pytest.raises(ValidationError):
         Settings(config_file="relative.toml")
+
+
+@pytest.mark.parametrize(
+    ("table", "field"),
+    [
+        (f'[apps.{APP}]\nworkload_client = "{MINTING.client_id}"\n', "voices"),
+        (QUIZ_TABLE.replace('["piper"]', "[]"), "voices"),
+        (QUIZ_TABLE.replace('["piper"]', '["alloy"]'), "voices"),
+        (QUIZ_TABLE.replace('["piper"]', '"piper"'), "voices"),
+        (QUIZ_TABLE + "speak = true\n", "speak"),
+    ],
+    ids=["missing", "empty", "unknown voice", "not a list", "speak flag"],
+)
+def test_an_app_table_without_a_valid_voice_list_fails_naming_the_key(
+    tmp_path: Path, table: str, field: str
+) -> None:
+    path = write_caller_configuration(tmp_path, caller_configuration_text(apps=table))
+
+    with pytest.raises(ValidationError) as failure:
+        load_caller_config(path)
+
+    assert f"apps.{APP}.{field}" in str(failure.value)

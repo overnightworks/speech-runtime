@@ -180,7 +180,7 @@ def _key_server(
     return server
 
 
-def _configuration_text(minting: Minting, jwks_url: str) -> str:
+def _configuration_text(minting: Minting, jwks_url: str, voice: str) -> str:
     def value(text: str) -> str:
         return json.dumps(text)
 
@@ -197,16 +197,19 @@ def _configuration_text(minting: Minting, jwks_url: str) -> str:
             "",
             f"[apps.{APP}]",
             f"workload_client = {value(minting.client_id)}",
+            f"voices = [{value(voice)}]",
             "",
         ]
     )
 
 
 @contextmanager
-def proof_identity(directory: Path) -> Iterator[ProofIdentity]:
+def proof_identity(directory: Path, voice: str) -> Iterator[ProofIdentity]:
     """Serve a throwaway key set over local HTTPS and write the files that use it.
 
-    Everything lands in a private subdirectory of `directory`. The key server
+    The proof app may name exactly `voice`, a catalogue id the caller passes in
+    because this module imports nothing of the service. Everything lands in a
+    private subdirectory of `directory`. The key server
     stops on exit; removing `directory` is the caller's.
     """
     identity_directory = directory / "identity"
@@ -255,7 +258,9 @@ def proof_identity(directory: Path) -> Iterator[ProofIdentity]:
         configuration_path = identity_directory / "speech.toml"
         minting_path = identity_directory / "minting.json"
         jwks_url = f"{origin}/certs"
-        _write_private(configuration_path, _configuration_text(minting, jwks_url))
+        _write_private(
+            configuration_path, _configuration_text(minting, jwks_url, voice)
+        )
         _write_private(minting_path, json.dumps(asdict(minting)))
         yield ProofIdentity(configuration_path, minting_path, ca_path, jwks_url)
     finally:

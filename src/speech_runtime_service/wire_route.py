@@ -91,6 +91,8 @@ class _SpeechRoute:
         if isinstance(parsed, JSONResponse):
             return parsed
         text, voice = parsed
+        if not self._callers.may_name(admitted.app, voice):
+            return _refused(RefusalCode.FORBIDDEN, "voice")
         admission = self._admit(voice)
         if isinstance(admission, JSONResponse):
             return admission

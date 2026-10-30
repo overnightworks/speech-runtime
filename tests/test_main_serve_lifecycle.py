@@ -12,18 +12,22 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
+
 from speech_runtime_service import __main__
 from speech_runtime_service.config import Settings
 from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
-from tests.support.identity_support import write_caller_configuration
+from tests.support.identity_support import (
+    caller_configuration_text,
+    write_caller_configuration,
+)
 
 if TYPE_CHECKING:
     import threading
 
-    import pytest
     import uvicorn
 
 _SIGTERM_SERVER = """
@@ -186,3 +190,46 @@ def _loadable_runtime(directory: Path) -> Runtime:
             default_voice=VoiceId.PIPER,
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ("apps", "named"),
+    [
+        ('workload_client = "quiz-client"', "voices"),
+        ('workload_client = "quiz-client"\nvoices = []', "voices"),
+        ('workload_client = "quiz-client"\nvoices = ["alloy"]', "voices"),
+        ('workload_client = "quiz-client"\nvoices = "piper"', "voices"),
+        ('workload_client = "quiz-client"\nvoices = ["piper"]\nspeak = true', "speak"),
+    ],
+    ids=["missing", "empty", "unknown voice", "not a list", "speak flag"],
+)
+def test_the_service_does_not_start_when_an_apps_voices_are_wrong(
+    tmp_path: Path, apps: str, named: str
+) -> None:
+    speech_root = Path(__file__).resolve().parents[1]
+    environment = {
+        **os.environ,
+        "SPEECH_PRIVATE_DIRECTORY": str(tmp_path),
+        "SPEECH_STATE_DIRECTORY": str(tmp_path / "state"),
+        "PRESENTATOR_RUNTIME_UID": str(os.geteuid()),
+        "SPEECH_CONFIG_FILE": str(
+            write_caller_configuration(
+                tmp_path, caller_configuration_text(apps=f"[apps.quiz]\n{apps}\n")
+            )
+        ),
+        "PYTHONPATH": str(speech_root),
+    }
+
+    finished = subprocess.run(
+        [sys.executable, "-m", "speech_runtime_service"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert finished.returncode != 0
+    assert f"apps.quiz.{named}" in finished.stderr
+    assert "alloy" not in finished.stderr
+    assert not (tmp_path / "speech.sock").exists()

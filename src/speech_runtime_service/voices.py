@@ -24,10 +24,6 @@ from speech_runtime_provider_contract import (
     VOXCPM_REVISION,
 )
 
-from speech_runtime_service.config import (
-    CHATTERBOX_SPEAKING_MODEL,
-    DEFAULT_SPEAKING_MODEL,
-)
 from speech_runtime_service.provider_process import (
     ProviderId,
     provider_entrypoint_is_usable,
@@ -37,6 +33,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from speech_runtime_service.config import Settings
+
+DEFAULT_SPEAKING_MODEL = "de_DE-thorsten-medium"
+CHATTERBOX_SPEAKING_MODEL = "ResembleAI/chatterbox"
 
 
 class VoiceId(StrEnum):
