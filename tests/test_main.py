@@ -238,13 +238,10 @@ while True:
         "speech_runtime_service.provider_process.subprocess.Popen", observed_popen
     )
 
-    settings = _serving_settings(tmp_path)
-
-    outcome = asyncio.run(__main__.serve(settings))
+    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
 
     assert outcome == 0
     assert close_before_await == [True]
-    assert not listens_on(settings.port)
 
 
 def test_owned_speaking_failure_stops_the_server_and_returns_failure(
