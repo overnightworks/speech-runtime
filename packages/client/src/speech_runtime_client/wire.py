@@ -19,6 +19,9 @@ API_VERSION: Final = 1
 MODEL: Final = "speech-runtime"
 RESPONSE_FORMAT: Final = "wav"
 RETRY_AFTER_HEADER: Final = "Retry-After"
+CONTENT_TYPE_HEADER: Final = "Content-Type"
+WORKLOAD_TOKEN_HEADER: Final = "Speech-Workload-Token"  # noqa: S105 - a header name and no secret
+AUTHORIZATION_HEADER: Final = "Authorization"
 
 RequestField = Literal["model", "input", "voice", "response_format"]
 _INPUT_WITHOUT_CONTENT: Final = "input must hold a letter or a digit"
@@ -58,6 +61,15 @@ def speech_request_body(text: str, voice: str) -> bytes:
         model=MODEL, input=text, voice=voice, response_format=RESPONSE_FORMAT
     )
     return request.model_dump_json().encode()
+
+
+def speech_request_headers(*, workload_token: str, person_token: str) -> dict[str, str]:
+    """The headers a caller posts with the body: the app's token and the person's."""
+    return {
+        CONTENT_TYPE_HEADER: "application/json",
+        WORKLOAD_TOKEN_HEADER: workload_token,
+        AUTHORIZATION_HEADER: f"Bearer {person_token}",
+    }
 
 
 class RefusalCode(StrEnum):

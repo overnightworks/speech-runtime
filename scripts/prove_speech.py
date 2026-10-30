@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import http.client
 import json
 import logging
@@ -32,7 +33,18 @@ from typing import TYPE_CHECKING
 import httpx2
 from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
-from speech_runtime_client.wire import SPEECH_PATH, speech_request_body
+from proof_identity import (
+    Minting,
+    ProofIdentity,
+    load_minting,
+    mint_pair,
+    proof_identity,
+)
+from speech_runtime_client.wire import (
+    SPEECH_PATH,
+    speech_request_body,
+    speech_request_headers,
+)
 from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL
 from speech_runtime_service.cuda_libs import cuda_library_dirs
 from speech_runtime_service.pcm import BYTES_PER_SAMPLE
@@ -67,6 +79,7 @@ MEASURE_REPETITIONS = 5
 SPEAK_TIMEOUT_SECONDS = 120
 CONCURRENT_EXTRA_WAIT_SECONDS = 8.0
 MEASURE_FLAG = {False: [], True: ["--measure"]}
+type Speak = Callable[[str, str], tuple[bytes, float, float]]
 HEARD_MARKERS = (
     "contract_hear_partial",
     "contract_hear_final",
@@ -266,6 +279,7 @@ def speak_measured(
     socket_path: Path,
     text: str,
     voice: str,
+    minting: Minting,
 ) -> tuple[bytes, float, float]:
     """Speak one request; return the whole WAV, time to first audio and total time.
 
@@ -273,6 +287,7 @@ def speak_measured(
     byte. A body the service aborted raises `IncompleteRead` in `http.client`,
     and the proof fails rather than keep the partial WAV.
     """
+    pair = mint_pair(minting)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(SPEAK_TIMEOUT_SECONDS)
     sock.connect(str(socket_path))
@@ -284,7 +299,9 @@ def speak_measured(
             "POST",
             SPEECH_PATH,
             speech_request_body(text, voice),
-            {"Content-Type": "application/json"},
+            speech_request_headers(
+                workload_token=pair.workload, person_token=pair.person
+            ),
         )
         response = connection.getresponse()
         if response.status != http.client.OK:
@@ -471,14 +488,14 @@ def _require_speaking(health: dict[str, object], model: str) -> None:
 
 
 def _prove_one_speak(
-    socket_path: Path,
+    speak: Speak,
     text: str,
     voice: str,
     *,
     limit: float,
     label: str,
 ) -> tuple[bytes, float, float]:
-    wav, ttfa, total = speak_measured(socket_path, text, voice)
+    wav, ttfa, total = speak(text, voice)
     rate, pcm = _pcm_from_wav(wav)
     duration = (len(pcm) / BYTES_PER_SAMPLE) / rate
     rtf = duration / total if total else 0.0
@@ -506,7 +523,7 @@ def _prove_one_speak(
 
 
 def _prove_speak_medians(
-    socket_path: Path,
+    speak: Speak,
     text: str,
     voice: str,
     *,
@@ -519,7 +536,7 @@ def _prove_speak_medians(
     rtfs: list[float] = []
     for rep in range(1, MEASURE_REPETITIONS + 1):
         wav, ttfa, rtf = _prove_one_speak(
-            socket_path,
+            speak,
             text,
             voice,
             limit=limit,
@@ -540,7 +557,7 @@ def _prove_speak_medians(
     return wavs[-1], median_ttfa, median_rtf
 
 
-def _prove_speak(socket_path: Path, model: str) -> bytes:
+def _prove_speak(socket_path: Path, model: str, minting: Minting) -> bytes:
     """Speak German MEASURE_REPETITIONS times.
 
     `_prove_one_speak` fails the run the moment any single repetition misses
@@ -548,7 +565,7 @@ def _prove_speak(socket_path: Path, model: str) -> bytes:
     repetition held, not just the median.
     """
     german, _ttfa, _rtf = _prove_speak_medians(
-        socket_path,
+        functools.partial(speak_measured, socket_path, minting=minting),
         SENTENCE,
         _voice_id(model),
         limit=_first_byte_limit(model),
@@ -557,7 +574,7 @@ def _prove_speak(socket_path: Path, model: str) -> bytes:
     return german
 
 
-def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
+def _prove_concurrent_speak(socket_path: Path, model: str, minting: Minting) -> None:
     limit = _first_byte_limit(model)
     voice = _voice_id(model)
     results: dict[str, tuple[bytes, float, float]] = {}
@@ -565,7 +582,7 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
 
     def run(key: str, text: str) -> None:
         try:
-            results[key] = speak_measured(socket_path, text, voice)
+            results[key] = speak_measured(socket_path, text, voice, minting)
         except Exception as error:
             LOGGER.exception("concurrent speak %s failed", key)
             errors.append(f"{key}: {error}")
@@ -610,26 +627,40 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
         raise SystemExit(message)
 
 
+def contract_client_command(
+    socket_path: Path, voice: str, minting_path: Path, *, measure: bool
+) -> list[str]:
+    """The contract client's argv: the minting file's path, never a key or a token."""
+    client = Path(__file__).with_name("contract_client.py")
+    return [
+        sys.executable,
+        str(client),
+        *MEASURE_FLAG[measure],
+        "--minting-file",
+        str(minting_path),
+        str(socket_path),
+        voice,
+    ]
+
+
 def _prove_contract(
     socket_path: Path,
-    private_directory: Path,
     env: dict[str, str],
     heard: list[str],
+    minting_path: Path,
     *,
     measure: bool,
 ) -> None:
-    client = Path(__file__).with_name("contract_client.py")
     print("contract_client_start")
     completed = subprocess.run(  # noqa: S603 - argv is this interpreter and this repository's client script with no shell
-        [
-            sys.executable,
-            str(client),
-            *MEASURE_FLAG[measure],
-            str(socket_path),
+        contract_client_command(
+            socket_path,
             _voice_id(env["SPEECH_SPEAKING_MODEL"]),
-        ],
+            minting_path,
+            measure=measure,
+        ),
         check=False,
-        cwd=private_directory,
+        cwd=env["SPEECH_PRIVATE_DIRECTORY"],
         env=env,
         capture_output=True,
         text=True,
@@ -646,9 +677,13 @@ def _prove_contract(
     heard.extend(heard_texts(completed.stdout))
 
 
-def speech_environment(private_directory: Path, speaking_model: str) -> dict[str, str]:
+def speech_environment(
+    private_directory: Path, speaking_model: str, identity: ProofIdentity
+) -> dict[str, str]:
     """Return the process environment pointing at the private directory and model."""
     env = os.environ.copy()
+    env["SPEECH_CONFIG_FILE"] = str(identity.configuration_path)
+    env["SSL_CERT_FILE"] = str(identity.ca_path)
     env["SPEECH_PRIVATE_DIRECTORY"] = str(private_directory)
     env["PRESENTATOR_RUNTIME_UID"] = str(os.geteuid())
     env.setdefault("SPEECH_PROVIDER_ROOT", str(PROVIDER_ROOT))
@@ -699,33 +734,37 @@ def _prove(options: argparse.Namespace) -> None:
     )
     project = Path(__file__).resolve().parents[1]
     try:
-        env = speech_environment(private_directory, speaking_model)
-        with speech_server(project, env, socket_path) as running:
-            print("health_ready", json.dumps(running.health, sort_keys=True))
-            print("load_to_ready_s", f"{running.ready_seconds:.1f}")
-            print(
-                "gpu_compute_pids",
-                _nvidia_compute_pids(),
-                f"speech_pid={running.process.pid}",
-            )
-            _require_speaking(running.health, speaking_model)
-            print("gpu_both_resident", _nvidia_memory())
-            print("whisper_cache", WHISPER_CACHE)
-            print("chatterbox_cache", CHATTERBOX_CACHE)
-            print("piper_cache", PIPER_CACHE)
-            german = _prove_speak(socket_path, speaking_model)
-            german_wav = Path(tempfile.mkdtemp(prefix="speech-proof-")) / "german.wav"
-            german_wav.write_bytes(german)
-            print("german_wav", german_wav)
-            _prove_concurrent_speak(socket_path, speaking_model)
-            _prove_contract(
-                socket_path,
-                private_directory,
-                env,
-                running.heard,
-                measure=options.measure,
-            )
-            print("peak_rss_mib", f"{running.peak_rss_mib():.0f}")
+        with proof_identity(private_directory) as identity:
+            minting = load_minting(identity.minting_path)
+            env = speech_environment(private_directory, speaking_model, identity)
+            with speech_server(project, env, socket_path) as running:
+                print("health_ready", json.dumps(running.health, sort_keys=True))
+                print("load_to_ready_s", f"{running.ready_seconds:.1f}")
+                print(
+                    "gpu_compute_pids",
+                    _nvidia_compute_pids(),
+                    f"speech_pid={running.process.pid}",
+                )
+                _require_speaking(running.health, speaking_model)
+                print("gpu_both_resident", _nvidia_memory())
+                print("whisper_cache", WHISPER_CACHE)
+                print("chatterbox_cache", CHATTERBOX_CACHE)
+                print("piper_cache", PIPER_CACHE)
+                german = _prove_speak(socket_path, speaking_model, minting)
+                german_wav = (
+                    Path(tempfile.mkdtemp(prefix="speech-proof-")) / "german.wav"
+                )
+                german_wav.write_bytes(german)
+                print("german_wav", german_wav)
+                _prove_concurrent_speak(socket_path, speaking_model, minting)
+                _prove_contract(
+                    socket_path,
+                    env,
+                    running.heard,
+                    identity.minting_path,
+                    measure=options.measure,
+                )
+                print("peak_rss_mib", f"{running.peak_rss_mib():.0f}")
         print("gpu_after", _nvidia_memory())
         print("caches_kept")
         print("  huggingface:", HF_CACHE)

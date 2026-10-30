@@ -24,6 +24,15 @@ The service speaks German only. There is no `language` field, and any field
 not listed here (`speed`, `instructions`, `stream_format`, `language`, ...) is
 refused.
 
+## Headers
+
+A speak request also carries the app's workload token in `Speech-Workload-Token`
+and the person's token as `Authorization: Bearer <token>`.
+`speech_request_headers` in `speech_runtime_client.wire` builds them with the
+content type, and `wire.py` owns the header names. The service checks both
+tokens from the release that configures its identity on; until then the
+socket's UID is the only authority and the service ignores these headers.
+
 ## Response
 
 `200` with `Content-Type: audio/wav`, chunked: 16-bit mono PCM at the voice's

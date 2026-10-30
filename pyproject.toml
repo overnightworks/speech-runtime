@@ -27,7 +27,9 @@ speech-runtime-service = "speech_runtime_service.__main__:main"
 
 [dependency-groups]
 dev = [
+    "cryptography==50.0.2",
     "httpx2==2.16.0",
+    "pyjwt[crypto]==2.15.1",
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "ruff==0.17.2",
@@ -46,7 +48,7 @@ overnightworks-speech-runtime-provider-contract = { path = "providers/provider-c
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers --import-mode=importlib"
-pythonpath = ["."]
+pythonpath = [".", "scripts"]
 testpaths = ["tests"]
 
 [tool.coverage.run]
@@ -56,7 +58,7 @@ include = ["src/*", "packages/*/src/*", "providers/*/src/*"]
 
 [tool.ruff]
 target-version = "py314"
-src = [".", "src", "packages/client/src", "tests"]
+src = [".", "scripts", "src", "packages/client/src", "tests"]
 # The gate's layout rules forbid package markers in these directories.
 namespace-packages = ["scripts", "tests/scripts", "tests/support"]
 
