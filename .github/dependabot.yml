@@ -20,3 +20,7 @@ updates:
           - "numpy"
           - "faster-whisper"
           - "piper-tts"
+  - package-ecosystem: uv
+    directories: ["/providers/chatterbox"]
+    schedule:
+      interval: weekly

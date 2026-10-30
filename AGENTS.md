@@ -8,8 +8,9 @@ only this repository's facts.
 The root is the speech service (`src/`, `tests/`, `scripts/`). Each
 `providers/<name>` is its own uv project with its own `uv.lock`;
 `providers/provider-contract` is the shared source the others install from.
-The GPU providers are frozen under overnightworks/speech-runtime#2: no
-hardening, no new tests, and their advisories are allowlisted against that item.
+The GPU providers are live code: the models are kept and used. An advisory no
+relock reaches is allowlisted in `quality/config.toml` against
+overnightworks/speech-runtime#2, with the model-library cap that holds it.
 
 ## Checks
 

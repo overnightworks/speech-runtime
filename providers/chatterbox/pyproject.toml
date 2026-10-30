@@ -5,8 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "overnightworks-speech-runtime-chatterbox-provider"
 version = "0.0.0"
-requires-python = ">=3.12,<3.13"
-dependencies = ["chatterbox-tts==0.1.7", "numpy==1.26.4", "overnightworks-speech-runtime-provider-contract", "setuptools==81.0.0"]
+requires-python = ">=3.14"
+dependencies = ["chatterbox-tts==0.1.7", "numpy==2.5.4", "overnightworks-speech-runtime-provider-contract", "setuptools==81.0.0"]
 
 [project.scripts]
 speech-runtime-chatterbox-worker = "speech_runtime_chatterbox.__main__:main"
@@ -25,7 +25,7 @@ addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
