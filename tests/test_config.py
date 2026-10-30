@@ -1,11 +1,9 @@
 """Configuration comes from the environment; a failed load names the model."""
 
-import logging
 import os
 from typing import TYPE_CHECKING
 
 import pytest
-from fastapi.testclient import TestClient
 
 from speech_runtime_service.config import (
     HEAR_SAMPLE_RATE,
@@ -21,16 +19,21 @@ from speech_runtime_service.service import (
     failed_to_load_message,
 )
 from speech_runtime_service.voices import VoiceId
-from tests.support.fakes_support import FakeHearing, FakeSpeaking, an_app
+from tests.support.fakes_support import FakeHearing, FakeSpeaking
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 @pytest.mark.parametrize(
-    ("name", "value"), [("SPEECH_HOST", "example.invalid"), ("SPEECH_PORT", "8090")]
+    ("name", "value"),
+    [
+        ("SPEECH_HOST", "example.invalid"),
+        ("SPEECH_PORT", "8090"),
+        ("SPEECH_DEBUG", "true"),
+    ],
 )
-def test_a_stale_tcp_setting_in_the_environment_is_ignored(
+def test_a_stale_setting_in_the_environment_is_ignored(
     monkeypatch: pytest.MonkeyPatch, name: str, value: str
 ) -> None:
     monkeypatch.setenv(name, value)
@@ -42,7 +45,6 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("SPEECH_DEVICE", "cpu")
     monkeypatch.setenv("SPEECH_SPEAKING_MODEL", "ResembleAI/chatterbox")
     monkeypatch.setenv("SPEECH_HEARING_MODEL", "Systran/faster-whisper-large-v3")
-    monkeypatch.setenv("SPEECH_DEBUG", "true")
     monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", str(os.geteuid()))
 
     settings = Settings()
@@ -50,7 +52,6 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
     assert settings.device == "cpu"
     assert settings.speaking_model == "ResembleAI/chatterbox"
     assert settings.hearing_model == "Systran/faster-whisper-large-v3"
-    assert settings.debug is True
 
 
 def test_settings_default_uses_the_provider_hub_cache(
@@ -155,32 +156,6 @@ def test_a_failed_hearing_load_names_the_model(tmp_path: Path) -> None:
         failed_to_load_message("hearing", "fake-ears")
         == "hearing model fake-ears failed to load"
     )
-
-
-def test_speak_does_not_log_the_sentence_without_debug(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    sentence = "Nur dieser Satz darf nicht in den Logs stehen"
-    caplog.set_level(logging.DEBUG)
-    TestClient(an_app(debug=False)).post(
-        "/speak",
-        json={"text": sentence, "language": "de"},
-    )
-
-    assert sentence not in caplog.text
-
-
-def test_speak_logs_the_sentence_when_debug_is_on(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    sentence = "Dieser Satz steht im Debug-Log"
-    caplog.set_level(logging.DEBUG)
-    TestClient(an_app(debug=True)).post(
-        "/speak",
-        json={"text": sentence, "language": "de"},
-    )
-
-    assert sentence in caplog.text
 
 
 def test_wav_header_is_sixteen_bit_mono() -> None:

@@ -26,6 +26,7 @@ from speech_runtime_service.config import (
     DEFAULT_SPEAKING_MODEL,
     HEAR_SAMPLE_RATE,
 )
+from speech_runtime_service.failures import SpeakingFailedError, log_failure
 from speech_runtime_service.hearing import (
     POLL_WAIT_SECONDS,
     FrameTooLargeError,
@@ -113,14 +114,12 @@ class Runtime:
         speaking: SpeakingEngine | None,
         hearing: HearingEngine,
         *,
-        debug: bool = False,
         memory_probe: Callable[[], int] | None = None,
         dependencies: RuntimeDependencies | None = None,
     ) -> None:
         """Hold the two engines. They are not loaded until `load`."""
         self.speaking = speaking
         self.hearing = hearing
-        self.debug = debug
         self.loading = False
         self._memory_probe = memory_probe or card_memory_mb
         dependencies = dependencies or RuntimeDependencies()
@@ -161,7 +160,6 @@ class Runtime:
         return cls(
             None,
             hearing_from_settings(settings),
-            debug=settings.debug,
             dependencies=RuntimeDependencies(
                 selection=VoiceSelectionStore(
                     settings.state_directory, owner_uid=os.geteuid()
@@ -678,11 +676,6 @@ def _load_or_raise(which: str, model: str, load: Callable[[], None]) -> None:
         raise RuntimeError(message) from None
 
 
-def _log_text(*, debug: bool, kind: str, text: str) -> None:
-    if debug:
-        logger.debug("%s text: %s", kind, text)
-
-
 def _wav_chunks(
     speaking: SpeakingEngine,
     text: str,
@@ -690,16 +683,20 @@ def _wav_chunks(
     sample_rate: int | None = None,
 ) -> Iterator[bytes]:
     first = True
-    synthesis = speaking.pcm_chunks(text, language)
     try:
-        for pcm in synthesis:
-            if first:
-                yield wav_header(sample_rate or speaking.sample_rate) + pcm
-                first = False
-            else:
-                yield pcm
-    finally:
-        synthesis.close()
+        synthesis = speaking.pcm_chunks(text, language)
+        try:
+            for pcm in synthesis:
+                if first:
+                    yield wav_header(sample_rate or speaking.sample_rate) + pcm
+                    first = False
+                else:
+                    yield pcm
+        finally:
+            synthesis.close()
+    except Exception as error:  # noqa: BLE001 - logged by type and frames, re-raised without its message
+        log_failure(logger, "speaking failed", error)
+        raise SpeakingFailedError from None
 
 
 def _public_wav_chunks(
@@ -730,7 +727,6 @@ def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
                 status_code=HTTP_503_SERVICE_UNAVAILABLE,
                 detail="speaking model is not ready",
             )
-        _log_text(debug=runtime.debug, kind="speak", text=body.text)
         return ClosingWavResponse(
             _public_wav_chunks(runtime, admitted, body.text, body.language), admitted
         )
@@ -741,9 +737,10 @@ def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
         if not runtime.hearing.ready:
             await websocket.close(code=WS_1013_TRY_AGAIN_LATER)
             return
+        failed = False
         try:
             session = runtime.hearing.open_session(language)
-            await _hear_loop(websocket, session, debug=runtime.debug)
+            await _hear_loop(websocket, session)
         except WebSocketDisconnect:
             return
         except FrameTooLargeError:
@@ -752,8 +749,10 @@ def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
                 code=WS_1009_MESSAGE_TOO_BIG,
                 reason=FRAME_TOO_LARGE_REASON,
             )
-        except Exception:
-            logger.exception("hearing failed")
+        except Exception as error:  # noqa: BLE001 - logged by type and frames, closed with a fixed reason
+            log_failure(logger, "hearing failed", error)
+            failed = True
+        if failed:
             await _close_open(
                 websocket,
                 code=WS_1011_INTERNAL_ERROR,
@@ -766,12 +765,7 @@ async def _close_open(websocket: WebSocket, *, code: int, reason: str) -> None:
         await websocket.close(code=code, reason=reason)
 
 
-async def _hear_loop(
-    websocket: WebSocket,
-    session: HearingSession,
-    *,
-    debug: bool,
-) -> None:
+async def _hear_loop(websocket: WebSocket, session: HearingSession) -> None:
     receive = asyncio.create_task(websocket.receive())
     tick = asyncio.create_task(asyncio.sleep(POLL_WAIT_SECONDS))
     try:
@@ -791,7 +785,6 @@ async def _hear_loop(
             if tick in done:
                 event = await asyncio.to_thread(session.poll)
                 if event is not None:
-                    _log_text(debug=debug, kind="hear", text=str(event["text"]))
                     await websocket.send_json(event)
                 tick = asyncio.create_task(asyncio.sleep(POLL_WAIT_SECONDS))
     finally:

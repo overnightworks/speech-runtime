@@ -13,6 +13,7 @@ from starlette.status import HTTP_200_OK, HTTP_404_NOT_FOUND, HTTP_409_CONFLICT
 
 from speech_runtime_service.config import Settings
 from speech_runtime_service.control import SampleLanguage, create_control_app
+from speech_runtime_service.failures import SpeakingFailedError
 from speech_runtime_service.pcm import AI_MARK, pcm_from_wav
 from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import (
@@ -233,7 +234,7 @@ def test_sample_synthesis_error_releases_the_next_sample(tmp_path: Path) -> None
     )
     client = TestClient(create_control_app(settings, runtime))
 
-    with pytest.raises(_SynthesisError):
+    with pytest.raises(SpeakingFailedError):
         client.post("/voices/piper/sample/de")
     speaking.fails = False
 

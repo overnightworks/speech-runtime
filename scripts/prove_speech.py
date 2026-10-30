@@ -36,7 +36,7 @@ from speech_runtime_service.cuda_libs import cuda_library_dirs
 from speech_runtime_service.pcm import BYTES_PER_SAMPLE
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
 SENTENCE = (
     "Die Kamera zeigt den Vortragenden, während im Hintergrund "
@@ -50,12 +50,13 @@ SECOND = "Die nächste Folie bitte."
 LOCK_PATH = Path("/tmp/probe-stack.lock")  # noqa: S108 - the one machine-wide probe lock must keep this exact path whatever TMPDIR says
 MEASURE_REPETITIONS = 5
 MEASURE_FLAG = {False: [], True: ["--measure"]}
+HEARD_MARKERS = (
+    "contract_hear_partial",
+    "contract_hear_final",
+    "contract_hear_second_final",
+)
 CONTRACT_MARKERS = {
-    False: (
-        "contract_hear_partial",
-        "contract_hear_final",
-        "contract_hear_second_final",
-    ),
+    False: HEARD_MARKERS,
     True: ("measure_rep1", "measure_summary"),
 }
 LOGGER = logging.getLogger(__name__)
@@ -293,6 +294,7 @@ class _RunningSpeech:
     process: subprocess.Popen[str]
     health: dict[str, object]
     ready_seconds: float
+    heard: list[str]
 
     def peak_rss_mib(self) -> float:
         status = Path(f"/proc/{self.process.pid}/status")
@@ -312,10 +314,11 @@ def _speech_server(
         stderr=subprocess.STDOUT,
         text=True,
     )
+    heard: list[str] = []
     try:
         started = time.monotonic()
         health = _wait_ready(socket_path)
-        yield _RunningSpeech(server, health, time.monotonic() - started)
+        yield _RunningSpeech(server, health, time.monotonic() - started, heard)
     finally:
         server.terminate()
         try:
@@ -323,12 +326,33 @@ def _speech_server(
         except subprocess.TimeoutExpired:
             server.kill()
             server.wait(timeout=5)
-        if server.stdout is not None:
-            leftover = server.stdout.read()
-            if leftover:
-                print("server_log_tail:")
-                print(leftover[-4000:])
+        log = server.stdout.read() if server.stdout is not None else ""
+        if log:
+            print("server_log_tail:")
+            print(log[-4000:])
         print("server_exit", server.returncode)
+        _require_log_without_text(log, [SENTENCE, ENGLISH, SECOND, *heard])
+
+
+def heard_texts(contract_output: str) -> list[str]:
+    """The texts the contract client printed as heard partials and finals."""
+    return [
+        str(json.loads(line[line.index("{") :])["text"])
+        for line in contract_output.splitlines()
+        if line.startswith(HEARD_MARKERS)
+    ]
+
+
+def spoken_or_heard_in_log(log: str, texts: Iterable[str]) -> list[str]:
+    """The non-blank texts that the service log holds."""
+    return [text for text in texts if text.strip() and text in log]
+
+
+def _require_log_without_text(log: str, texts: Iterable[str]) -> None:
+    leaked = spoken_or_heard_in_log(log, texts)
+    if leaked:
+        message = f"the service log holds {len(leaked)} spoken or heard text(s)"
+        raise SystemExit(message)
 
 
 def _first_byte_limit(model: str) -> float:
@@ -502,14 +526,14 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
 
 
 def _prove_contract(
-    project: Path,
     socket_path: Path,
     private_directory: Path,
     env: dict[str, str],
+    heard: list[str],
     *,
     measure: bool,
 ) -> None:
-    client = project / "scripts" / "contract_client.py"
+    client = Path(__file__).with_name("contract_client.py")
     print("contract_client_start")
     completed = subprocess.run(  # noqa: S603 - argv is this interpreter and this repository's client script with no shell
         [sys.executable, str(client), *MEASURE_FLAG[measure], str(socket_path)],
@@ -528,6 +552,7 @@ def _prove_contract(
         if marker not in completed.stdout:
             message = f"contract client did not report {marker}"
             raise SystemExit(message)
+    heard.extend(heard_texts(completed.stdout))
 
 
 def speech_environment(private_directory: Path, speaking_model: str) -> dict[str, str]:
@@ -546,7 +571,6 @@ def speech_environment(private_directory: Path, speaking_model: str) -> dict[str
     env["SPEECH_HEARING_MODEL"] = os.environ.get(
         "SPEECH_HEARING_MODEL", DEFAULT_HEARING_MODEL
     )
-    env["SPEECH_DEBUG"] = "false"
     env.setdefault("HF_HUB_OFFLINE", "1")
     env.setdefault("TRANSFORMERS_OFFLINE", "1")
     cuda_dirs = ":".join(str(path) for path in cuda_library_dirs())
@@ -610,10 +634,10 @@ def main() -> None:
                 print("german_wav", german_wav)
                 _prove_concurrent_speak(socket_path, speaking_model)
                 _prove_contract(
-                    project,
                     socket_path,
                     private_directory,
                     env,
+                    running.heard,
                     measure=options.measure,
                 )
                 print("peak_rss_mib", f"{running.peak_rss_mib():.0f}")

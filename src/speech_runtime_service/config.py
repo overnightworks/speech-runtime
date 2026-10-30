@@ -28,7 +28,6 @@ class Settings(BaseSettings):
     device: str = "cuda"
     speaking_model: str = DEFAULT_SPEAKING_MODEL
     hearing_model: str = DEFAULT_HEARING_MODEL
-    debug: bool = False
     voice_cache: Path = Field(default_factory=lambda: Path.home() / ".cache" / "piper")
     huggingface_cache: Path = Field(
         default_factory=lambda: Path(huggingface_hub_constants.HF_HUB_CACHE)
