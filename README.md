@@ -167,7 +167,7 @@ sent even where the decode is slow.
 
 `sample_rate` is the hear rate. Speak is a WAV, so its rate is in the header. A caller that feeds speak output into hear must resample.
 
-The service never writes spoken or heard text to its log. A failure is logged with its exception types and stack frames, never with an exception message.
+The service never writes spoken or heard text to its log. A speaking or hearing failure is logged with its exception types and stack frames, never with an exception message.
 
 ## Settings
 
