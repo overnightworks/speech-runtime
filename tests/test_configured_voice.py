@@ -143,8 +143,10 @@ def test_each_catalogue_voice_starts_from_its_model_and_the_wire_speaks_it(
     provider_and_rate: tuple[str | None, int],
 ) -> None:
     provider, sample_rate = provider_and_rate
-    _install_piper(monkeypatch, tmp_path / "piper")
-    _install_gpu_voice(voice, tmp_path / "cache")
+    if provider is None:
+        _install_piper(monkeypatch, tmp_path / "piper")
+    else:
+        _install_gpu_voice(voice, tmp_path / "cache")
     settings = _settings(tmp_path, model, provider)
     runtime = Runtime.from_settings(settings)
     try:

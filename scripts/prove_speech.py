@@ -69,10 +69,8 @@ FLOCK_COMMAND_UNAVAILABLE_STATUS = 69
 # lock form; together they stay within 1830 s. The grace covers the teardown
 # `speech_server` runs after TERM: terminate, wait up to 10 s, then kill and wait
 # up to 5 s, so 15 s at worst, with the providers stopped through the server.
-# Measured on the CPU (SPEECH_SPEAKING_MODEL=de_DE-thorsten-medium, hearing
-# faster-whisper-medium, OMP_NUM_THREADS=4, 30.10.2026): the server exits 0.6 s
-# after the proof body ends; the full proof holds the lock for 92 s and
-# `--measure` for 84 s, so the cap leaves them far more room than they use.
+# The proof speaks through CPU Piper only; it needs a small fraction of the cap,
+# and the server exits within the grace after the proof body ends.
 CAP_SECONDS = 1800
 KILL_GRACE_SECONDS = 30
 MEASURE_REPETITIONS = 5
