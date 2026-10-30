@@ -1,4 +1,4 @@
-"""Stage proof: start the service, drive health/speak/hear, then the contract client.
+"""Stage proof: start the service, drive health and speak, then the contract client.
 
 Takes /tmp/probe-stack.lock, checks the 1-minute load, runs one heavy step at a
 time, and leaves no process behind. Model weights stay in the Hugging Face and
@@ -78,17 +78,8 @@ KILL_GRACE_SECONDS = 30
 MEASURE_REPETITIONS = 5
 SPEAK_TIMEOUT_SECONDS = 120
 CONCURRENT_EXTRA_WAIT_SECONDS = 8.0
-MEASURE_FLAG = {False: [], True: ["--measure"]}
 type Speak = Callable[[str, str], tuple[bytes, float, float]]
-HEARD_MARKERS = (
-    "contract_hear_partial",
-    "contract_hear_final",
-    "contract_hear_second_final",
-)
-CONTRACT_MARKERS = {
-    False: HEARD_MARKERS,
-    True: ("measure_rep1", "measure_summary"),
-}
+CONTRACT_MARKERS = ("contract_health", "contract_speak")
 LOGGER = logging.getLogger(__name__)
 SILENCE_RMS = 0.01
 MIN_SPEECH_SECONDS = 0.4
@@ -100,8 +91,6 @@ PIPER_CACHE = Path.home() / ".cache" / "piper"
 PROVIDER_ROOT = Path(__file__).resolve().parents[1] / "providers"
 HF_CACHE = Path.home() / ".cache" / "huggingface" / "hub"
 CHATTERBOX_CACHE = HF_CACHE / "models--ResembleAI--chatterbox"
-WHISPER_CACHE = HF_CACHE / "models--Systran--faster-whisper-large-v3"
-DEFAULT_HEARING_MODEL = "Systran/faster-whisper-large-v3"
 
 
 def _load_1min() -> float:
@@ -213,20 +202,18 @@ def _wait_ready(socket_path: Path) -> dict[str, object]:
             time.sleep(0.5)
             continue
         speaking = last["speaking"]
-        hearing = last["hearing"]
-        if not isinstance(speaking, dict) or not isinstance(hearing, dict):
+        if not isinstance(speaking, dict):
             time.sleep(0.5)
             continue
         print(
             "health",
             f"speaking_ready={speaking['ready']}",
-            f"hearing_ready={hearing['ready']}",
             f"card_memory_mb={last['card_memory_mb']}",
         )
-        if speaking["ready"] is True and hearing["ready"] is True:
+        if speaking["ready"] is True:
             return last
         time.sleep(0.5)
-    message = f"models not ready within {READY_TIMEOUT_SECONDS}s: {last}"
+    message = f"speaking not ready within {READY_TIMEOUT_SECONDS}s: {last}"
     raise SystemExit(message)
 
 
@@ -254,25 +241,6 @@ def _rms(pcm: bytes) -> float:
     samples.frombytes(pcm[: len(pcm) - (len(pcm) % BYTES_PER_SAMPLE)])
     total = sum(sample * sample for sample in samples)
     return (total / len(samples)) ** 0.5 / 32768.0
-
-
-def _resample(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
-    if src_rate == dst_rate:
-        return pcm
-    samples = array("h")
-    samples.frombytes(pcm)
-    n_src = len(samples)
-    n_dst = max(1, int(n_src * dst_rate / src_rate))
-    out = array("h", [0] * n_dst)
-    last = max(n_src - 1, 1)
-    for index in range(n_dst):
-        position = index * last / max(n_dst - 1, 1)
-        left = int(position)
-        frac = position - left
-        right = min(left + 1, n_src - 1)
-        value = samples[left] * (1 - frac) + samples[right] * frac
-        out[index] = int(max(-32768, min(32767, value)))
-    return out.tobytes()
 
 
 def speak_measured(
@@ -373,7 +341,6 @@ class _RunningSpeech:
     process: subprocess.Popen[str]
     health: dict[str, object]
     ready_seconds: float
-    heard: list[str]
 
     def peak_rss_mib(self) -> float:
         status = Path(f"/proc/{self.process.pid}/status")
@@ -388,7 +355,7 @@ def speech_server(
     start: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
     wait_ready: Callable[[Path], dict[str, object]] = _wait_ready,
 ) -> Iterator[_RunningSpeech]:
-    """Start speech, wait until both models are ready, and stop it on the way out."""
+    """Start speech, wait until it speaks, and stop it on the way out."""
     server = start(
         [sys.executable, "-m", "speech_runtime_service"],
         cwd=project,
@@ -397,12 +364,11 @@ def speech_server(
         stderr=subprocess.STDOUT,
         text=True,
     )
-    heard: list[str] = []
     proof_failed = True
     try:
         started = time.monotonic()
         health = wait_ready(socket_path)
-        yield _RunningSpeech(server, health, time.monotonic() - started, heard)
+        yield _RunningSpeech(server, health, time.monotonic() - started)
         proof_failed = False
     finally:
         server.terminate()
@@ -416,31 +382,22 @@ def speech_server(
             print("server_log_tail:")
             print(log[-4000:])
         print("server_exit", server.returncode)
-        texts = [SENTENCE, SECOND, *heard]
+        texts = [SENTENCE, SECOND]
         if proof_failed:
             _report_log_text(log, texts)
         else:
             _require_log_without_text(log, texts)
 
 
-def heard_texts(contract_output: str) -> list[str]:
-    """The texts the contract client printed as heard partials and finals."""
-    return [
-        str(json.loads(line[line.index("{") :])["text"])
-        for line in contract_output.splitlines()
-        if line.startswith(HEARD_MARKERS)
-    ]
-
-
-def spoken_or_heard_in_log(log: str, texts: Iterable[str]) -> list[str]:
+def spoken_in_log(log: str, texts: Iterable[str]) -> list[str]:
     """The non-blank texts that the service log holds."""
     return [text for text in texts if text.strip() and text in log]
 
 
 def _leak_message(log: str, texts: Iterable[str]) -> str | None:
-    leaked = spoken_or_heard_in_log(log, texts)
+    leaked = spoken_in_log(log, texts)
     if leaked:
-        return f"the service log holds {len(leaked)} spoken or heard text(s)"
+        return f"the service log holds {len(leaked)} spoken text(s)"
     return None
 
 
@@ -628,14 +585,13 @@ def _prove_concurrent_speak(socket_path: Path, model: str, minting: Minting) -> 
 
 
 def contract_client_command(
-    socket_path: Path, voice: str, minting_path: Path, *, measure: bool
+    socket_path: Path, voice: str, minting_path: Path
 ) -> list[str]:
     """The contract client's argv: the minting file's path, never a key or a token."""
     client = Path(__file__).with_name("contract_client.py")
     return [
         sys.executable,
         str(client),
-        *MEASURE_FLAG[measure],
         "--minting-file",
         str(minting_path),
         str(socket_path),
@@ -643,21 +599,13 @@ def contract_client_command(
     ]
 
 
-def _prove_contract(
-    socket_path: Path,
-    env: dict[str, str],
-    heard: list[str],
-    minting_path: Path,
-    *,
-    measure: bool,
-) -> None:
+def _prove_contract(socket_path: Path, env: dict[str, str], minting_path: Path) -> None:
     print("contract_client_start")
     completed = subprocess.run(  # noqa: S603 - argv is this interpreter and this repository's client script with no shell
         contract_client_command(
             socket_path,
             _voice_id(env["SPEECH_SPEAKING_MODEL"]),
             minting_path,
-            measure=measure,
         ),
         check=False,
         cwd=env["SPEECH_PRIVATE_DIRECTORY"],
@@ -670,11 +618,10 @@ def _prove_contract(
     if completed.returncode != 0:
         message = f"contract client failed: {completed.returncode}"
         raise SystemExit(message)
-    for marker in CONTRACT_MARKERS[measure]:
+    for marker in CONTRACT_MARKERS:
         if marker not in completed.stdout:
             message = f"contract client did not report {marker}"
             raise SystemExit(message)
-    heard.extend(heard_texts(completed.stdout))
 
 
 def speech_environment(
@@ -690,15 +637,9 @@ def speech_environment(
     env["SPEECH_DEVICE"] = os.environ.get("SPEECH_DEVICE", "cuda")
     if env["SPEECH_DEVICE"] == "cpu":
         env["CUDA_VISIBLE_DEVICES"] = ""
-    state_directory = private_directory / "state"
-    state_directory.mkdir(mode=0o700, exist_ok=True)
-    env["SPEECH_STATE_DIRECTORY"] = str(state_directory)
     env["SPEECH_SPEAKING_MODEL"] = speaking_model
     env["SPEECH_BUSY_WAIT_SECONDS"] = str(
         _first_byte_limit(speaking_model) + CONCURRENT_EXTRA_WAIT_SECONDS
-    )
-    env["SPEECH_HEARING_MODEL"] = os.environ.get(
-        "SPEECH_HEARING_MODEL", DEFAULT_HEARING_MODEL
     )
     env.setdefault("HF_HUB_OFFLINE", "1")
     env.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -715,15 +656,10 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         description="Stage proof of the speech service under the probe-stack lock.",
         allow_abbrev=False,
     )
-    parser.add_argument(
-        "--measure",
-        action="store_true",
-        help="run the CPU hearing measurement instead of the contract proof",
-    )
     return parser.parse_args(arguments)
 
 
-def _prove(options: argparse.Namespace) -> None:
+def _prove() -> None:
     wait_for_load()
     print("gpu_before", _nvidia_memory())
     private_directory = Path(tempfile.mkdtemp(prefix="speech-"))
@@ -746,8 +682,7 @@ def _prove(options: argparse.Namespace) -> None:
                     f"speech_pid={running.process.pid}",
                 )
                 _require_speaking(running.health, speaking_model)
-                print("gpu_both_resident", _nvidia_memory())
-                print("whisper_cache", WHISPER_CACHE)
+                print("gpu_resident", _nvidia_memory())
                 print("chatterbox_cache", CHATTERBOX_CACHE)
                 print("piper_cache", PIPER_CACHE)
                 german = _prove_speak(socket_path, speaking_model, minting)
@@ -757,13 +692,7 @@ def _prove(options: argparse.Namespace) -> None:
                 german_wav.write_bytes(german)
                 print("german_wav", german_wav)
                 _prove_concurrent_speak(socket_path, speaking_model, minting)
-                _prove_contract(
-                    socket_path,
-                    env,
-                    running.heard,
-                    identity.minting_path,
-                    measure=options.measure,
-                )
+                _prove_contract(socket_path, env, identity.minting_path)
                 print("peak_rss_mib", f"{running.peak_rss_mib():.0f}")
         print("gpu_after", _nvidia_memory())
         print("caches_kept")
@@ -778,13 +707,13 @@ def _prove(options: argparse.Namespace) -> None:
 
 def main() -> None:
     """Run the stage proof, taking the probe-stack lock through the fleet form."""
-    options = parse_arguments(sys.argv[1:])
+    parse_arguments(sys.argv[1:])
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(line_buffering=True)
     if LOCK_HELD_ENV not in os.environ:
         print("waiting_for_lock", LOCK_PATH)
         raise SystemExit(run_under_lock(sys.argv[1:]))
-    prove_under_lock(os.environ, lambda: _prove(options))
+    prove_under_lock(os.environ, _prove)
 
 
 if __name__ == "__main__":

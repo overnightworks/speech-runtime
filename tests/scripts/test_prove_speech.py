@@ -1,8 +1,7 @@
-"""The proof's log check rejects a service log that holds spoken or heard text."""
+"""The proof's log check rejects a service log that holds spoken text."""
 
 from __future__ import annotations
 
-import json
 import os
 import signal
 import subprocess
@@ -19,32 +18,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 PROVE = script_module("prove_speech")
-CONTRACT_OUTPUT = "\n".join(
-    [
-        "contract_health {}",
-        "contract_hear_partial t=0.5s still_sending=True "
-        + json.dumps({"text": "Die Kamera", "final": False}),
-        "contract_hear_final t=2.0s "
-        + json.dumps({"text": "Die Kamera zeigt", "final": True}),
-        "contract_hear_second_final t=3.0s "
-        + json.dumps({"text": "Die nächste Folie", "final": True}, ensure_ascii=False),
-    ]
-)
-
-
-def test_heard_texts_are_read_from_the_contract_client_output() -> None:
-    assert PROVE.heard_texts(CONTRACT_OUTPUT) == [
-        "Die Kamera",
-        "Die Kamera zeigt",
-        "Die nächste Folie",
-    ]
 
 
 @pytest.mark.parametrize(
     ("log", "texts", "leaked"),
     [
         ("INFO started\nINFO text: Hallo Welt", ["Hallo Welt"], ["Hallo Welt"]),
-        ("INFO heard Die Kamera zeigt", ["Die Kamera zeigt"], ["Die Kamera zeigt"]),
         ("INFO started\nINFO speaking done", ["Hallo Welt", "Die Kamera"], []),
         ("INFO started", ["", "  "], []),
     ],
@@ -52,7 +31,7 @@ def test_heard_texts_are_read_from_the_contract_client_output() -> None:
 def test_the_log_check_reports_only_the_texts_the_log_holds(
     log: str, texts: list[str], leaked: list[str]
 ) -> None:
-    assert PROVE.spoken_or_heard_in_log(log, texts) == leaked
+    assert PROVE.spoken_in_log(log, texts) == leaked
 
 
 FLEET_BUDGET_SECONDS = 1830
@@ -92,7 +71,7 @@ def run_returning(
 
 
 def test_the_proof_runs_itself_inside_the_fleet_lock_form() -> None:
-    command = PROVE.fleet_command(["--measure"])
+    command = PROVE.fleet_command(["--help"])
 
     assert command[:5] == [
         "flock",
@@ -110,7 +89,7 @@ def test_the_proof_runs_itself_inside_the_fleet_lock_form() -> None:
     ]
     assert command[12] == sys.executable
     assert Path(command[13]) == Path(PROVE.__file__)
-    assert command[14:] == ["--measure"]
+    assert command[14:] == ["--help"]
 
 
 def test_the_cap_and_kill_grace_fit_the_fleet_budget() -> None:
@@ -132,8 +111,8 @@ def test_a_run_outside_the_lock_hands_over_to_the_fleet_form(
         environments.append(env)
         return subprocess.CompletedProcess(command, 0)
 
-    assert PROVE.run_under_lock(["--measure"], run) == 0
-    assert started == [PROVE.fleet_command(["--measure"])]
+    assert PROVE.run_under_lock(["--help"], run) == 0
+    assert started == [PROVE.fleet_command(["--help"])]
     assert PROVE.LOCK_HELD_ENV in environments[0]
 
 
