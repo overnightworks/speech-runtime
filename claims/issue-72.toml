@@ -1,0 +1,7 @@
+claim_id = "25c4ec7da72940fba34d43a27646add3"
+agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
+role = "builder"
+base = "e77fa7646cc718576b6397993d34415cb3a47b7a"
+branch = "claude/issue-72-dependabot-omegaconf-cap"
+scope = [".github/dependabot.yml"]
+opened_commit = "3f4101670b883a5ba917c2e8a47dbbf5cb05db4f"
