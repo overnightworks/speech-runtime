@@ -1,8 +1,0 @@
-claim_id = "8721017cc1414b2f88c62dffd509c84e"
-agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
-role = "builder"
-base = "14931436685dfaf55ccc4c444411feef6e38db9f"
-branch = "claude/issue-39-c3a-chatterbox-py314"
-scope = [".github/dependabot.yml", "AGENTS.md", "providers/chatterbox/pyproject.toml", "providers/chatterbox/src/speech_runtime_chatterbox/model.py", "providers/chatterbox/uv.lock", "quality/config.toml"]
-opened_commit = "242710f66ca01874602a77409961a5b4a81ca506"
-whole_reason = "One provider move: its Python floor, its lock, one import, the allowances its old pins held, and the two files that state its status; none can land without the others or the gate goes red."
