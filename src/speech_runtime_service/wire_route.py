@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 import time
-from http import HTTPMethod
 from typing import TYPE_CHECKING, Final
 
 from pydantic import ValidationError
@@ -28,13 +27,13 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from starlette.requests import Request
     from starlette.responses import Response
+    from starlette.types import Receive, Scope, Send
 
     from speech_runtime_service.config import Settings
     from speech_runtime_service.service import Runtime, VoiceAdmission
 
 SPEAKING_LANGUAGE: Final = "de"
 _VERSION_PREFIX: Final = "/v{version:int}"
-_ALL_METHODS: Final = [method.value for method in HTTPMethod]
 
 
 def _refused(
@@ -125,10 +124,15 @@ class _SpeechRoute:
         return _refused(RefusalCode.BUSY, headers={RETRY_AFTER_HEADER: str(wait)})
 
 
-async def _not_a_route(request: Request) -> Response:
-    if request.path_params["version"] == API_VERSION:
-        return _refused(RefusalCode.NOT_FOUND)
-    return _refused(RefusalCode.UNSUPPORTED_VERSION)
+class _NotARoute:
+    """An ASGI app, so the route it serves answers every HTTP method."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["path_params"]["version"] == API_VERSION:
+            response = _refused(RefusalCode.NOT_FOUND)
+        else:
+            response = _refused(RefusalCode.UNSUPPORTED_VERSION)
+        await response(scope, receive, send)
 
 
 def mount_wire_routes(app: FastAPI, runtime: Runtime, settings: Settings) -> None:
@@ -136,4 +140,4 @@ def mount_wire_routes(app: FastAPI, runtime: Runtime, settings: Settings) -> Non
     speech = _SpeechRoute(runtime, settings)
     app.add_route(SPEECH_PATH, speech.speak, methods=["POST"], include_in_schema=False)
     for path in (_VERSION_PREFIX, f"{_VERSION_PREFIX}/{{rest:path}}"):
-        app.add_route(path, _not_a_route, methods=_ALL_METHODS, include_in_schema=False)
+        app.add_route(path, _NotARoute(), include_in_schema=False)
