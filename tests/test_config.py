@@ -118,12 +118,13 @@ def test_settings_bind_to_a_loopback_tcp_port_by_default(
 def test_settings_read_the_bind_address_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SPEECH_HOST", "0.0.0.0")  # noqa: S104 - the container form
+    all_interfaces = "0.0.0.0"  # noqa: S104 - the container form of the bind address
+    monkeypatch.setenv("SPEECH_HOST", all_interfaces)
     monkeypatch.setenv("SPEECH_PORT", "65535")
 
     settings = Settings()
 
-    assert (settings.host, settings.port) == ("0.0.0.0", 65535)  # noqa: S104
+    assert (settings.host, settings.port) == (all_interfaces, 65535)
 
 
 @pytest.mark.parametrize("port", ["0", "65536", "-1", "http", ""])
