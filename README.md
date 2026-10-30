@@ -3,13 +3,11 @@
 Audience: the operator starting this process on the home server, and
 Presentator, which calls it.
 
-One process holds a German voice and a German listener resident, and offers
-them over HTTP on a private Unix socket whose caller is Presentator. The caller
-owns the address. The voice is chosen between downloaded Piper, Chatterbox,
-Qwen3-TTS 0.6B, VoxCPM2, and cached NVIDIA Magpie; the durable choice is private
-state. An admin may explicitly download the pinned Qwen snapshot through the
-private control socket; it retains partials, never selects the voice, and
-reports local artifact truth.
+One process holds a German voice resident and offers `GET /health` and the
+speak wire over HTTP on a private Unix socket whose caller is Presentator. The
+caller owns the address. The voice is the one `SPEECH_SPEAKING_MODEL` names:
+Piper, Chatterbox, Qwen3-TTS 0.6B, VoxCPM2 or NVIDIA Magpie, from weights that
+are already cached. The service stores no choice of its own.
 
 The code was extracted, with its history, from `speech/` in
 [overnightworks/presentator](https://github.com/overnightworks/presentator).
@@ -23,29 +21,22 @@ The code was extracted, with its history, from `speech/` in
 | Speaking (optional) | [`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice), snapshot `85e237c12c027371202489a0ec509ded67b5e4b5` | Apache-2.0 (`qwen-tts` 0.1.1) | German and English through one configured built-in preset, initially Ryan. It returns a complete 24 kHz waveform, so `speaking.streams` is false. The isolated provider accepts the repository's `cuda` setting as `cuda:0`, uses bfloat16 and package-default attention, and reads only the pinned local snapshot. Runtime quality and latency remain unmeasured. |
 | Speaking (optional) | [`openbmb/VoxCPM2`](https://huggingface.co/openbmb/VoxCPM2), snapshot `32279effe8c19989596f05d353d1447f51d9e915` | Apache-2.0 (`voxcpm` 2.0.3) | German and English text-only streaming at 48 kHz through its isolated provider. It reads only the pinned local snapshot, uses no prompt, reference audio, cloning, or voice-design controls, and has no measured quality, latency, residency, or deployment result. |
 | Speaking (optional) | [`nvidia/magpie_tts_multilingual_357m`](https://huggingface.co/nvidia/magpie_tts_multilingual_357m), revision `5023df68bd3f5b5ce6d666a50979bc501af145cc` with NanoCodec revision `fc00890b604aa2de298d2641ffc6c5f6caf8c4d7` | NVIDIA Open Model License (`nemo-toolkit[tts]` 3.0.0) | German and English through one configured fixed voice, initially Sofia, at 22,050 Hz. It restores both pinned archives from the local Hub cache only and also needs `microsoft/wavlm-base-plus` and `google/byt5-small` there, which nothing pins yet (#2). It installs on Python 3.14 with torch 2.15; its provider worker has spoken German on the GPU once (30.10.2026, torch 2.15.0+cu132, NVIDIA driver 595.99.02), and has not yet run through the service. Hearing, quality, and latency against Piper are unmeasured. |
-| Hearing | [`Systran/faster-whisper-large-v3`](https://huggingface.co/Systran/faster-whisper-large-v3) | MIT (CTranslate2 conversion of [`openai/whisper-large-v3`](https://huggingface.co/openai/whisper-large-v3), also MIT) | Already cached on this machine. German is a documented language. Partials are chunked re-decode of a growing buffer, not a native streaming architecture. |
 
 Checked and not chosen:
 
 - **Kokoro / Kokoro-German** (`Tundragoon/Kokoro-German`, Apache-2.0). Official Kokoro has no documented German. The community German fine-tune warns it is undertrained.
 - **XTTS-v2** and maintained forks. Weights under the Coqui Public Model License (non-commercial). ADR 0004 already excluded them.
-- **Orpheus** (`Thorsten-Voice/tv-orpheus-v1`, Apache-2.0 on the fine-tune; some GGUF conversions inherit Llama 3.2). A 3B SNAC talker, roughly 8 GB resident. First audio for a short sentence is the LLM's first codec frame, not a VITS chunk; not measured on this card, and it would sit on the GPU beside Whisper.
-- **Nemotron 3.5 ASR Streaming 0.6B** (`nvidia/nemotron-3.5-asr-streaming-0.6b`). The completed compiled fp16 direct-model experiment on this RTX 3090 missed the partial-transcript target: across five runs, German first/stable-partial median and final WER were 0.949 s / 17.24% at lookahead 0 and 0.879 s / 15.52% at lookahead 6; English was 0.892 s / 6.78% and 1.054 s / 5.08%, respectively. [The durable result](https://github.com/overnightworks/presentator/issues/77#issuecomment-5592496732) is not a `/hear` measurement, socket integration, or joint-residency proof, so faster-whisper remains selected.
-- **Voxtral Mini 4B Realtime** (Apache-2.0, documented German, native streaming, sub-500 ms in the paper). Not cached here, wants vLLM, and ships no server that matches this contract. ADR 0004 still names it as the M3 spike.
-
-The listener is not a streaming-native model. Kyutai STT has no German checkpoint. Voxtral is the current streaming-native candidate and was left for that spike.
+- **Orpheus** (`Thorsten-Voice/tv-orpheus-v1`, Apache-2.0 on the fine-tune; some GGUF conversions inherit Llama 3.2). A 3B SNAC talker, roughly 8 GB resident. First audio for a short sentence is the LLM's first codec frame, not a VITS chunk; not measured on this card.
 
 ## Card
 
-Piper runs on the CPU. Chatterbox Multilingual V3 and Whisper large-v3 float16
-share the 3090 when Chatterbox is selected. Together they fit beside the
-display processes. Qwen's source integration makes no joint-residency or
-latency claim before the target-machine proof.
+Piper runs on the CPU. Chatterbox Multilingual V3 runs on the 3090 when it is
+the configured voice and fits beside the display processes. Qwen's source
+integration makes no residency or latency claim before the target-machine proof.
 
 Measured on this RTX 3090 (24 GB), one German sentence (14 words) and one
 English sentence (15 words), `scripts/prove_speech.py`, 5 repetitions each, median
-reported, 08.09.2026. The operator's live speech process (Piper + Whisper,
-~6.4 GB) was resident on the card throughout both runs and was not stopped.
+reported, 08.09.2026.
 
 Piper default:
 
@@ -55,12 +46,6 @@ Piper default:
 | Time to first byte (English, median of 5) | 0.210 s |
 | Real-time factor (German / English, median of 5) | 25.4× / 24.2× |
 | WAV RMS | not silence on every repetition |
-| First partial transcript | 1.116 s (frame 8 of 100 ms frames), while frames were still being sent |
-| Final transcript | matched the spoken sentence at 9.559 s |
-| Second utterance on the same socket | `"Die nächste Folie bitte."` at 3.267 s, no reload |
-| Card before this process | 6437 MiB |
-| Card with both resident (before any `/speak` call) | 10311 MiB |
-| Hearing footprint | ~3874 MiB GPU |
 | Speaking footprint | 0 MiB GPU (CPU / ONNX) |
 
 `SPEECH_SPEAKING_MODEL=ResembleAI/chatterbox`, same sentences, same card, with
@@ -73,12 +58,7 @@ implicit net both need `pkg_resources`, restored by pinning `setuptools`):
 | Time to first byte (English, median of 5) | 0.523 s |
 | Real-time factor (German / English, median of 5) | 0.83× / 0.82× |
 | WAV RMS | not silence on every repetition |
-| First partial transcript | 0.966 s (frame 7), while frames were still being sent |
-| Final transcript | matched the spoken sentence at 7.901 s |
 | Second `/speak` while the first streams | both WAVs distinct speech; Runtime serialises request synthesis |
-| Card before this process | 6296 MiB |
-| Card with Chatterbox + Whisper resident (before any `/speak` call) | 13465 MiB |
-| Chatterbox + hearing footprint together | ~7169 MiB GPU (Chatterbox itself ~3.5 GB, matching #70's inference for a 0.5B model beside Whisper's ~3.9 GB) |
 
 `scripts/prove_speech.py` now fails the run the moment any single repetition
 misses its first-byte limit — a passing run is the proof
@@ -91,7 +71,7 @@ sentence is already in budget — a cold first request before that warmup
 existed took 1.362 s. `scripts/prove_speech.py` writes the German WAV of the run it
 just proved to `german.wav` in a private temporary directory the script prints for a listening judgment.
 
-CTranslate2 does not bundle CUDA. This project installs `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` and preloads them at start.
+The service installs `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` and preloads them at start.
 
 Weights stay in:
 
@@ -99,75 +79,17 @@ Weights stay in:
 - Chatterbox: `~/.cache/huggingface/hub/models--ResembleAI--chatterbox` (pinned snapshot `5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18`, `CHATTERBOX_REVISION` in the shared provider contract)
 - Qwen: `~/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice` (pinned snapshot `85e237c12c027371202489a0ec509ded67b5e4b5`)
 - VoxCPM2: `~/.cache/huggingface/hub/models--openbmb--VoxCPM2` (pinned snapshot `32279effe8c19989596f05d353d1447f51d9e915`)
-- Whisper: `~/.cache/huggingface/hub/models--Systran--faster-whisper-large-v3`
-
-## CPU
-
-Hearing on the CPU with `scripts/prove_speech.py --measure`, 26.10.2026: AMD Ryzen 5
-5600X, 12 threads, 60 GB, `SPEECH_DEVICE=cpu`, `CUDA_VISIBLE_DEVICES` empty
-for speech and the client, Piper `de_DE-thorsten-medium`, the first sentence
-(14 words) five times on one socket, the same pacing loop and 0.9 s of client
-silence as in "Card". Each cell is median / worst of the completed
-repetitions. The 1-minute load was recorded at the start of each run; other
-lanes shared the machine in all but the later turbo run (the proof's own
-ceiling is 18).
-`nvidia-smi --query-compute-apps=pid` at health ready listed two foreign pids
-and never the speech process, in every run.
-
-| What | large-v3, 4 threads | large-v3-turbo, 4 threads | large-v3-turbo, 4 threads, 26.10.2026 | large-v3, 8 threads | medium, 4 threads |
-| --- | --- | --- | --- | --- | --- |
-| Revision | `edaa852ec7e145841d8ffdb056a99866b5f0a478` | `0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf` (`main`) | same as the turbo column before | same as 4 threads | `08e178d48790749d25932bbc082711ddcfdfbc4f` (`main`) |
-| `load_1min` at the start | 3.36 | 4.03 | 0.89 | 9.73 | 3.05 |
-| Load to ready | 6.1 s | 3.3 s | 3.3 s | 5.5 s | 3.4 s |
-| Audio length | 5.677 s | 5.851 s | 5.677 s | 5.805 s | 5.677 s |
-| First partial (from start of sending) | 6.753 s / 7.172 s, all 5 while sending | 7.316 s / 7.458 s, all 5 while sending | 6.261 s / 6.330 s, both while sending; rep 3 17.614 s after speech ended | 6.764 s / 7.191 s, all 5 while sending | 4.643 s / 4.643 s, 1 completed, while sending; rep 2 (not completed) 17.169 s after sending ended |
-| Start of sending to final | 21.909 s / 22.604 s, 5 of 5 | 21.009 s / 38.991 s, 5 of 5 | 18.759 s / 18.867 s, 2 of 5; rep 3: no final within 30 s | 22.265 s / 23.194 s, 5 of 5 | 14.722 s / 14.722 s, 1 of 5; rep 2: no final within 30 s, the other repetitions did not run |
-| End of speech to final | 13.880 s / 14.587 s | 12.708 s / 30.686 s | 10.734 s / 10.841 s | 13.915 s / 14.865 s | 6.685 s / 6.685 s |
-| Sending ended (speech / after silence) | 8.0 s / 9.3 s | 8.3 s / 9.6 s | 8.0 s / 9.3 s | 8.3 s / 9.6 s | 8.0 s / 9.3 s |
-| Final text against the spoken sentence | same words in 5 of 5 | same words in 5 of 5 | same words in 2 of 2 | same words in 5 of 5 | same words in 1 of 1 |
-| Peak RSS of the speech process | 3280 MiB | 1885 MiB | 1885 MiB | 3275 MiB | 1845 MiB |
-
-The recorded rows were taken before the client stamped the last speech frame and
-each event at its real boundary, so their end of speech to final values are
-understated by at most about 0.15 s (one frame's pacing and drains). That does
-not change any model's standing against the bar. No final in these rows arrived
-more than 30 s after sending ended.
-
-The completed count and the worst value vary between runs on the CPU: the
-later turbo run completed 2 of 5 where the first completed 5 of 5, so a single
-5-of-5 row is not read as stable.
-
-The Card's start of sending to final (GPU, one sample, 08.09.2026, same
-sentence, same Piper voice, same pacing loop and 0.9 s of client silence; the
-transport has since moved from TCP to the private socket) was 9.559 s, so a
-run holds the bar at a median of at most 10.559 s. No CPU run holds it. End of
-speech to final has no GPU counterpart: no GPU run was made. The client's
-pacing sends the sentence more slowly than real time (about 8.0 s of sending
-for 5.7 s of audio), so the first partial arrives while frames are still being
-sent even where the decode is slow.
 
 ## Contract
 
-- `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
-- `POST /v1/audio/speech` → chunked `audio/wav`, German, with the AI mark. It needs a workload token and the person's token. The request, the tokens, the refusals and the settings that shape them are in [`docs/wire.md`](docs/wire.md). The voice sample carries the same always-on AI mark.
-- `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
-- `/health`, `/v1/audio/speech` and `/hear` answer only on `speech.sock` in
+- `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "card_memory_mb"}`. Answers while the model is still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
+- `POST /v1/audio/speech` → chunked `audio/wav`, German, with the AI mark. It needs a workload token and the person's token. The request, the tokens, the refusals and the settings that shape them are in [`docs/wire.md`](docs/wire.md).
+- `/health` and `/v1/audio/speech` answer only on `speech.sock` in
   `SPEECH_PRIVATE_DIRECTORY`; the process binds no TCP port. The socket serves
-  nothing else beside the voice controls (no `/docs`, no `/openapi.json`).
-- `GET /voices` is one of those controls. It
-  reports the five fixed admin catalogue rows, typed recovery detail, and local
-  artifact evidence. `POST /voices/qwen3-tts-0.6b/download` starts the pinned,
-  tokenless Qwen transfer and returns promptly; it never selects a voice.
-  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b|voxcpm2|nvidia-magpie}/load` is private too; it
-  synchronously loads an already-downloaded baseline, atomically persists the
-  choice, and waits for admitted speech before switching. Piper stays resident;
-  deselected provider processes exit before Load succeeds and are rebuilt when selected again.
-  `POST /voices/{piper|chatterbox|qwen3-tts-0.6b|voxcpm2|nvidia-magpie}/sample/{de|en}` returns one fixed WAV only
-  when its named voice is still active and ready; contention returns 409.
+  nothing else (no `/docs`, no `/openapi.json`, no voice administration, no
+  hearing).
 
-`sample_rate` is the hear rate. Speak is a WAV, so its rate is in the header. A caller that feeds speak output into hear must resample.
-
-The service never writes spoken or heard text to its log. A speaking or hearing failure is logged with its exception types and stack frames, never with an exception message.
+The service never writes spoken text to its log. A speaking failure is logged with its exception types and stack frames, never with an exception message.
 
 ## Settings
 
@@ -175,15 +97,13 @@ All `SPEECH_*`:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SPEECH_DEVICE` | `cuda` | Device for hearing and isolated providers. Chatterbox and VoxCPM2 accept `cuda` or `cpu`; Qwen accepts only `cuda` and maps it to `cuda:0`. Piper stays on CPU. |
-| `SPEECH_SPEAKING_MODEL` | `de_DE-thorsten-medium` | First-run default only, used when `selected-voice` is absent |
-| `SPEECH_HEARING_MODEL` | `Systran/faster-whisper-large-v3` | Hugging Face id or faster-whisper size name |
+| `SPEECH_DEVICE` | `cuda` | Device for the isolated providers. Chatterbox and VoxCPM2 accept `cuda` or `cpu`; Qwen accepts only `cuda` and maps it to `cuda:0`. Piper stays on CPU. |
+| `SPEECH_SPEAKING_MODEL` | `de_DE-thorsten-medium` | The one voice the process starts and speaks: `de_DE-thorsten-medium` (Piper), `ResembleAI/chatterbox`, `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`, `openbmb/VoxCPM2` or `nvidia/magpie_tts_multilingual_357m`. Its weights must already be cached; the process exits naming the model when they are not |
 | `SPEECH_VOICE_CACHE` | `~/.cache/piper` | Where Piper ONNX files are kept |
-| `SPEECH_HUGGINGFACE_CACHE` | Provider Hub cache (normally `~/.cache/huggingface/hub`) | The shared local Hub cache for provider loading and status lookup |
+| `SPEECH_HUGGINGFACE_CACHE` | Provider Hub cache (normally `~/.cache/huggingface/hub`) | The shared local Hub cache for provider loading and the artifact check |
 | `SPEECH_QWEN_SPEAKER` | `Ryan` | One of Vivian, Serena, Uncle_Fu, Dylan, Eric, Ryan, Aiden, Ono_Anna, or Sohee |
 | `SPEECH_MAGPIE_SPEAKER` | `Sofia` | One of Aria, Jason, John, Leo, or Sofia |
 | `SPEECH_PRIVATE_DIRECTORY` | `/run/speech-runtime` | Private directory that owns `speech.sock` |
-| `SPEECH_STATE_DIRECTORY` | `~/.local/state/speech-runtime` | Private directory containing the durable selected voice |
 | `SPEECH_BUSY_WAIT_SECONDS` | `5.0` | How long a second speech request waits for the one synthesis before it answers 429 `busy`; at least 0, where 0 refuses at once |
 | `SPEECH_MAX_INPUT_CHARACTERS` | `4096` | The longest `input` a speech request may carry; a whole number of at least 1 |
 | `SPEECH_CONFIG_FILE` | none, required | Absolute path of the TOML file that names the issuer, the service group, the apps whose tokens the speak route trusts and the voices each app may name; the process does not start without it ([`docs/wire.md`](docs/wire.md)) |
@@ -193,12 +113,11 @@ When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influenc
 `PRESENTATOR_RUNTIME_UID` is the positive runtime UID that Presentator
 shares with speech. Speech creates its private directory at mode 0700 and its socket at 0600.
 That UID guards the socket: the Presentator container and every process under
-it may hear and control voices through the socket, and the speak route also
-needs both tokens.
+it may reach the socket, and the speak route also needs both tokens.
 A dead leftover socket is replaced; a socket with a live listener, a foreign
 or non-socket path, or an unsafe directory refuses startup.
 
-If a model cannot be loaded the process exits and names which one failed.
+If the voice cannot be loaded the process exits and names the model.
 
 ## Run
 
@@ -216,14 +135,11 @@ when that wait ends; the load wait and the proof then share the 30-minute cap,
 whose TERM stops the speech server and its providers and removes the private
 directory. If its caller dies, `setpriv` hands `timeout` a TERM at once, so
 the lock stays held only while the stack tears down; a host without `setpriv`
-fails the run, naming it. It selects Chatterbox when the durable selection is absent and points
+fails the run, naming it. It starts Chatterbox unless `SPEECH_SPEAKING_MODEL` is set and points
 `SPEECH_PROVIDER_ROOT` at `providers` unless the caller set it, so each
 provider needs its virtual environment first (`uv sync --locked` inside
-`providers/<provider>`). It gives speech a temporary
-`SPEECH_STATE_DIRECTORY`, so it never reads or writes the operator's voice
-choice. `SPEECH_DEVICE` (default `cuda`) and `SPEECH_HEARING_MODEL` (default
-large-v3) pass through; on `cpu` the card is hidden from speech with an empty
-`CUDA_VISIBLE_DEVICES`. Weights must already be cached, because
+`providers/<provider>`). `SPEECH_DEVICE` (default `cuda`) passes through; on
+`cpu` the card is hidden from speech with an empty `CUDA_VISIBLE_DEVICES`. Weights must already be cached, because
 `HF_HUB_OFFLINE=1` is the default and resolves `refs/main`:
 
 ```sh
@@ -234,24 +150,10 @@ The proof serves its own throwaway key set over local HTTPS and speaks with
 fresh tokens minted from it; nothing of it outlives the run.
 
 Every run reports load to ready, the card's compute pids at health ready and
-the peak RSS of the speech process. `--measure` only swaps the contract markers
-for the hearing measurement behind "CPU" (five repetitions, two final timings,
-missed gates kept as values):
+the peak RSS of the speech process, and ends with `PROOF_OK` when health and
+speaking held. On the CPU with Piper:
 
 ```sh
 SPEECH_DEVICE=cpu SPEECH_SPEAKING_MODEL=de_DE-thorsten-medium \
-  OMP_NUM_THREADS=4 uv run python scripts/prove_speech.py --measure
+  OMP_NUM_THREADS=4 uv run python scripts/prove_speech.py
 ```
-
-Checks:
-
-```sh
-uv run ruff check src tests scripts
-uv run ruff format --check src tests scripts
-uv run pytest -q
-```
-Chatterbox, Qwen, and VoxCPM each run in an independently locked provider virtual
-environment. The speech service talks to them through one private binary
-protocol and worker loop; neither provider SDK enters the service process. Provider
-children use the platform default executable search path, excluding the parent's
-PATH and secrets.

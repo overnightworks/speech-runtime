@@ -5,8 +5,8 @@ what it trusts.
 
 ## Purpose
 
-One process keeps a German voice and a German listener resident on the home
-server and serves them to Presentator and to apps that speak for a person.
+One process keeps a German voice resident on the home server and serves it to
+Presentator and to apps that speak for a person.
 [`README.md`](../README.md) holds the contract and the settings,
 [`wire.md`](wire.md) the speech wire.
 
@@ -15,7 +15,7 @@ server and serves them to Presentator and to apps that speak for a person.
 ```mermaid
 flowchart LR
     app[App holding both tokens] -->|speak| socket[speech.sock]
-    presentator[Presentator] -->|hear, voices| socket
+    presentator[Presentator] -->|health| socket
     socket --> service[speech_runtime_service]
     service -->|isolated processes| providers[providers/*]
     service -->|key set, https| issuer[Identity issuer]
@@ -51,4 +51,5 @@ Residues:
   no sender constraint.
 - The issuer's `account` audience stays in a token's `aud` (webauth#516,
   invariant 3).
-- `/hear` and `/voices*` are guarded only by the socket's UID.
+- `/health` is guarded only by the socket's UID; the service mounts no `/hear`
+  and no `/voices*` route.

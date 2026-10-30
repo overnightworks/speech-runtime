@@ -98,8 +98,14 @@ version path (`/v-1/...`, `/vx/...`, `/speak`) gets the app's default 404 with
   `voices`, required, at least one catalogue id: the voices that app may name.
   An unknown id is refused at start. Unknown keys are refused.
 
+## Health
+
+`GET /health` answers without a token, so a supervisor can poll it:
+`{"speaking": {"model", "ready", "streams", "sample_rate"}, "card_memory_mb"}`.
+It answers while the voice is still loading, with `ready` false.
+
 ## Not offered
 
-Version 1 has no hearing and no voice administration on the wire:
-`/v1/audio/transcriptions` and `/v1/voices` answer `not_found`. `/hear` and
-`/voices*` stay on the private socket, unchanged.
+Version 1 has no hearing and no voice administration: `/v1/audio/transcriptions`
+and `/v1/voices` answer `not_found`, and the service mounts no `/hear` and no
+`/voices*` route at all.
