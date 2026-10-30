@@ -1,0 +1,8 @@
+claim_id = "daab82dacc5d4174a0dddfb8f8b3b772"
+agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
+role = "builder"
+base = "10cec89a6f2936b4bd7bdecee1b05b8566a70852"
+branch = "claude/issue-57-n4b1-proof-two-tokens"
+scope = ["README.md", "docs/wire.md", "packages/client/src/speech_runtime_client/wire.py", "pyproject.toml", "scripts/contract_client.py", "scripts/proof_identity.py", "scripts/prove_speech.py", "tests/scripts", "uv.lock"]
+opened_commit = "297c142beadfbf95b1a3ff7c496f45056fa2b25c"
+whole_reason = "The client headers, the proof's identity tools and the two scripts that speak through them are one change: without the tools the headers have no caller, and without the scripts the tools have none."
