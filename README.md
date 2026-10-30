@@ -149,7 +149,7 @@ sent even where the decode is slow.
 ## Contract
 
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
-- `POST /v1/audio/speech` → chunked `audio/wav`, German, with the AI mark. The request, the refusals and the settings that shape them are in [`docs/wire.md`](docs/wire.md). The voice sample carries the same always-on AI mark.
+- `POST /v1/audio/speech` → chunked `audio/wav`, German, with the AI mark. It needs a workload token and the person's token. The request, the tokens, the refusals and the settings that shape them are in [`docs/wire.md`](docs/wire.md). The voice sample carries the same always-on AI mark.
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
 - `/health`, `/v1/audio/speech` and `/hear` answer only on `speech.sock` in
   `SPEECH_PRIVATE_DIRECTORY`; the process binds no TCP port. The socket serves
@@ -186,13 +186,15 @@ All `SPEECH_*`:
 | `SPEECH_STATE_DIRECTORY` | `~/.local/state/speech-runtime` | Private directory containing the durable selected voice |
 | `SPEECH_BUSY_WAIT_SECONDS` | `5.0` | How long a second speech request waits for the one synthesis before it answers 429 `busy`; at least 0, where 0 refuses at once |
 | `SPEECH_MAX_INPUT_CHARACTERS` | `4096` | The longest `input` a speech request may carry; a whole number of at least 1 |
+| `SPEECH_CONFIG_FILE` | none, required | Absolute path of the TOML file that names the issuer, the service group and the apps whose tokens the speak route trusts; the process does not start without it ([`docs/wire.md`](docs/wire.md)) |
 
 When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 
 `PRESENTATOR_RUNTIME_UID` is the positive runtime UID that Presentator
 shares with speech. Speech creates its private directory at mode 0700 and its socket at 0600.
-That UID is the socket's only authority: the Presentator container and every
-process under it may speak, hear and control voices through the socket.
+That UID guards the socket: the Presentator container and every process under
+it may hear and control voices through the socket, and the speak route also
+needs both tokens.
 A dead leftover socket is replaced; a socket with a live listener, a foreign
 or non-socket path, or an unsafe directory refuses startup.
 
