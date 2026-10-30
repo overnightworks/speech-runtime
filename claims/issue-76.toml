@@ -1,8 +1,0 @@
-claim_id = "ffc5d40ae32e4266b4a38c440f405118"
-agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
-role = "builder"
-base = "bd5d093b8717a82f6e86afa72339094a116d2773"
-branch = "claude/issue-76-n4c2-tcp-replaces-the-private-socket"
-scope = ["README.md", "docs/ARCHITECTURE.md", "docs/wire.md", "quality/baseline.toml", "scripts/contract_client.py", "scripts/prove_speech.py", "src/speech_runtime_service", "tests"]
-opened_commit = "0fece94ec782480cb2672e09fc2017053d9bcec8"
-whole_reason = "One transport switch: the listener, the settings that configure it, the start order, the removed socket guard and the proof tooling that reaches the service change together, because none works with half of them."
