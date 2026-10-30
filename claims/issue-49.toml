@@ -1,8 +1,0 @@
-claim_id = "711e75e5cca04c14b2c9c16767279501"
-agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
-role = "builder"
-base = "fc9685702db6d6ec52366c96c777f3f54e25b6af"
-branch = "claude/issue-49-n4a2-speak-wire-v1"
-scope = ["AGENTS.md", "README.md", "docs/wire.md", "packages/client", "pyproject.toml", "quality/baseline.toml", "quality/config.toml", "scripts/contract_client.py", "scripts/prove_speech.py", "sonar-project.properties", "src/speech_runtime_service/config.py", "src/speech_runtime_service/control.py", "src/speech_runtime_service/service.py", "src/speech_runtime_service/synthesis_gate.py", "src/speech_runtime_service/wire_route.py", "tests/scripts/test_contract_client.py", "tests/support/speak_support.py", "tests/test_config.py", "tests/test_control_sample.py", "tests/test_control_voice_status.py", "tests/test_main_private_socket.py", "tests/test_service_speak.py", "tests/test_service_voice_switching.py", "tests/test_synthesis_gate.py", "tests/test_wire_route.py", "uv.lock"]
-opened_commit = "04f9ee5940bea9b2e5c1f8649bc077c8aad78d44"
-whole_reason = "One wire replaces one route: the client types, the route and its gate that serve them, the scripts and tests that speak through it, and the docs and layout entries that declare it; none lands alone without a dead type or a broken proof."
