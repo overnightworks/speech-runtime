@@ -208,11 +208,13 @@ uv run speech-runtime-service
 ```
 
 Stage proof (checks load, one heavy step at a time). The script runs itself as
-`flock -o -w 1200 /tmp/probe-stack.lock timeout -k 30 1800 …`, so it waits at most
+`flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 …`, so it waits at most
 20 minutes for `/tmp/probe-stack.lock` and fails the run, saying the lock is busy,
 when that wait ends; the load wait and the proof then share the 30-minute cap,
 whose TERM stops the speech server and its providers and removes the private
-directory. It selects Chatterbox when the durable selection is absent and points
+directory. If its caller dies, `setpriv` hands `timeout` a TERM at once, so
+the lock stays held only while the stack tears down; a host without `setpriv`
+fails the run, naming it. It selects Chatterbox when the durable selection is absent and points
 `SPEECH_PROVIDER_ROOT` at `providers` unless the caller set it, so each
 provider needs its virtual environment first (`uv sync --locked` inside
 `providers/<provider>`). It gives speech a temporary

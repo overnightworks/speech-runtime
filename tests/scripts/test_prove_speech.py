@@ -94,22 +94,23 @@ def run_returning(
 def test_the_proof_runs_itself_inside_the_fleet_lock_form() -> None:
     command = PROVE.fleet_command(["--measure"])
 
-    assert command[:6] == [
+    assert command[:5] == [
         "flock",
         "-o",
         "-w",
         "1200",
         str(PROVE.LOCK_PATH),
-        "timeout",
     ]
-    assert command[6:9] == [
+    assert command[5:8] == ["setpriv", "--pdeathsig", "TERM"]
+    assert command[8:12] == [
+        "timeout",
         "-k",
         str(PROVE.KILL_GRACE_SECONDS),
         str(PROVE.CAP_SECONDS),
     ]
-    assert command[9] == sys.executable
-    assert Path(command[10]) == Path(PROVE.__file__)
-    assert command[11:] == ["--measure"]
+    assert command[12] == sys.executable
+    assert Path(command[13]) == Path(PROVE.__file__)
+    assert command[14:] == ["--measure"]
 
 
 def test_the_cap_and_kill_grace_fit_the_fleet_budget() -> None:
@@ -144,6 +145,15 @@ def test_a_busy_lock_fails_the_run_and_says_why() -> None:
 
     assert "busy" in str(failure.value)
     assert str(PROVE.LOCK_WAIT_SECONDS) in str(failure.value)
+
+
+def test_a_missing_setpriv_fails_the_run_naming_it() -> None:
+    cannot_execute = run_returning(PROVE.FLOCK_COMMAND_UNAVAILABLE_STATUS)
+
+    with pytest.raises(SystemExit) as failure:
+        PROVE.run_under_lock([], cannot_execute)
+
+    assert "setpriv" in str(failure.value)
 
 
 def test_a_failed_proof_under_the_lock_keeps_its_own_exit_status() -> None:
