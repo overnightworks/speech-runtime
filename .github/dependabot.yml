@@ -24,3 +24,7 @@ updates:
     directories: ["/providers/chatterbox", "/providers/magpie"]
     schedule:
       interval: weekly
+    ignore:
+      # nemo-toolkit 3.0.0 caps omegaconf at 2.3; drop this once nemo-toolkit relaxes the cap
+      - dependency-name: "omegaconf"
+        versions: [">2.3"]
