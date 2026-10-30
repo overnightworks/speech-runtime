@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "overnightworks-speech-runtime-magpie-provider"
 version = "0.0.0"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.14"
 dependencies = [
     "huggingface-hub",
     "nemo-toolkit[tts]==3.0.0",
@@ -17,6 +17,10 @@ dependencies = [
 
 [project.scripts]
 speech-runtime-magpie-worker = "speech_runtime_magpie.__main__:main"
+
+[tool.uv]
+# nemo-text-processing 1.2.0 pins pynini==2.1.6.post1 (no cp314 wheel); drop this once it relaxes that pin
+override-dependencies = ["pynini==2.1.7"]
 
 [tool.uv.sources]
 overnightworks-speech-runtime-provider-contract = { path = "../provider-contract", editable = true }
@@ -32,7 +36,7 @@ addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 src = ["src", "tests"]
 
 [tool.ruff.lint]

@@ -8,12 +8,14 @@ import queue
 import struct
 import sys
 import threading
-from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from io import BytesIO
 from pathlib import Path
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 logger = logging.getLogger(__name__)
 

@@ -9,14 +9,6 @@ reason = "the uv workspace's member distributions"
 entry = "providers/"
 reason = "the GPU and CPU speech providers, each its own uv project with its own lock"
 
-[[python.allow]]
-path = "providers/magpie/pyproject.toml"
-reason = "several locked packages have no cp314 wheel; its C3 slice moves it after one GPU run"
-
-[[python.allow]]
-path = "providers/provider-contract/pyproject.toml"
-reason = "Magpie imports it on 3.12, so it keeps >=3.12 until its C3 slice moves it"
-
 [[layout.allow]]
 path = "providers/chatterbox/tests/test_worker.py"
 rule = "test-layout"
