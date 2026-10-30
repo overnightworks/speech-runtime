@@ -1,7 +1,7 @@
 # Measured by `quality baseline write`. Entries only ever go down.
 
 [file_lines]
-"tests/test_control_voice_status.py" = 823
+"tests/test_control_voice_status.py" = 821
 
 [function_lines."providers/chatterbox/src/speech_runtime_chatterbox/model.py"]
 "speech_token_chunks" = 83
@@ -19,7 +19,7 @@
 "speaking_for_voice" = 75
 
 [function_lines."tests/test_main.py"]
-"test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks" = 94
+"test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks" = 90
 
 [function_lines."tests/test_provider_process.py"]
 "test_direct_closed_entrypoint_streams_after_transient_loader_exits" = 80

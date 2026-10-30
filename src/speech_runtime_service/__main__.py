@@ -10,12 +10,15 @@ import signal
 import socket
 import stat
 import threading
+import time
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING
 
 import uvicorn
+from webauth.https_client import fetch_key_set_over_https
 
-from speech_runtime_service.config import Settings, load_settings
+from speech_runtime_service.callers import SpeechCallers
+from speech_runtime_service.config import Settings, load_caller_config, load_settings
 from speech_runtime_service.control import create_control_app
 from speech_runtime_service.cuda_libs import prepare_cuda_libraries
 from speech_runtime_service.service import Runtime
@@ -171,25 +174,37 @@ def _same_socket_inode(
     )
 
 
+def configure_logging() -> None:
+    """Log at INFO and hold Piper back: it logs its input and phonemes below ERROR."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+    logging.getLogger("piper").setLevel(logging.ERROR)
+
+
 def main() -> None:
     """Read one configuration and exit nonzero after a fatal lifecycle error."""
     settings = load_settings()
-    logging.basicConfig(
-        level=logging.DEBUG if settings.debug else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    configure_logging()
     raise SystemExit(asyncio.run(serve(settings)))
 
 
 async def serve(settings: Settings) -> int:
     """Run the server until a signal or fatal lifecycle outcome."""
     runtime_uid = _require_runtime_uid(settings)
+    callers = SpeechCallers.from_config(
+        load_caller_config(_require_config_file(settings)),
+        fetch_key_set=fetch_key_set_over_https,
+        wall_clock=time.time,
+        monotonic_clock=time.monotonic,
+    )
     prepare_cuda_libraries()
     loop = asyncio.get_running_loop()
     fatal = asyncio.Event()
     runtime = Runtime.from_settings(settings)
     runtime.set_fatal_callback(lambda: loop.call_soon_threadsafe(fatal.set))
-    server = build_server(create_control_app(settings, runtime))
+    server = build_server(create_control_app(settings, runtime, callers))
     stopping = asyncio.Event()
     loading_stop = threading.Event()
     _install_signal_handlers(stopping, loading_stop)
@@ -239,6 +254,14 @@ async def serve(settings: Settings) -> int:
 def build_server(app: object) -> uvicorn.Server:
     """Build the uvicorn server for the control application."""
     return uvicorn.Server(uvicorn.Config(app, log_level="info"))
+
+
+def _require_config_file(settings: Settings) -> Path:
+    """Require the caller configuration before any runtime work starts."""
+    if settings.config_file is None:
+        message = "SPEECH_CONFIG_FILE is required for the speak wire's callers"
+        raise ValueError(message)
+    return settings.config_file
 
 
 def _require_runtime_uid(settings: Settings) -> int:

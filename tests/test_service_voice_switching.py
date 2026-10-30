@@ -6,7 +6,6 @@ import threading
 from typing import TYPE_CHECKING
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from speech_runtime_provider_contract import (
     CHATTERBOX_SAMPLE_RATE,
@@ -32,8 +31,11 @@ from speech_runtime_service.voices import (
     VoiceState,
 )
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.identity_support import valid_callers
 from tests.support.speak_support import (
+    post_speech,
     response_body,
+    speak_body,
     speak_response,
 )
 
@@ -119,7 +121,7 @@ def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speec
         target,
         ObservedSelection(tmp_path / "state", owner_uid=os.geteuid()),
     )
-    response = speak_response(runtime)
+    response = speak_response(runtime, VoiceId.CHATTERBOX.value)
     outcomes = []
     switching = threading.Thread(
         target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
@@ -127,9 +129,8 @@ def test_deselecting_chatterbox_waits_for_an_admitted_talk_and_refuses_new_speec
     switching.start()
     assert committed.wait(timeout=5)
 
-    with pytest.raises(HTTPException) as refused:
-        speak_response(runtime)
-    assert refused.value.status_code == HTTP_503_SERVICE_UNAVAILABLE
+    refused = speak_response(runtime, VoiceId.CHATTERBOX.value)
+    assert refused.status_code == HTTP_503_SERVICE_UNAVAILABLE
     assert switching.is_alive()
 
     rate, pcm = pcm_from_wav(response_body(response))
@@ -161,7 +162,7 @@ def test_shutdown_before_chatterbox_detach_transfers_old_and_pending_cleanup_onc
         target,
         ObservedSelection(tmp_path / "state", owner_uid=os.geteuid()),
     )
-    response = speak_response(runtime)
+    response = speak_response(runtime, VoiceId.CHATTERBOX.value)
     outcomes = []
     switching = threading.Thread(
         target=lambda: outcomes.append(runtime.load_voice(VoiceId.PIPER))
@@ -436,7 +437,7 @@ def test_startup_selection_holds_load_guard_until_its_activation_finishes(
     assert entered.wait(timeout=5)
 
     response = TestClient(
-        create_control_app(Settings(voice_cache=tmp_path), runtime)
+        create_control_app(Settings(voice_cache=tmp_path), runtime, valid_callers())
     ).post("/voices/chatterbox/load")
     release.set()
     loader.join(timeout=5)
@@ -473,7 +474,7 @@ def test_duplicate_load_is_refused_and_retained_chatterbox_is_not_rebuilt(
     first.start()
     assert entered.wait(timeout=5)
     response = TestClient(
-        create_control_app(Settings(voice_cache=tmp_path), runtime)
+        create_control_app(Settings(voice_cache=tmp_path), runtime, valid_callers())
     ).post("/voices/chatterbox/load")
     release.set()
     first.join(timeout=5)
@@ -507,7 +508,9 @@ def test_recoverable_startup_keeps_hearing_live_and_refuses_speaking(
     )
 
     runtime.load()
-    private = TestClient(create_control_app(Settings(voice_cache=tmp_path), runtime))
+    private = TestClient(
+        create_control_app(Settings(voice_cache=tmp_path), runtime, valid_callers())
+    )
 
     assert private.get("/health").json()["speaking"] == {
         "model": "unavailable",
@@ -516,8 +519,7 @@ def test_recoverable_startup_keeps_hearing_live_and_refuses_speaking(
         "sample_rate": 0,
     }
     assert (
-        private.post("/speak", json={"text": "Hallo", "language": "de"}).status_code
-        == HTTP_503_SERVICE_UNAVAILABLE
+        post_speech(private, speak_body()).status_code == HTTP_503_SERVICE_UNAVAILABLE
     )
     assert hearing.ready is True
     assert private.get("/voices").json()["recovery"] is not None
@@ -567,7 +569,7 @@ def test_shutdown_winning_before_pending_registration_never_loads_or_publishes(
     assert runtime.capture_speaking() is None
 
 
-@pytest.mark.parametrize("surface", ["health", "snapshot", "capture", "sample"])
+@pytest.mark.parametrize("surface", ["health", "snapshot", "wire", "sample"])
 def test_every_speaking_surface_reconciles_a_dead_active_without_fallback(
     tmp_path: Path, surface: str
 ) -> None:
@@ -591,8 +593,10 @@ def test_every_speaking_surface_reconciles_a_dead_active_without_fallback(
         runtime.health()
     elif surface == "snapshot":
         runtime.snapshot(settings)
-    elif surface == "capture":
-        runtime.capture_speaking()
+    elif surface == "wire":
+        wire = TestClient(create_control_app(settings, runtime, valid_callers()))
+        refused = post_speech(wire, speak_body(VoiceId.CHATTERBOX.value))
+        assert refused.status_code == HTTP_503_SERVICE_UNAVAILABLE
     else:
         runtime.preacquire_sample(VoiceId.CHATTERBOX)
 

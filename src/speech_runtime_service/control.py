@@ -1,4 +1,4 @@
-"""The private Unix-socket app: the speech routes and the voice controls."""
+"""The private Unix-socket app: the speech wire and the voice controls."""
 
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -17,8 +17,10 @@ from speech_runtime_service.voices import (
     VoiceSnapshot,
 )
 from speech_runtime_service.wav_response import ClosingWavResponse
+from speech_runtime_service.wire_route import mount_wire_routes
 
 if TYPE_CHECKING:
+    from speech_runtime_service.callers import SpeechCallers
     from speech_runtime_service.config import Settings
 
 
@@ -35,7 +37,9 @@ _SAMPLE_TEXT: dict[SampleLanguage, str] = {
 }
 
 
-def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
+def create_control_app(
+    settings: Settings, runtime: Runtime, callers: SpeechCallers
+) -> FastAPI:
     """Build the private app: the speech routes and the voice controls, no docs."""
     app = FastAPI(
         title="speech-runtime-private",
@@ -44,6 +48,7 @@ def create_control_app(settings: Settings, runtime: Runtime) -> FastAPI:
         openapi_url=None,
     )
     mount_speech_routes(app, runtime)
+    mount_wire_routes(app, runtime, settings, callers)
 
     @app.get("/voices")
     def voices() -> VoiceSnapshot:

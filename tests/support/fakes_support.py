@@ -12,6 +12,7 @@ from speech_runtime_service.control import create_control_app
 from speech_runtime_service.hearing import HearingSession
 from speech_runtime_service.pcm import BYTES_PER_SAMPLE
 from speech_runtime_service.service import Runtime
+from tests.support.identity_support import valid_callers
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -175,13 +176,11 @@ def an_app(
     speaking: SpeakingEngine | None = None,
     hearing: HearingEngine | None = None,
     *,
-    debug: bool = False,
     memory_probe: Callable[[], int] | None = None,
 ) -> FastAPI:
     runtime = Runtime(
         speaking or FakeSpeaking(),
         hearing or FakeHearing(),
-        debug=debug,
         memory_probe=memory_probe if memory_probe is not None else (lambda: 0),
     )
-    return create_control_app(Settings(), runtime)
+    return create_control_app(Settings(), runtime, valid_callers())

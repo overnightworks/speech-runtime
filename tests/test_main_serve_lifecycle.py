@@ -18,6 +18,7 @@ from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
+from tests.support.identity_support import write_caller_configuration
 
 if TYPE_CHECKING:
     import threading
@@ -65,7 +66,8 @@ def test_sigterm_stops_the_real_server_and_exits_zero_with_the_socket_removed(
     environment = {
         **os.environ,
         "SPEECH_TEST_DIRECTORY": str(tmp_path),
-        "PYTHONPATH": str(speech_root),
+        "SPEECH_CONFIG_FILE": str(write_caller_configuration(tmp_path)),
+        "PYTHONPATH": os.pathsep.join([str(speech_root), str(speech_root / "scripts")]),
     }
     with subprocess.Popen(
         [sys.executable, "-c", _SIGTERM_SERVER], env=environment
@@ -94,6 +96,7 @@ def test_python_dash_m_starts_the_service_on_its_private_socket(tmp_path: Path) 
         "HF_HUB_OFFLINE": "1",
         "HF_HOME": str(tmp_path / "hf"),
         "PRESENTATOR_RUNTIME_UID": str(os.geteuid()),
+        "SPEECH_CONFIG_FILE": str(write_caller_configuration(tmp_path)),
         "PYTHONPATH": str(speech_root),
     }
     with subprocess.Popen(
@@ -145,7 +148,9 @@ def test_serve_listens_only_on_the_private_socket(
         serving = asyncio.create_task(
             __main__.serve(
                 Settings(
-                    private_directory=tmp_path, PRESENTATOR_RUNTIME_UID=os.geteuid()
+                    private_directory=tmp_path,
+                    PRESENTATOR_RUNTIME_UID=os.geteuid(),
+                    config_file=write_caller_configuration(tmp_path),
                 )
             )
         )

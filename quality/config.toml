@@ -2,6 +2,10 @@
 mandatory_jobs = ["Speech: lint, tests", "Speech: Chatterbox provider", "Speech: Qwen provider", "Speech: VoxCPM provider", "Speech: Magpie provider"]
 
 [[root.allow]]
+entry = "packages/"
+reason = "the uv workspace's member distributions"
+
+[[root.allow]]
 entry = "providers/"
 reason = "the GPU and CPU speech providers, each its own uv project with its own lock"
 

@@ -1,5 +1,9 @@
 """WS /hear sends partials, then a final, and a second utterance without reload."""
 
+import asyncio
+import logging
+import traceback
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.status import WS_1009_MESSAGE_TOO_BIG, WS_1011_INTERNAL_ERROR
@@ -50,8 +54,11 @@ def test_hear_closes_while_the_model_is_not_ready() -> None:
         socket.receive_json()
 
 
+_HEARD = "Dieser Satz wurde gehoert und darf nicht ins Log"
+
+
 class FailingSession(HearingSession):
-    """A hearing session whose audio intake fails."""
+    """A hearing session whose audio intake fails with the heard text in its message."""
 
     def __init__(self) -> None:
         """Build a session that transcribes nothing."""
@@ -60,8 +67,7 @@ class FailingSession(HearingSession):
     def add_pcm(self, data: bytes) -> None:
         """Raise instead of taking the audio."""
         del data
-        message = "transcribe exploded"
-        raise RuntimeError(message)
+        raise RuntimeError(_HEARD)
 
 
 class FailingHearing:
@@ -80,7 +86,10 @@ class FailingHearing:
         return FailingSession()
 
 
-def test_hear_closes_with_a_reason_when_the_session_fails() -> None:
+def test_hear_closes_with_a_reason_and_logs_the_failure_without_the_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
     client = TestClient(an_app(hearing=FailingHearing()))
 
     with client.websocket_connect("/hear?language=de") as socket:
@@ -90,6 +99,76 @@ def test_hear_closes_with_a_reason_when_the_session_fails() -> None:
 
     assert raised.value.code == WS_1011_INTERNAL_ERROR
     assert raised.value.reason == HEARING_FAILED_REASON
+    assert "hearing failed" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert 'File "' in caplog.text
+    assert _HEARD not in caplog.text
+
+
+def test_hear_writes_no_partial_or_final_to_the_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class SayingHearing(FakeHearing):
+        def open_session(self, language: str) -> HearingSession:
+            del language
+            return HearingSession(lambda _pcm: _HEARD, HEAR_SAMPLE_RATE)
+
+    caplog.set_level(logging.DEBUG)
+    client = TestClient(an_app(hearing=SayingHearing()))
+
+    with client.websocket_connect("/hear?language=de") as socket:
+        socket.send_bytes(sine_pcm(0.5))
+        partial = socket.receive_json()
+        socket.send_bytes(_silence(0.8))
+        final = socket.receive_json()
+
+    assert (partial["text"], final["text"], final["final"]) == (_HEARD, _HEARD, True)
+    assert _HEARD not in caplog.text
+
+
+class _CloseSendError(RuntimeError):
+    """The peer is gone, so sending the close fails."""
+
+
+def test_hear_failure_whose_close_also_fails_leaves_the_text_out_of_the_chain() -> None:
+    app = an_app(hearing=FailingHearing())
+    received = iter(
+        [
+            {"type": "websocket.connect"},
+            {"type": "websocket.receive", "bytes": sine_pcm(0.1)},
+        ]
+    )
+
+    async def receive() -> dict[str, object]:
+        message = next(received, None)
+        if message is not None:
+            return message
+        await asyncio.Event().wait()
+        return {"type": "websocket.disconnect"}
+
+    async def send(message: dict[str, object]) -> None:
+        if message["type"] == "websocket.close":
+            raise _CloseSendError
+
+    scope = {
+        "type": "websocket",
+        "asgi": {"version": "3.0"},
+        "path": "/hear",
+        "raw_path": b"/hear",
+        "query_string": b"language=de",
+        "headers": [],
+        "client": ("test", 123),
+        "server": ("test", 80),
+        "scheme": "ws",
+        "subprotocols": [],
+    }
+
+    session = asyncio.wait_for(app(scope, receive, send), timeout=5)
+
+    with pytest.raises(_CloseSendError) as raised:
+        asyncio.run(session)
+
+    assert _HEARD not in "".join(traceback.format_exception(raised.value))
 
 
 def test_hear_closes_an_oversize_frame_with_a_reason() -> None:

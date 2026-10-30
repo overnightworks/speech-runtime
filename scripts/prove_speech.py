@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import fcntl
+import functools
+import http.client
 import json
 import logging
 import os
 import shutil
+import signal
 import socket
 import statistics
 import subprocess
@@ -26,36 +28,65 @@ import time
 from array import array
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO
+from typing import TYPE_CHECKING
 
 import httpx2
 from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
+from proof_identity import (
+    Minting,
+    ProofIdentity,
+    load_minting,
+    mint_pair,
+    proof_identity,
+)
+from speech_runtime_client.wire import (
+    SPEECH_PATH,
+    speech_request_body,
+    speech_request_headers,
+)
 from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL
 from speech_runtime_service.cuda_libs import cuda_library_dirs
 from speech_runtime_service.pcm import BYTES_PER_SAMPLE
+from speech_runtime_service.service import voice_for_model
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from types import FrameType
 
 SENTENCE = (
     "Die Kamera zeigt den Vortragenden, während im Hintergrund "
     "die nächste Folie automatisch vorbereitet wird."
 )
-ENGLISH = (
-    "The camera shows the presenter while the next slide is "
-    "automatically prepared in the background."
-)
 SECOND = "Die nächste Folie bitte."
 LOCK_PATH = Path("/tmp/probe-stack.lock")  # noqa: S108 - the one machine-wide probe lock must keep this exact path whatever TMPDIR says
+LOCK_HELD_ENV = "SPEECH_PROOF_HOLDS_PROBE_LOCK"
+LOCK_DIRECTORY_PREFIX = "speech-lock-"
+LOCK_WAIT_SECONDS = 1200
+FLOCK_TIMED_OUT_STATUS = 1
+FLOCK_COMMAND_UNAVAILABLE_STATUS = 69
+# The cap and the kill grace are the numbers this script owns inside the fleet
+# lock form; together they stay within 1830 s. The grace covers the teardown
+# `speech_server` runs after TERM: terminate, wait up to 10 s, then kill and wait
+# up to 5 s, so 15 s at worst, with the providers stopped through the server.
+# Measured on the CPU (SPEECH_SPEAKING_MODEL=de_DE-thorsten-medium, hearing
+# faster-whisper-medium, OMP_NUM_THREADS=4, 30.10.2026): the server exits 0.6 s
+# after the proof body ends; the full proof holds the lock for 92 s and
+# `--measure` for 84 s, so the cap leaves them far more room than they use.
+CAP_SECONDS = 1800
+KILL_GRACE_SECONDS = 30
 MEASURE_REPETITIONS = 5
+SPEAK_TIMEOUT_SECONDS = 120
+CONCURRENT_EXTRA_WAIT_SECONDS = 8.0
 MEASURE_FLAG = {False: [], True: ["--measure"]}
+type Speak = Callable[[str, str], tuple[bytes, float, float]]
+HEARD_MARKERS = (
+    "contract_hear_partial",
+    "contract_hear_final",
+    "contract_hear_second_final",
+)
 CONTRACT_MARKERS = {
-    False: (
-        "contract_hear_partial",
-        "contract_hear_final",
-        "contract_hear_second_final",
-    ),
+    False: HEARD_MARKERS,
     True: ("measure_rep1", "measure_summary"),
 }
 LOGGER = logging.getLogger(__name__)
@@ -77,20 +108,92 @@ def _load_1min() -> float:
     return float(Path("/proc/loadavg").read_text(encoding="utf-8").split()[0])
 
 
-def _wait_for_load() -> None:
+def wait_for_load(
+    read_load: Callable[[], float] = _load_1min,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Wait for the 1-minute load to fall to the ceiling, inside the lock's cap."""
     while True:
-        load = _load_1min()
+        load = read_load()
         print(f"load_1min={load:.2f}")
         if load <= LOAD_CEILING:
             return
         print(f"load {load:.2f} is above {LOAD_CEILING}, waiting")
-        time.sleep(15)
+        sleep(15)
 
 
-def _acquire_lock(lock: TextIO) -> None:
-    print("waiting_for_lock", LOCK_PATH)
-    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+def fleet_command(arguments: list[str]) -> list[str]:
+    """This script under the fleet's one form for taking the probe lock."""
+    return [
+        "flock",
+        "-o",
+        "-w",
+        str(LOCK_WAIT_SECONDS),
+        str(LOCK_PATH),
+        "setpriv",
+        "--pdeathsig",
+        "TERM",
+        "timeout",
+        "-k",
+        str(KILL_GRACE_SECONDS),
+        str(CAP_SECONDS),
+        sys.executable,
+        str(Path(__file__).resolve()),
+        *arguments,
+    ]
+
+
+def run_under_lock(
+    arguments: list[str],
+    run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+) -> int:
+    """Run the proof under the lock; a lock still busy after the wait fails loudly."""
+    with tempfile.TemporaryDirectory(prefix=LOCK_DIRECTORY_PREFIX) as directory:
+        token = Path(directory) / "acquired"
+        environment = {**os.environ, LOCK_HELD_ENV: str(token)}
+        status = run(fleet_command(arguments), env=environment, check=False).returncode
+        lock_was_taken = token.exists()
+    if status == FLOCK_TIMED_OUT_STATUS and not lock_was_taken:
+        message = (
+            f"probe lock {LOCK_PATH} is busy: still held after {LOCK_WAIT_SECONDS} s,"
+            " so the proof did not start"
+        )
+        raise SystemExit(message)
+    if status == FLOCK_COMMAND_UNAVAILABLE_STATUS and not lock_was_taken:
+        message = (
+            "flock could not run setpriv, which ties the proof to the lock;"
+            " install util-linux setpriv, the proof does not run without it"
+        )
+        raise SystemExit(message)
+    return status
+
+
+def announce_lock_held(environment: Mapping[str, str]) -> None:
+    """Tell the process that waited for the lock that its child holds it."""
+    token = Path(environment[LOCK_HELD_ENV])
+    if not token.parent.name.startswith(LOCK_DIRECTORY_PREFIX):
+        message = (
+            f"{LOCK_HELD_ENV} must name a file in a {LOCK_DIRECTORY_PREFIX} directory"
+        )
+        raise SystemExit(message)
+    token.touch()
     print("lock_acquired", LOCK_PATH)
+
+
+def prove_under_lock(environment: Mapping[str, str], prove: Callable[[], None]) -> None:
+    """Announce the held lock, turn TERM into an exit, and run the proof body."""
+    announce_lock_held(environment)
+    exit_on_terminate()
+    prove()
+
+
+def _exit_on_signal(received: int, _frame: FrameType | None) -> None:
+    raise SystemExit(128 + received)
+
+
+def exit_on_terminate() -> None:
+    """Turn the cap's TERM into an ordinary exit, so the teardown `finally` runs."""
+    signal.signal(signal.SIGTERM, _exit_on_signal)
 
 
 def get_json(socket_path: Path, target: str) -> dict[str, object]:
@@ -172,82 +275,59 @@ def _resample(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
     return out.tobytes()
 
 
-def _dechunk(body: bytes) -> bytes:
-    out = bytearray()
-    position = 0
-    while position < len(body):
-        line_end = body.find(b"\r\n", position)
-        if line_end < 0:
-            break
-        size_token = body[position:line_end].split(b";", 1)[0]
-        size = int(size_token, 16)
-        position = line_end + 2
-        if size == 0:
-            break
-        out.extend(body[position : position + size])
-        position += size + 2
-    return bytes(out)
-
-
-def _http_body_complete(header: bytes, body: bytes) -> bool:
-    lowered = header.lower()
-    if b"transfer-encoding: chunked" in lowered:
-        return b"\r\n0\r\n\r\n" in body or body == b"0\r\n\r\n"
-    for line in header.split(b"\r\n"):
-        if line.lower().startswith(b"content-length:"):
-            length = int(line.split(b":", 1)[1].strip())
-            return len(body) >= length
-    return False
-
-
 def speak_measured(
     socket_path: Path,
     text: str,
-    language: str = "de",
+    voice: str,
+    minting: Minting,
 ) -> tuple[bytes, float, float]:
-    """Stream one speak request; return the WAV, time to first audio and total time."""
-    payload = json.dumps({"text": text, "language": language}).encode("utf-8")
-    request = (
-        b"POST /speak HTTP/1.1\r\n"
-        b"Host: speech\r\n"
-        b"Content-Type: application/json\r\n"
-        + f"Content-Length: {len(payload)}\r\n".encode()
-        + b"Connection: close\r\n"
-        + b"\r\n"
-        + payload
-    )
+    """Speak one request; return the whole WAV, time to first audio and total time.
+
+    The headers leave before synthesis, so the first audio is the first body
+    byte. A body the service aborted raises `IncompleteRead` in `http.client`,
+    and the proof fails rather than keep the partial WAV.
+    """
+    pair = mint_pair(minting)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(120)
+    sock.settimeout(SPEAK_TIMEOUT_SECONDS)
     sock.connect(str(socket_path))
+    connection = http.client.HTTPConnection("speech", timeout=SPEAK_TIMEOUT_SECONDS)
+    connection.sock = sock
     try:
         start = time.perf_counter()
-        sock.sendall(request)
-        raw = bytearray()
-        first_byte_at = None
-        while True:
-            piece = sock.recv(4096)
-            if not piece:
-                break
-            raw.extend(piece)
-            header, separator, body = bytes(raw).partition(b"\r\n\r\n")
-            if separator and body and first_byte_at is None:
-                first_byte_at = time.perf_counter()
-            if separator and _http_body_complete(header, body):
-                break
+        connection.request(
+            "POST",
+            SPEECH_PATH,
+            speech_request_body(text, voice),
+            speech_request_headers(
+                workload_token=pair.workload, person_token=pair.person
+            ),
+        )
+        response = connection.getresponse()
+        if response.status != http.client.OK:
+            message = f"speak HTTP status: {response.status}"
+            raise SystemExit(message)
+        first = response.read(1)
+        first_byte_at = time.perf_counter()
+        body = first + response.read()
         end = time.perf_counter()
+    except http.client.IncompleteRead:
+        message = "speak body ended before it was complete"
+        raise SystemExit(message) from None
     finally:
-        sock.close()
-    if first_byte_at is None:
+        connection.close()
+    if not first:
         message = "speak returned no bytes on the socket"
         raise SystemExit(message)
-    header, separator, body = bytes(raw).partition(b"\r\n\r\n")
-    if not separator or not header.startswith(b"HTTP/1.1 200"):
-        status = header.splitlines()[0] if header else b""
-        message = f"speak HTTP status: {status!r}"
-        raise SystemExit(message)
-    if b"transfer-encoding: chunked" in header.lower():
-        body = _dechunk(body)
     return body, first_byte_at - start, end - start
+
+
+def _voice_id(model: str) -> str:
+    voice = voice_for_model(model)
+    if voice is None:
+        message = f"{model} is not a baseline speaking model"
+        raise SystemExit(message)
+    return voice.value
 
 
 def _query_nvidia(*arguments: str) -> str:
@@ -293,6 +373,7 @@ class _RunningSpeech:
     process: subprocess.Popen[str]
     health: dict[str, object]
     ready_seconds: float
+    heard: list[str]
 
     def peak_rss_mib(self) -> float:
         status = Path(f"/proc/{self.process.pid}/status")
@@ -300,11 +381,15 @@ class _RunningSpeech:
 
 
 @contextlib.contextmanager
-def _speech_server(
-    project: Path, env: dict[str, str], socket_path: Path
+def speech_server(
+    project: Path,
+    env: dict[str, str],
+    socket_path: Path,
+    start: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
+    wait_ready: Callable[[Path], dict[str, object]] = _wait_ready,
 ) -> Iterator[_RunningSpeech]:
     """Start speech, wait until both models are ready, and stop it on the way out."""
-    server = subprocess.Popen(
+    server = start(
         [sys.executable, "-m", "speech_runtime_service"],
         cwd=project,
         env=env,
@@ -312,10 +397,13 @@ def _speech_server(
         stderr=subprocess.STDOUT,
         text=True,
     )
+    heard: list[str] = []
+    proof_failed = True
     try:
         started = time.monotonic()
-        health = _wait_ready(socket_path)
-        yield _RunningSpeech(server, health, time.monotonic() - started)
+        health = wait_ready(socket_path)
+        yield _RunningSpeech(server, health, time.monotonic() - started, heard)
+        proof_failed = False
     finally:
         server.terminate()
         try:
@@ -323,12 +411,50 @@ def _speech_server(
         except subprocess.TimeoutExpired:
             server.kill()
             server.wait(timeout=5)
-        if server.stdout is not None:
-            leftover = server.stdout.read()
-            if leftover:
-                print("server_log_tail:")
-                print(leftover[-4000:])
+        log = server.stdout.read() if server.stdout is not None else ""
+        if log:
+            print("server_log_tail:")
+            print(log[-4000:])
         print("server_exit", server.returncode)
+        texts = [SENTENCE, SECOND, *heard]
+        if proof_failed:
+            _report_log_text(log, texts)
+        else:
+            _require_log_without_text(log, texts)
+
+
+def heard_texts(contract_output: str) -> list[str]:
+    """The texts the contract client printed as heard partials and finals."""
+    return [
+        str(json.loads(line[line.index("{") :])["text"])
+        for line in contract_output.splitlines()
+        if line.startswith(HEARD_MARKERS)
+    ]
+
+
+def spoken_or_heard_in_log(log: str, texts: Iterable[str]) -> list[str]:
+    """The non-blank texts that the service log holds."""
+    return [text for text in texts if text.strip() and text in log]
+
+
+def _leak_message(log: str, texts: Iterable[str]) -> str | None:
+    leaked = spoken_or_heard_in_log(log, texts)
+    if leaked:
+        return f"the service log holds {len(leaked)} spoken or heard text(s)"
+    return None
+
+
+def _report_log_text(log: str, texts: Iterable[str]) -> None:
+    """Print a leak without hiding the failure that is already propagating."""
+    message = _leak_message(log, texts)
+    if message:
+        print(message)
+
+
+def _require_log_without_text(log: str, texts: Iterable[str]) -> None:
+    message = _leak_message(log, texts)
+    if message:
+        raise SystemExit(message)
 
 
 def _first_byte_limit(model: str) -> float:
@@ -362,14 +488,14 @@ def _require_speaking(health: dict[str, object], model: str) -> None:
 
 
 def _prove_one_speak(
-    socket_path: Path,
+    speak: Speak,
     text: str,
-    language: str,
+    voice: str,
     *,
     limit: float,
     label: str,
 ) -> tuple[bytes, float, float]:
-    wav, ttfa, total = speak_measured(socket_path, text, language=language)
+    wav, ttfa, total = speak(text, voice)
     rate, pcm = _pcm_from_wav(wav)
     duration = (len(pcm) / BYTES_PER_SAMPLE) / rate
     rtf = duration / total if total else 0.0
@@ -397,9 +523,9 @@ def _prove_one_speak(
 
 
 def _prove_speak_medians(
-    socket_path: Path,
+    speak: Speak,
     text: str,
-    language: str,
+    voice: str,
     *,
     limit: float,
     label: str,
@@ -410,9 +536,9 @@ def _prove_speak_medians(
     rtfs: list[float] = []
     for rep in range(1, MEASURE_REPETITIONS + 1):
         wav, ttfa, rtf = _prove_one_speak(
-            socket_path,
+            speak,
             text,
-            language,
+            voice,
             limit=limit,
             label=f"{label}_rep{rep}",
         )
@@ -431,33 +557,32 @@ def _prove_speak_medians(
     return wavs[-1], median_ttfa, median_rtf
 
 
-def _prove_speak(socket_path: Path, model: str) -> bytes:
-    """Speak German and English MEASURE_REPETITIONS times each.
+def _prove_speak(socket_path: Path, model: str, minting: Minting) -> bytes:
+    """Speak German MEASURE_REPETITIONS times.
 
-    `_prove_one_speak` fails the run the moment any single repetition, in
-    either language, misses `model`'s first-byte limit; a passing run is
-    the proof that every repetition held, not just the medians.
+    `_prove_one_speak` fails the run the moment any single repetition misses
+    `model`'s first-byte limit; a passing run is the proof that every
+    repetition held, not just the median.
     """
-    limit = _first_byte_limit(model)
-    german, _ttfa_de, _rtf_de = _prove_speak_medians(
-        socket_path,
+    german, _ttfa, _rtf = _prove_speak_medians(
+        functools.partial(speak_measured, socket_path, minting=minting),
         SENTENCE,
-        "de",
-        limit=limit,
+        _voice_id(model),
+        limit=_first_byte_limit(model),
         label="speak_wire_de",
     )
-    _prove_speak_medians(socket_path, ENGLISH, "en", limit=limit, label="speak_wire_en")
     return german
 
 
-def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
+def _prove_concurrent_speak(socket_path: Path, model: str, minting: Minting) -> None:
     limit = _first_byte_limit(model)
+    voice = _voice_id(model)
     results: dict[str, tuple[bytes, float, float]] = {}
     errors: list[str] = []
 
     def run(key: str, text: str) -> None:
         try:
-            results[key] = speak_measured(socket_path, text, language="de")
+            results[key] = speak_measured(socket_path, text, voice, minting)
         except Exception as error:
             LOGGER.exception("concurrent speak %s failed", key)
             errors.append(f"{key}: {error}")
@@ -490,10 +615,11 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
         if duration < MIN_SPEECH_SECONDS:
             message = f"concurrent {key} produced too little audio"
             raise SystemExit(message)
-        if ttfa > limit + 8.0:
+        if ttfa > limit + CONCURRENT_EXTRA_WAIT_SECONDS:
             message = (
                 f"concurrent {key} first byte {ttfa:.3f}s; "
-                f"serialized limit is {limit}s plus 8s wait"
+                f"serialized limit is {limit}s plus "
+                f"{CONCURRENT_EXTRA_WAIT_SECONDS}s wait"
             )
             raise SystemExit(message)
     if results["first"][0] == results["second"][0]:
@@ -501,20 +627,40 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
         raise SystemExit(message)
 
 
+def contract_client_command(
+    socket_path: Path, voice: str, minting_path: Path, *, measure: bool
+) -> list[str]:
+    """The contract client's argv: the minting file's path, never a key or a token."""
+    client = Path(__file__).with_name("contract_client.py")
+    return [
+        sys.executable,
+        str(client),
+        *MEASURE_FLAG[measure],
+        "--minting-file",
+        str(minting_path),
+        str(socket_path),
+        voice,
+    ]
+
+
 def _prove_contract(
-    project: Path,
     socket_path: Path,
-    private_directory: Path,
     env: dict[str, str],
+    heard: list[str],
+    minting_path: Path,
     *,
     measure: bool,
 ) -> None:
-    client = project / "scripts" / "contract_client.py"
     print("contract_client_start")
     completed = subprocess.run(  # noqa: S603 - argv is this interpreter and this repository's client script with no shell
-        [sys.executable, str(client), *MEASURE_FLAG[measure], str(socket_path)],
+        contract_client_command(
+            socket_path,
+            _voice_id(env["SPEECH_SPEAKING_MODEL"]),
+            minting_path,
+            measure=measure,
+        ),
         check=False,
-        cwd=private_directory,
+        cwd=env["SPEECH_PRIVATE_DIRECTORY"],
         env=env,
         capture_output=True,
         text=True,
@@ -528,11 +674,16 @@ def _prove_contract(
         if marker not in completed.stdout:
             message = f"contract client did not report {marker}"
             raise SystemExit(message)
+    heard.extend(heard_texts(completed.stdout))
 
 
-def speech_environment(private_directory: Path, speaking_model: str) -> dict[str, str]:
+def speech_environment(
+    private_directory: Path, speaking_model: str, identity: ProofIdentity
+) -> dict[str, str]:
     """Return the process environment pointing at the private directory and model."""
     env = os.environ.copy()
+    env["SPEECH_CONFIG_FILE"] = str(identity.configuration_path)
+    env["SSL_CERT_FILE"] = str(identity.ca_path)
     env["SPEECH_PRIVATE_DIRECTORY"] = str(private_directory)
     env["PRESENTATOR_RUNTIME_UID"] = str(os.geteuid())
     env.setdefault("SPEECH_PROVIDER_ROOT", str(PROVIDER_ROOT))
@@ -543,10 +694,12 @@ def speech_environment(private_directory: Path, speaking_model: str) -> dict[str
     state_directory.mkdir(mode=0o700, exist_ok=True)
     env["SPEECH_STATE_DIRECTORY"] = str(state_directory)
     env["SPEECH_SPEAKING_MODEL"] = speaking_model
+    env["SPEECH_BUSY_WAIT_SECONDS"] = str(
+        _first_byte_limit(speaking_model) + CONCURRENT_EXTRA_WAIT_SECONDS
+    )
     env["SPEECH_HEARING_MODEL"] = os.environ.get(
         "SPEECH_HEARING_MODEL", DEFAULT_HEARING_MODEL
     )
-    env["SPEECH_DEBUG"] = "false"
     env.setdefault("HF_HUB_OFFLINE", "1")
     env.setdefault("TRANSFORMERS_OFFLINE", "1")
     cuda_dirs = ":".join(str(path) for path in cuda_library_dirs())
@@ -570,26 +723,21 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
     return parser.parse_args(arguments)
 
 
-def main() -> None:
-    """Run the stage proof under the probe-stack lock."""
-    options = parse_arguments(sys.argv[1:])
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(line_buffering=True)
-    LOCK_PATH.touch()
-    with LOCK_PATH.open("a", encoding="utf-8") as lock:
-        _acquire_lock(lock)
-        _wait_for_load()
-        print("gpu_before", _nvidia_memory())
-        private_directory = Path(tempfile.mkdtemp(prefix="speech-"))
-        socket_path = private_directory / "speech.sock"
-        speaking_model = os.environ.get(
-            "SPEECH_SPEAKING_MODEL",
-            CHATTERBOX_SPEAKING_MODEL,
-        )
-        project = Path(__file__).resolve().parents[1]
-        try:
-            env = speech_environment(private_directory, speaking_model)
-            with _speech_server(project, env, socket_path) as running:
+def _prove(options: argparse.Namespace) -> None:
+    wait_for_load()
+    print("gpu_before", _nvidia_memory())
+    private_directory = Path(tempfile.mkdtemp(prefix="speech-"))
+    socket_path = private_directory / "speech.sock"
+    speaking_model = os.environ.get(
+        "SPEECH_SPEAKING_MODEL",
+        CHATTERBOX_SPEAKING_MODEL,
+    )
+    project = Path(__file__).resolve().parents[1]
+    try:
+        with proof_identity(private_directory) as identity:
+            minting = load_minting(identity.minting_path)
+            env = speech_environment(private_directory, speaking_model, identity)
+            with speech_server(project, env, socket_path) as running:
                 print("health_ready", json.dumps(running.health, sort_keys=True))
                 print("load_to_ready_s", f"{running.ready_seconds:.1f}")
                 print(
@@ -602,32 +750,41 @@ def main() -> None:
                 print("whisper_cache", WHISPER_CACHE)
                 print("chatterbox_cache", CHATTERBOX_CACHE)
                 print("piper_cache", PIPER_CACHE)
-                german = _prove_speak(socket_path, speaking_model)
+                german = _prove_speak(socket_path, speaking_model, minting)
                 german_wav = (
                     Path(tempfile.mkdtemp(prefix="speech-proof-")) / "german.wav"
                 )
                 german_wav.write_bytes(german)
                 print("german_wav", german_wav)
-                _prove_concurrent_speak(socket_path, speaking_model)
+                _prove_concurrent_speak(socket_path, speaking_model, minting)
                 _prove_contract(
-                    project,
                     socket_path,
-                    private_directory,
                     env,
+                    running.heard,
+                    identity.minting_path,
                     measure=options.measure,
                 )
                 print("peak_rss_mib", f"{running.peak_rss_mib():.0f}")
-            print("gpu_after", _nvidia_memory())
-            print("caches_kept")
-            print("  huggingface:", HF_CACHE)
-            print("  chatterbox:", CHATTERBOX_CACHE)
-            print("  piper:", PIPER_CACHE)
-            print("PROOF_OK")
-        finally:
-            shutil.rmtree(private_directory)
-            print("gpu_released", _nvidia_memory())
-            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-            print("lock_released")
+        print("gpu_after", _nvidia_memory())
+        print("caches_kept")
+        print("  huggingface:", HF_CACHE)
+        print("  chatterbox:", CHATTERBOX_CACHE)
+        print("  piper:", PIPER_CACHE)
+        print("PROOF_OK")
+    finally:
+        shutil.rmtree(private_directory)
+        print("gpu_released", _nvidia_memory())
+
+
+def main() -> None:
+    """Run the stage proof, taking the probe-stack lock through the fleet form."""
+    options = parse_arguments(sys.argv[1:])
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+    if LOCK_HELD_ENV not in os.environ:
+        print("waiting_for_lock", LOCK_PATH)
+        raise SystemExit(run_under_lock(sys.argv[1:]))
+    prove_under_lock(os.environ, lambda: _prove(options))
 
 
 if __name__ == "__main__":

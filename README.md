@@ -80,8 +80,8 @@ implicit net both need `pkg_resources`, restored by pinning `setuptools`):
 | Card with Chatterbox + Whisper resident (before any `/speak` call) | 13465 MiB |
 | Chatterbox + hearing footprint together | ~7169 MiB GPU (Chatterbox itself ~3.5 GB, matching #70's inference for a 0.5B model beside Whisper's ~3.9 GB) |
 
-`scripts/prove_speech.py` now fails the run the moment any single repetition, in
-either language, misses its first-byte limit — a passing run is the proof
+`scripts/prove_speech.py` now fails the run the moment any single repetition
+misses its first-byte limit — a passing run is the proof
 that every repetition held, not just the medians. All ten repetitions (5
 German, 5 English) stayed under the 1.0 s limit on this run; the worst single
 repetition was 0.555 s. Constructing the real watermarker at load time cost no
@@ -149,9 +149,9 @@ sent even where the decode is slow.
 ## Contract
 
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
-- `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. Every WAV, this one and the voice sample, carries an always-on AI mark: a RIFF `LIST`/`INFO` `ICMT` chunk between `fmt ` and `data` holding `DigitalSourceType=http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia`. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox and Qwen, and 48 000 Hz for VoxCPM2), also reported as `speaking.sample_rate`. Runtime serialises request synthesis across every engine. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
+- `POST /v1/audio/speech` → chunked `audio/wav`, German, with the AI mark. It needs a workload token and the person's token. The request, the tokens, the refusals and the settings that shape them are in [`docs/wire.md`](docs/wire.md). The voice sample carries the same always-on AI mark.
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
-- `/health`, `/speak` and `/hear` answer only on `speech.sock` in
+- `/health`, `/v1/audio/speech` and `/hear` answer only on `speech.sock` in
   `SPEECH_PRIVATE_DIRECTORY`; the process binds no TCP port. The socket serves
   nothing else beside the voice controls (no `/docs`, no `/openapi.json`).
 - `GET /voices` is one of those controls. It
@@ -167,6 +167,8 @@ sent even where the decode is slow.
 
 `sample_rate` is the hear rate. Speak is a WAV, so its rate is in the header. A caller that feeds speak output into hear must resample.
 
+The service never writes spoken or heard text to its log. A speaking or hearing failure is logged with its exception types and stack frames, never with an exception message.
+
 ## Settings
 
 All `SPEECH_*`:
@@ -176,20 +178,23 @@ All `SPEECH_*`:
 | `SPEECH_DEVICE` | `cuda` | Device for hearing and isolated providers. Chatterbox and VoxCPM2 accept `cuda` or `cpu`; Qwen accepts only `cuda` and maps it to `cuda:0`. Piper stays on CPU. |
 | `SPEECH_SPEAKING_MODEL` | `de_DE-thorsten-medium` | First-run default only, used when `selected-voice` is absent |
 | `SPEECH_HEARING_MODEL` | `Systran/faster-whisper-large-v3` | Hugging Face id or faster-whisper size name |
-| `SPEECH_DEBUG` | `false` | When true, logs the text of what was spoken or heard. Audio is never logged. |
 | `SPEECH_VOICE_CACHE` | `~/.cache/piper` | Where Piper ONNX files are kept |
 | `SPEECH_HUGGINGFACE_CACHE` | Provider Hub cache (normally `~/.cache/huggingface/hub`) | The shared local Hub cache for provider loading and status lookup |
 | `SPEECH_QWEN_SPEAKER` | `Ryan` | One of Vivian, Serena, Uncle_Fu, Dylan, Eric, Ryan, Aiden, Ono_Anna, or Sohee |
 | `SPEECH_MAGPIE_SPEAKER` | `Sofia` | One of Aria, Jason, John, Leo, or Sofia |
 | `SPEECH_PRIVATE_DIRECTORY` | `/run/speech-runtime` | Private directory that owns `speech.sock` |
 | `SPEECH_STATE_DIRECTORY` | `~/.local/state/speech-runtime` | Private directory containing the durable selected voice |
+| `SPEECH_BUSY_WAIT_SECONDS` | `5.0` | How long a second speech request waits for the one synthesis before it answers 429 `busy`; at least 0, where 0 refuses at once |
+| `SPEECH_MAX_INPUT_CHARACTERS` | `4096` | The longest `input` a speech request may carry; a whole number of at least 1 |
+| `SPEECH_CONFIG_FILE` | none, required | Absolute path of the TOML file that names the issuer, the service group and the apps whose tokens the speak route trusts; the process does not start without it ([`docs/wire.md`](docs/wire.md)) |
 
 When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 
 `PRESENTATOR_RUNTIME_UID` is the positive runtime UID that Presentator
 shares with speech. Speech creates its private directory at mode 0700 and its socket at 0600.
-That UID is the socket's only authority: the Presentator container and every
-process under it may speak, hear and control voices through the socket.
+That UID guards the socket: the Presentator container and every process under
+it may hear and control voices through the socket, and the speak route also
+needs both tokens.
 A dead leftover socket is replaced; a socket with a live listener, a foreign
 or non-socket path, or an unsafe directory refuses startup.
 
@@ -204,8 +209,14 @@ uv sync --group dev
 uv run speech-runtime-service
 ```
 
-Stage proof (takes `/tmp/probe-stack.lock`, checks load, one heavy step at a
-time). It selects Chatterbox when the durable selection is absent and points
+Stage proof (checks load, one heavy step at a time). The script runs itself as
+`flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 …`, so it waits at most
+20 minutes for `/tmp/probe-stack.lock` and fails the run, saying the lock is busy,
+when that wait ends; the load wait and the proof then share the 30-minute cap,
+whose TERM stops the speech server and its providers and removes the private
+directory. If its caller dies, `setpriv` hands `timeout` a TERM at once, so
+the lock stays held only while the stack tears down; a host without `setpriv`
+fails the run, naming it. It selects Chatterbox when the durable selection is absent and points
 `SPEECH_PROVIDER_ROOT` at `providers` unless the caller set it, so each
 provider needs its virtual environment first (`uv sync --locked` inside
 `providers/<provider>`). It gives speech a temporary
@@ -218,6 +229,9 @@ large-v3) pass through; on `cpu` the card is hidden from speech with an empty
 ```sh
 uv run python scripts/prove_speech.py
 ```
+
+The proof serves its own throwaway key set over local HTTPS and speaks with
+fresh tokens minted from it; nothing of it outlives the run.
 
 Every run reports load to ready, the card's compute pids at health ready and
 the peak RSS of the speech process. `--measure` only swaps the contract markers
