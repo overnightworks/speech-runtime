@@ -60,12 +60,12 @@ class SynthesisGate:
         A free gate is taken even past the deadline. A cancellation or a
         timeout leaves the gate to the next waiter.
         """
-        lease = self.try_acquire()
-        if lease is not None:
-            return lease
         loop = asyncio.get_running_loop()
         waiter = _Waiter(loop, loop.create_future())
         with self._guard:
+            if not self._held:
+                self._held = True
+                return Lease(self._release)
             self._waiters.append(waiter)
         try:
             async with asyncio.timeout(deadline - time.monotonic()):

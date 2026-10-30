@@ -21,7 +21,7 @@ from starlette.status import (
 from speech_runtime_client.wire import RETRY_AFTER_HEADER, RefusalCode
 from speech_runtime_service.pcm import pcm_from_wav
 from speech_runtime_service.service import Runtime, RuntimeDependencies
-from speech_runtime_service.synthesis_gate import SynthesisGate
+from speech_runtime_service.synthesis_gate import Lease, SynthesisGate
 from speech_runtime_service.voices import VoiceId, VoiceLoadOutcome
 from tests.support.fakes_support import (
     SPEAK_SAMPLE_RATE,
@@ -46,6 +46,7 @@ from tests.support.speak_support import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from fastapi import FastAPI
@@ -124,7 +125,9 @@ def test_waiters_are_served_in_the_order_they_came() -> None:
         await asyncio.wait_for(asyncio.gather(second, third), WAIT_SECONDS)
         return served
 
-    assert asyncio.run(scenario()) == ["second", "third"]
+    served = asyncio.run(scenario())
+
+    assert served == ["second", "third"]
 
 
 def test_a_release_from_another_thread_serves_the_waiter() -> None:
@@ -132,13 +135,55 @@ def test_a_release_from_another_thread_serves_the_waiter() -> None:
         gate = SynthesisGate()
         held = await gate.acquire(_in(0))
         assert held is not None
-        releasing = threading.Timer(SHORT_SECONDS, held.close)
+        waiting = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS)))
+        await _settle()
+        releasing = threading.Thread(target=held.close)
         releasing.start()
-        lease = await gate.acquire(_in(WAIT_SECONDS))
+        lease = await waiting
         releasing.join()
         return lease is not None
 
     assert asyncio.run(scenario())
+
+
+class _InterleavingGuard:
+    """A guard that runs one action, once, right after it is next left."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.after_exit: Callable[[], None] | None = None
+
+    def __enter__(self) -> None:
+        self._lock.acquire()
+
+    def __exit__(self, *_exc: object) -> None:
+        self._lock.release()
+        action, self.after_exit = self.after_exit, None
+        if action is not None:
+            action()
+
+
+class _InterleavedGate(SynthesisGate):
+    def __init__(self) -> None:
+        super().__init__()
+        self.interleaving = _InterleavingGuard()
+        self._guard = self.interleaving
+
+
+def test_a_release_right_after_the_gate_is_found_held_still_serves_the_waiter() -> None:
+    def release_from_another_thread(held: Lease) -> None:
+        releasing = threading.Thread(target=held.close)
+        releasing.start()
+        releasing.join()
+
+    async def scenario() -> Lease | None:
+        gate = _InterleavedGate()
+        held = gate.try_acquire()
+        assert held is not None
+        gate.interleaving.after_exit = lambda: release_from_another_thread(held)
+        return await gate.acquire(_in(WAIT_SECONDS))
+
+    assert asyncio.run(scenario()) is not None
 
 
 def test_a_cancelled_waiter_leaves_the_gate_to_the_next() -> None:
