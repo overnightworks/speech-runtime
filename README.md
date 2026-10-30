@@ -80,8 +80,8 @@ implicit net both need `pkg_resources`, restored by pinning `setuptools`):
 | Card with Chatterbox + Whisper resident (before any `/speak` call) | 13465 MiB |
 | Chatterbox + hearing footprint together | ~7169 MiB GPU (Chatterbox itself ~3.5 GB, matching #70's inference for a 0.5B model beside Whisper's ~3.9 GB) |
 
-`scripts/prove_speech.py` now fails the run the moment any single repetition, in
-either language, misses its first-byte limit — a passing run is the proof
+`scripts/prove_speech.py` now fails the run the moment any single repetition
+misses its first-byte limit — a passing run is the proof
 that every repetition held, not just the medians. All ten repetitions (5
 German, 5 English) stayed under the 1.0 s limit on this run; the worst single
 repetition was 0.555 s. Constructing the real watermarker at load time cost no
@@ -149,9 +149,9 @@ sent even where the decode is slow.
 ## Contract
 
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "sample_rate", "card_memory_mb"}`. Answers while models are still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
-- `POST /speak` with `{"text", "language"}` → chunked `audio/wav`, 16-bit PCM mono. One sentence per request. Every WAV, this one and the voice sample, carries an always-on AI mark: a RIFF `LIST`/`INFO` `ICMT` chunk between `fmt ` and `data` holding `DigitalSourceType=http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia`. The first bytes leave as early as the model allows. The WAV header carries the voice's native rate (22 050 Hz for Thorsten, 24 000 Hz for Chatterbox and Qwen, and 48 000 Hz for VoxCPM2), also reported as `speaking.sample_rate`. Runtime serialises request synthesis across every engine. If the client disconnects mid-stream, the response closes its synthesis generator once the ASGI layer's in-flight step returns, releasing the voice for the next request.
+- `POST /v1/audio/speech` → chunked `audio/wav`, German, with the AI mark. The request, the refusals and the settings that shape them are in [`docs/wire.md`](docs/wire.md). The voice sample carries the same always-on AI mark.
 - `WS /hear?language=de` takes binary frames of raw 16-bit PCM mono at `sample_rate` (16 000 Hz) and sends `{"text", "final"}`. The socket stays open; the model is not reloaded between utterances.
-- `/health`, `/speak` and `/hear` answer only on `speech.sock` in
+- `/health`, `/v1/audio/speech` and `/hear` answer only on `speech.sock` in
   `SPEECH_PRIVATE_DIRECTORY`; the process binds no TCP port. The socket serves
   nothing else beside the voice controls (no `/docs`, no `/openapi.json`).
 - `GET /voices` is one of those controls. It
@@ -184,6 +184,8 @@ All `SPEECH_*`:
 | `SPEECH_MAGPIE_SPEAKER` | `Sofia` | One of Aria, Jason, John, Leo, or Sofia |
 | `SPEECH_PRIVATE_DIRECTORY` | `/run/speech-runtime` | Private directory that owns `speech.sock` |
 | `SPEECH_STATE_DIRECTORY` | `~/.local/state/speech-runtime` | Private directory containing the durable selected voice |
+| `SPEECH_BUSY_WAIT_SECONDS` | `5.0` | How long a second speech request waits for the one synthesis before it answers 429 `busy`; at least 0, where 0 refuses at once |
+| `SPEECH_MAX_INPUT_CHARACTERS` | `4096` | The longest `input` a speech request may carry; a whole number of at least 1 |
 
 When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 
