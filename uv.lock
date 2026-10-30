@@ -2,6 +2,12 @@ version = 1
 revision = 3
 requires-python = ">=3.14"
 
+[manifest]
+members = [
+    "overnightworks-speech-runtime-client",
+    "overnightworks-speech-runtime-service",
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.5"
@@ -463,6 +469,17 @@ wheels = [
 ]
 
 [[package]]
+name = "overnightworks-speech-runtime-client"
+version = "0.0.0"
+source = { editable = "packages/client" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.13,<3" }]
+
+[[package]]
 name = "overnightworks-speech-runtime-provider-contract"
 version = "0.0.0"
 source = { editable = "providers/provider-contract" }
@@ -478,6 +495,7 @@ dependencies = [
     { name = "numpy" },
     { name = "nvidia-cublas-cu12" },
     { name = "nvidia-cudnn-cu12" },
+    { name = "overnightworks-speech-runtime-client" },
     { name = "overnightworks-speech-runtime-provider-contract" },
     { name = "piper-tts" },
     { name = "pydantic-settings" },
@@ -501,6 +519,7 @@ requires-dist = [
     { name = "numpy", specifier = "==2.5.4" },
     { name = "nvidia-cublas-cu12", specifier = "==12.9.2.10" },
     { name = "nvidia-cudnn-cu12", specifier = "==9.27.0.42" },
+    { name = "overnightworks-speech-runtime-client", editable = "packages/client" },
     { name = "overnightworks-speech-runtime-provider-contract", editable = "providers/provider-contract" },
     { name = "piper-tts", specifier = "==1.8.0" },
     { name = "pydantic-settings", specifier = "==2.16.1" },
