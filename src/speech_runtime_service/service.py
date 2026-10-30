@@ -26,7 +26,7 @@ from speech_runtime_service.config import (
     DEFAULT_SPEAKING_MODEL,
     HEAR_SAMPLE_RATE,
 )
-from speech_runtime_service.failures import SpeakingFailedError, log_failure
+from speech_runtime_service.failures import PayloadFreeFailure, SpeakingFailedError
 from speech_runtime_service.hearing import (
     POLL_WAIT_SECONDS,
     FrameTooLargeError,
@@ -683,7 +683,7 @@ def _wav_chunks(
     sample_rate: int | None = None,
 ) -> Iterator[bytes]:
     first = True
-    try:
+    with PayloadFreeFailure(logger, "speaking failed", reraise_as=SpeakingFailedError):
         synthesis = speaking.pcm_chunks(text, language)
         try:
             for pcm in synthesis:
@@ -694,9 +694,6 @@ def _wav_chunks(
                     yield pcm
         finally:
             synthesis.close()
-    except Exception as error:  # noqa: BLE001 - logged by type and frames, re-raised without its message
-        log_failure(logger, "speaking failed", error)
-        raise SpeakingFailedError from None
 
 
 def _public_wav_chunks(
@@ -737,10 +734,15 @@ def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
         if not runtime.hearing.ready:
             await websocket.close(code=WS_1013_TRY_AGAIN_LATER)
             return
-        failed = False
+        hearing = PayloadFreeFailure(
+            logger,
+            "hearing failed",
+            expected=(WebSocketDisconnect, FrameTooLargeError),
+        )
         try:
-            session = runtime.hearing.open_session(language)
-            await _hear_loop(websocket, session)
+            with hearing:
+                session = runtime.hearing.open_session(language)
+                await _hear_loop(websocket, session)
         except WebSocketDisconnect:
             return
         except FrameTooLargeError:
@@ -749,10 +751,7 @@ def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
                 code=WS_1009_MESSAGE_TOO_BIG,
                 reason=FRAME_TOO_LARGE_REASON,
             )
-        except Exception as error:  # noqa: BLE001 - logged by type and frames, closed with a fixed reason
-            log_failure(logger, "hearing failed", error)
-            failed = True
-        if failed:
+        if hearing.failed:
             await _close_open(
                 websocket,
                 code=WS_1011_INTERNAL_ERROR,
