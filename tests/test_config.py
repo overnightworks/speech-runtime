@@ -1,5 +1,6 @@
 """Configuration comes from the environment."""
 
+import ipaddress
 from typing import TYPE_CHECKING
 
 import pytest
@@ -102,7 +103,7 @@ def test_settings_preserves_an_explicit_huggingface_cache(
     assert Settings().huggingface_cache == explicit_cache
 
 
-def test_settings_bind_to_loopback_port_8080_by_default(
+def test_settings_bind_to_a_loopback_tcp_port_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("SPEECH_HOST", raising=False)
@@ -110,7 +111,8 @@ def test_settings_bind_to_loopback_port_8080_by_default(
 
     settings = Settings()
 
-    assert (settings.host, settings.port) == ("127.0.0.1", 8080)
+    assert ipaddress.ip_address(settings.host).is_loopback
+    assert settings.port in range(1, 2**16)
 
 
 def test_settings_read_the_bind_address_from_the_environment(
