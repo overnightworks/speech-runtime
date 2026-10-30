@@ -56,16 +56,14 @@ class _QwenDownload:
             return None
         try:
             with self.publication_lock:
-                if (
-                    not may_start()
-                    or self.download is None
-                    or self.worker_is_usable is None
-                    or not self.worker_is_usable()
-                ):
+                if not may_start():
                     return None
-                if self.artifacts_are_complete():
-                    return VoiceDownloadOutcome.ALREADY_COMPLETE
-                self._state = (True, False)
+            complete = self._artifacts_when_worker_usable()
+            if complete is None:
+                return None
+            outcome = self._publish_start(may_start, complete=complete)
+            if outcome is not VoiceDownloadOutcome.STARTED:
+                return outcome
             try:
                 threading.Thread(target=self._run, daemon=True).start()
             except RuntimeError:
@@ -76,6 +74,28 @@ class _QwenDownload:
         finally:
             if release_guard:
                 self.release()
+
+    def _artifacts_when_worker_usable(self) -> bool | None:
+        # Filesystem checks must not hold the runtime state lock; start repeats
+        # its decision under it once they are done.
+        if (
+            self.download is None
+            or self.worker_is_usable is None
+            or not self.worker_is_usable()
+        ):
+            return None
+        return self.artifacts_are_complete()
+
+    def _publish_start(
+        self, may_start: Callable[[], bool], *, complete: bool
+    ) -> VoiceDownloadOutcome | None:
+        with self.publication_lock:
+            if not may_start():
+                return None
+            if complete:
+                return VoiceDownloadOutcome.ALREADY_COMPLETE
+            self._state = (True, False)
+            return VoiceDownloadOutcome.STARTED
 
     def release(self) -> None:
         self._guard.release()
