@@ -59,9 +59,16 @@ FLEET_BUDGET_SECONDS = 1830
 
 
 @pytest.fixture
-def terminate_handler(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def restored_terminate_handler() -> Iterator[None]:
+    """Put the TERM handler back after a test that lets the proof install its own."""
+    previous = signal.getsignal(signal.SIGTERM)
+    yield
+    signal.signal(signal.SIGTERM, previous)
+
+
+@pytest.fixture
+def terminate_handler() -> Iterator[None]:
     """Install the proof's TERM handler for one test and put the old one back."""
-    monkeypatch.delenv(PROVE.LOCK_HELD_ENV, raising=False)
     previous = signal.getsignal(signal.SIGTERM)
     PROVE.exit_on_terminate()
     yield
@@ -144,16 +151,18 @@ def test_a_failed_proof_under_the_lock_keeps_its_own_exit_status() -> None:
 
 
 @pytest.mark.usefixtures("terminate_handler")
-def test_term_stops_the_speech_server_through_its_teardown(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_term_stops_the_speech_server_through_its_teardown(tmp_path: Path) -> None:
     server = Mock(stdout=None, returncode=0)
-    monkeypatch.setattr(PROVE.subprocess, "Popen", lambda *_, **__: server)
-    monkeypatch.setattr(PROVE, "_wait_ready", lambda _socket_path: {})
 
     with (
         pytest.raises(SystemExit),
-        PROVE.speech_server(tmp_path, {}, tmp_path / "speech.sock"),
+        PROVE.speech_server(
+            tmp_path,
+            {},
+            tmp_path / "speech.sock",
+            start=lambda *_, **__: server,
+            wait_ready=lambda _socket_path: {},
+        ),
     ):
         os.kill(os.getpid(), signal.SIGTERM)
 
@@ -161,11 +170,38 @@ def test_term_stops_the_speech_server_through_its_teardown(
 
 
 @pytest.mark.usefixtures("terminate_handler")
-def test_a_load_that_never_falls_ends_at_term(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(PROVE, "_load_1min", lambda: PROVE.LOAD_CEILING + 1)
-    monkeypatch.setattr(
-        PROVE.time, "sleep", lambda _: os.kill(os.getpid(), signal.SIGTERM)
-    )
+def test_a_load_that_never_falls_ends_at_term() -> None:
+    with pytest.raises(SystemExit):
+        PROVE.wait_for_load(
+            read_load=lambda: PROVE.LOAD_CEILING + 1,
+            sleep=lambda _: os.kill(os.getpid(), signal.SIGTERM),
+        )
+
+
+@pytest.mark.usefixtures("restored_terminate_handler")
+def test_term_during_the_proof_under_the_lock_runs_its_teardown(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    token = tmp_path_factory.mktemp(PROVE.LOCK_DIRECTORY_PREFIX) / "acquired"
+    torn_down: list[bool] = []
+
+    def proof_body() -> None:
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+        finally:
+            torn_down.append(True)
 
     with pytest.raises(SystemExit):
-        PROVE.wait_for_load()
+        PROVE.prove_under_lock({PROVE.LOCK_HELD_ENV: str(token)}, proof_body)
+
+    assert torn_down == [True]
+    assert token.exists()
+
+
+def test_a_lock_marker_outside_a_lock_directory_is_refused(tmp_path: Path) -> None:
+    marker = tmp_path / "1"
+
+    with pytest.raises(SystemExit):
+        PROVE.announce_lock_held({PROVE.LOCK_HELD_ENV: str(marker)})
+
+    assert not marker.exists()

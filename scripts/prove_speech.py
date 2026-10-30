@@ -50,6 +50,7 @@ ENGLISH = (
 SECOND = "Die nächste Folie bitte."
 LOCK_PATH = Path("/tmp/probe-stack.lock")  # noqa: S108 - the one machine-wide probe lock must keep this exact path whatever TMPDIR says
 LOCK_HELD_ENV = "SPEECH_PROOF_HOLDS_PROBE_LOCK"
+LOCK_DIRECTORY_PREFIX = "speech-lock-"
 LOCK_WAIT_SECONDS = 1200
 FLOCK_TIMED_OUT_STATUS = 1
 # The cap and the kill grace are the numbers this script owns inside the fleet
@@ -92,15 +93,18 @@ def _load_1min() -> float:
     return float(Path("/proc/loadavg").read_text(encoding="utf-8").split()[0])
 
 
-def wait_for_load() -> None:
+def wait_for_load(
+    read_load: Callable[[], float] = _load_1min,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
     """Wait for the 1-minute load to fall to the ceiling, inside the lock's cap."""
     while True:
-        load = _load_1min()
+        load = read_load()
         print(f"load_1min={load:.2f}")
         if load <= LOAD_CEILING:
             return
         print(f"load {load:.2f} is above {LOAD_CEILING}, waiting")
-        time.sleep(15)
+        sleep(15)
 
 
 def fleet_command(arguments: list[str]) -> list[str]:
@@ -126,7 +130,7 @@ def run_under_lock(
     run: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
 ) -> int:
     """Run the proof under the lock; a lock still busy after the wait fails loudly."""
-    with tempfile.TemporaryDirectory(prefix="speech-lock-") as directory:
+    with tempfile.TemporaryDirectory(prefix=LOCK_DIRECTORY_PREFIX) as directory:
         token = Path(directory) / "acquired"
         environment = {**os.environ, LOCK_HELD_ENV: str(token)}
         status = run(fleet_command(arguments), env=environment, check=False).returncode
@@ -142,8 +146,21 @@ def run_under_lock(
 
 def announce_lock_held(environment: Mapping[str, str]) -> None:
     """Tell the process that waited for the lock that its child holds it."""
-    Path(environment[LOCK_HELD_ENV]).touch()
+    token = Path(environment[LOCK_HELD_ENV])
+    if not token.parent.name.startswith(LOCK_DIRECTORY_PREFIX):
+        message = (
+            f"{LOCK_HELD_ENV} must name a file in a {LOCK_DIRECTORY_PREFIX} directory"
+        )
+        raise SystemExit(message)
+    token.touch()
     print("lock_acquired", LOCK_PATH)
+
+
+def prove_under_lock(environment: Mapping[str, str], prove: Callable[[], None]) -> None:
+    """Announce the held lock, turn TERM into an exit, and run the proof body."""
+    announce_lock_held(environment)
+    exit_on_terminate()
+    prove()
 
 
 def _exit_on_signal(received: int, _frame: FrameType | None) -> None:
@@ -364,10 +381,14 @@ class _RunningSpeech:
 
 @contextlib.contextmanager
 def speech_server(
-    project: Path, env: dict[str, str], socket_path: Path
+    project: Path,
+    env: dict[str, str],
+    socket_path: Path,
+    start: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
+    wait_ready: Callable[[Path], dict[str, object]] = _wait_ready,
 ) -> Iterator[_RunningSpeech]:
     """Start speech, wait until both models are ready, and stop it on the way out."""
-    server = subprocess.Popen(
+    server = start(
         [sys.executable, "-m", "speech_runtime_service"],
         cwd=project,
         env=env,
@@ -379,7 +400,7 @@ def speech_server(
     proof_failed = True
     try:
         started = time.monotonic()
-        health = _wait_ready(socket_path)
+        health = wait_ready(socket_path)
         yield _RunningSpeech(server, health, time.monotonic() - started, heard)
         proof_failed = False
     finally:
@@ -731,9 +752,7 @@ def main() -> None:
     if LOCK_HELD_ENV not in os.environ:
         print("waiting_for_lock", LOCK_PATH)
         raise SystemExit(run_under_lock(sys.argv[1:]))
-    announce_lock_held(os.environ)
-    exit_on_terminate()
-    _prove(options)
+    prove_under_lock(os.environ, lambda: _prove(options))
 
 
 if __name__ == "__main__":
