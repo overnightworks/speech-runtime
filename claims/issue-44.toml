@@ -1,8 +1,0 @@
-claim_id = "52de6e90701b411f859bb5d39d4027e0"
-agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
-role = "builder"
-base = "e9f5a70f2c19aa987cfa2907bd797363ebc9908e"
-branch = "claude/issue-44-c3b-magpie-py314"
-scope = [".aco/board.toml", ".github/dependabot.yml", "README.md", "providers/magpie/pyproject.toml", "providers/magpie/uv.lock", "providers/provider-contract/pyproject.toml", "providers/provider-contract/src/speech_runtime_provider_contract/__init__.py", "quality/config.toml"]
-opened_commit = "981f2739ba896b666e7d8c5960429fefabfa9209"
-whole_reason = "One provider move: its Python floor, its lock, the shared contract floor it alone held back, and the allowances those held; none can land without the others or the gate goes red."
