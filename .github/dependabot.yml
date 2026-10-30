@@ -21,6 +21,6 @@ updates:
           - "faster-whisper"
           - "piper-tts"
   - package-ecosystem: uv
-    directories: ["/providers/chatterbox"]
+    directories: ["/providers/chatterbox", "/providers/magpie"]
     schedule:
       interval: weekly
