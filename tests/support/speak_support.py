@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from starlette.responses import Response, StreamingResponse
 
     from speech_runtime_service.service import SpeakingEngine
+    from speech_runtime_service.synthesis_gate import Lease
 
 
 def info_comment_before_data(wav: bytes) -> str | None:
@@ -213,11 +214,30 @@ def app_over(runtime: Runtime, **settings: float) -> FastAPI:
     return create_control_app(Settings(**settings), runtime)
 
 
+class CommittingSelectionStore(VoiceSelectionStore):
+    """A selection store that tells when a switch to Piper has been written."""
+
+    def __init__(self, directory: Path, *, owner_uid: int) -> None:
+        """Start unsignalled."""
+        super().__init__(directory, owner_uid=owner_uid)
+        self.piper_committed = threading.Event()
+
+    def write(self, voice: VoiceId) -> None:
+        """Write the selection, then signal a switch to Piper."""
+        super().write(voice)
+        if voice is VoiceId.PIPER:
+            self.piper_committed.set()
+
+
 def switchable_runtime(
-    tmp_path: Path, speaking: FakeSpeaking | GatedSpeaking
+    tmp_path: Path,
+    speaking: FakeSpeaking | GatedSpeaking,
+    store: CommittingSelectionStore | None = None,
 ) -> Runtime:
     """A runtime whose active voice is Chatterbox and that can switch to Piper."""
-    store = VoiceSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+    store = store or CommittingSelectionStore(
+        tmp_path / "state", owner_uid=os.geteuid()
+    )
     store.write(VoiceId.CHATTERBOX)
     speaking.retain_when_inactive = True
     return Runtime(
@@ -231,6 +251,24 @@ def switchable_runtime(
             default_voice=VoiceId.CHATTERBOX,
         ),
     )
+
+
+def gate_acquisition_began(runtime: Runtime) -> asyncio.Event:
+    """An event set when a request calls the gate's `acquire`.
+
+    `acquire` queues its waiter before its first suspension, so a test that
+    resumes on this event finds the waiter queued.
+    """
+    began = asyncio.Event()
+    gate = runtime.synthesis_gate
+    acquire = gate.acquire
+
+    async def noting(deadline: float) -> Lease | None:
+        began.set()
+        return await acquire(deadline)
+
+    gate.acquire = noting
+    return began
 
 
 def switch_completes(runtime: Runtime) -> bool:

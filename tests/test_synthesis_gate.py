@@ -5,6 +5,7 @@ a second request waits a configured few seconds and then answers 429.
 """
 
 import asyncio
+import os
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -31,11 +32,13 @@ from tests.support.fakes_support import (
 )
 from tests.support.speak_support import (
     ASGI_TIMEOUT_SECONDS,
+    CommittingSelectionStore,
     SpeakCall,
     app_over,
     assert_refusal,
     assert_unavailable,
     fake_runtime,
+    gate_acquisition_began,
     post_speech,
     speak_body,
     speak_once,
@@ -342,12 +345,14 @@ def test_a_voice_switch_waits_for_a_waiting_request_which_speaks_with_its_own_vo
     async def scenario() -> tuple[SpeakCall, list[bool], FastAPI]:
         speaking = FakeSpeaking()
         speaking.sample_rate = ALIEN_SAMPLE_RATE
-        runtime = switchable_runtime(tmp_path, speaking)
+        store = CommittingSelectionStore(tmp_path / "state", owner_uid=os.geteuid())
+        runtime = switchable_runtime(tmp_path, speaking, store)
         app = app_over(runtime, busy_wait_seconds=ASGI_TIMEOUT_SECONDS)
         held = runtime.synthesis_gate.try_acquire()
         assert held is not None
+        waiting_began = gate_acquisition_began(runtime)
         waiting = SpeakCall(app, speak_body(CHATTERBOX))
-        await asyncio.sleep(SHORT_WAIT_SECONDS)
+        await waiting_began.wait()
         outcome: list[bool] = []
         switching = threading.Thread(
             target=lambda: outcome.append(
@@ -355,7 +360,8 @@ def test_a_voice_switch_waits_for_a_waiting_request_which_speaks_with_its_own_vo
             )
         )
         switching.start()
-        await asyncio.sleep(SHORT_WAIT_SECONDS)
+        assert await asyncio.to_thread(store.piper_committed.wait, ASGI_TIMEOUT_SECONDS)
+        assert switching.is_alive()
         assert outcome == []
         held.close()
         await waiting.finish()
@@ -382,8 +388,9 @@ def test_a_request_cancelled_while_it_waits_for_the_gate_leaves_nothing_behind(
         app = app_over(runtime, busy_wait_seconds=ASGI_TIMEOUT_SECONDS)
         held = runtime.synthesis_gate.try_acquire()
         assert held is not None
+        waiting_began = gate_acquisition_began(runtime)
         waiting = SpeakCall(app, speak_body(CHATTERBOX))
-        await asyncio.sleep(SHORT_WAIT_SECONDS)
+        await waiting_began.wait()
         waiting.task.cancel()
         await asyncio.gather(waiting.task, return_exceptions=True)
         held.close()
@@ -433,8 +440,14 @@ def test_a_free_gate_answers_within_the_wait_though_every_worker_is_occupied(
         anyio.to_thread.current_default_thread_limiter().total_tokens = 1
         runtime, app = _async_runtime(tmp_path, FakeSpeaking())
         occupied = threading.Event()
-        job = asyncio.create_task(anyio.to_thread.run_sync(occupied.wait))
-        await asyncio.sleep(SHORT_WAIT_SECONDS)
+        occupying = threading.Event()
+
+        def occupy() -> None:
+            occupying.set()
+            occupied.wait(ASGI_TIMEOUT_SECONDS)
+
+        job = asyncio.create_task(anyio.to_thread.run_sync(occupy))
+        await asyncio.to_thread(occupying.wait, ASGI_TIMEOUT_SECONDS)
         call = SpeakCall(app, speak_body(CHATTERBOX))
         await call.status()
         occupied.set()
