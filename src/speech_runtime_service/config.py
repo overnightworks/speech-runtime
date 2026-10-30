@@ -5,7 +5,15 @@ from pathlib import Path
 from typing import Annotated, Self
 
 from huggingface_hub import constants as huggingface_hub_constants
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    Strict,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from speech_runtime_provider_contract import (
     QWEN_MODEL_ID,
@@ -14,8 +22,12 @@ from speech_runtime_provider_contract import (
 )
 from webauth.https_client import is_https_url
 
-DEFAULT_SPEAKING_MODEL = "de_DE-thorsten-medium"
-CHATTERBOX_SPEAKING_MODEL = "ResembleAI/chatterbox"
+from speech_runtime_service.voices import (
+    CHATTERBOX_SPEAKING_MODEL,
+    DEFAULT_SPEAKING_MODEL,
+    VoiceId,
+)
+
 DEFAULT_HEARING_MODEL = "Systran/faster-whisper-large-v3"
 HEAR_SAMPLE_RATE = 16_000
 _STATE_DIRECTORY_ERROR = "state directory must be absolute"
@@ -25,6 +37,7 @@ _CONFIG_FILE_ERROR = "config file must be absolute"
 _KEY_SET_URL_ERROR = "jwks_url must be an https URL"
 _SERVICE_GROUP_ERROR = "service_group must be a group path such as /services/name"
 _APP_NAME_ERROR = "an app name must be one group path segment"
+_VOICE_ERROR = "voices must each be a voice this service offers"
 _SHARED_CLIENT_ERROR = "workload_client must belong to one app"
 _CONFIG_FILE_UNREADABLE_ERROR = "SPEECH_CONFIG_FILE must name a readable file"
 
@@ -127,10 +140,24 @@ class IdentityConfig(_FileModel):
         return group
 
 
+def _known_voice(name: object) -> VoiceId:
+    # Pydantic's enum error lists every catalogue voice; a fixed message does not.
+    try:
+        return VoiceId(name)
+    except ValueError:
+        raise ValueError(_VOICE_ERROR) from None
+
+
 class AppConfig(_FileModel):
-    """An app the service admits: the client its workload token comes from."""
+    """An app the service admits: its workload client and the voices it may name."""
 
     workload_client: str
+    # TOML yields strings and lists, which strict mode refuses for an enum and a set.
+    voices: Annotated[
+        frozenset[Annotated[VoiceId, BeforeValidator(_known_voice)]],
+        Strict(strict=False),
+        Field(min_length=1),
+    ]
 
 
 class CallerConfig(_FileModel):

@@ -20,12 +20,12 @@ from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
 from speech_runtime_service import __main__
 from speech_runtime_service.__main__ import PrivateSocket
-from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
 from speech_runtime_service.provider_process import ProviderLaunch, ProviderProcess
 from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
-from speech_runtime_service.voices import VoiceId
+from speech_runtime_service.voices import CHATTERBOX_SPEAKING_MODEL, VoiceId
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
 from tests.support.identity_support import valid_callers, write_caller_configuration
 

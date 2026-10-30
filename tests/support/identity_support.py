@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from functools import cache
 from typing import TYPE_CHECKING
@@ -29,14 +29,17 @@ from speech_runtime_service.config import (
     IdentityConfig,
     load_caller_config,
 )
+from speech_runtime_service.voices import VoiceId
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
     from pathlib import Path
 
 ISSUER = "https://identity.test/realm"
 KEY_SET_ADDRESS = "https://identity.test/certs?credential=SENTINEL-KEY-SET-CREDENTIAL"
 APP = "quiz"
+OTHER_APP = "other"
+ALL_VOICES = frozenset(VoiceId)
 KEY_BITS = 2048
 
 
@@ -153,8 +156,18 @@ DEFAULT_KEY = signing_key("key-one")
 MINTING = minting_for(DEFAULT_KEY)
 
 
-def caller_config(**identity: object) -> CallerConfig:
-    """The service configuration that trusts the scenario issuer."""
+OTHER_MINTING = replace(
+    MINTING, client_id="other-client", app_group=f"/apps/{OTHER_APP}"
+)
+
+
+def caller_config(
+    voices: Iterable[VoiceId] = ALL_VOICES, **identity: object
+) -> CallerConfig:
+    """The service configuration that trusts the scenario issuer.
+
+    The one app lists `voices`, by default every catalogue voice.
+    """
     facts = {
         "issuer": MINTING.issuer,
         "jwks_url": KEY_SET_ADDRESS,
@@ -165,7 +178,30 @@ def caller_config(**identity: object) -> CallerConfig:
     } | identity
     return CallerConfig(
         identity=IdentityConfig(**facts),
-        apps={APP: AppConfig(workload_client=MINTING.client_id)},
+        apps={
+            APP: AppConfig(workload_client=MINTING.client_id, voices=frozenset(voices))
+        },
+    )
+
+
+def callers_of_two_apps(
+    quiz_voices: Iterable[VoiceId], other_voices: Iterable[VoiceId]
+) -> SpeechCallers:
+    """Callers on real clocks over `APP` and `OTHER_APP`, each with its own list."""
+    config = caller_config()
+    apps = {
+        APP: AppConfig(
+            workload_client=MINTING.client_id, voices=frozenset(quiz_voices)
+        ),
+        OTHER_APP: AppConfig(
+            workload_client=OTHER_MINTING.client_id, voices=frozenset(other_voices)
+        ),
+    }
+    return SpeechCallers.from_config(
+        config.model_copy(update={"apps": apps}),
+        fetch_key_set=FakeKeySet(DEFAULT_KEY),
+        wall_clock=time.time,
+        monotonic_clock=time.monotonic,
     )
 
 
@@ -193,24 +229,28 @@ def callers_trusting(configuration_path: Path, minting: Minting) -> SpeechCaller
     )
 
 
-def valid_callers() -> SpeechCallers:
-    """Callers on real clocks that accept `valid_headers()`."""
+def valid_callers(voices: Iterable[VoiceId] = ALL_VOICES) -> SpeechCallers:
+    """Callers on real clocks that accept `valid_headers()`; the app lists `voices`."""
     return SpeechCallers.from_config(
-        caller_config(),
+        caller_config(voices),
         fetch_key_set=FakeKeySet(DEFAULT_KEY),
         wall_clock=time.time,
         monotonic_clock=time.monotonic,
     )
 
 
-def valid_pair(clock: Callable[[], float] = time.time) -> TokenPair:
+def valid_pair(
+    clock: Callable[[], float] = time.time, minting: Minting = MINTING
+) -> TokenPair:
     """A workload and a person token the scenario issuer vouches for at `clock()`."""
-    return mint_pair(MINTING, clock)
+    return mint_pair(minting, clock)
 
 
-def valid_headers(clock: Callable[[], float] = time.time) -> dict[str, str]:
+def valid_headers(
+    clock: Callable[[], float] = time.time, minting: Minting = MINTING
+) -> dict[str, str]:
     """The wire headers of a valid pair, without the content type."""
-    pair = valid_pair(clock)
+    pair = valid_pair(clock, minting)
     return speech_request_headers(
         workload_token=pair.workload, person_token=pair.person
     )
@@ -243,13 +283,16 @@ def caller_configuration_text(
     *,
     identity: str = "",
     apps: str | None = None,
+    voices: Iterable[VoiceId] = ALL_VOICES,
 ) -> str:
     """The TOML file that trusts the scenario issuer, as the service reads it.
 
-    `identity` adds lines to the identity table; `apps` replaces the app tables.
+    `identity` adds lines to the identity table; `apps` replaces the app tables;
+    the default app lists `voices`.
     """
     registered = (
         f"[apps.{APP}]\nworkload_client = {json.dumps(MINTING.client_id)}\n"
+        f"voices = {json.dumps([voice.value for voice in voices])}\n"
         if apps is None
         else apps
     )

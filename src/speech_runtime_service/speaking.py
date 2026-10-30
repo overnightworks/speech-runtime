@@ -14,17 +14,17 @@ from speech_runtime_provider_contract import (
     VOXCPM_SAMPLE_RATE,
 )
 
-from speech_runtime_service.config import (
-    CHATTERBOX_SPEAKING_MODEL,
-    DEFAULT_SPEAKING_MODEL,
-)
 from speech_runtime_service.provider_process import (
     ProviderId,
     ProviderLaunch,
     ProviderProcess,
     provider_entrypoint,
 )
-from speech_runtime_service.voices import VoiceId
+from speech_runtime_service.voices import (
+    CHATTERBOX_SPEAKING_MODEL,
+    DEFAULT_SPEAKING_MODEL,
+    VoiceId,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator

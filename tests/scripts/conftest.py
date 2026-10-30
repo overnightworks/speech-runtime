@@ -14,8 +14,13 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def identity(tmp_path: Path) -> Iterator[ProofIdentity]:
-    with proof_identity(tmp_path) as running:
+def proof_voice() -> str:
+    return "piper"
+
+
+@pytest.fixture
+def identity(tmp_path: Path, proof_voice: str) -> Iterator[ProofIdentity]:
+    with proof_identity(tmp_path, proof_voice) as running:
         yield running
 
 

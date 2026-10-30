@@ -186,7 +186,7 @@ All `SPEECH_*`:
 | `SPEECH_STATE_DIRECTORY` | `~/.local/state/speech-runtime` | Private directory containing the durable selected voice |
 | `SPEECH_BUSY_WAIT_SECONDS` | `5.0` | How long a second speech request waits for the one synthesis before it answers 429 `busy`; at least 0, where 0 refuses at once |
 | `SPEECH_MAX_INPUT_CHARACTERS` | `4096` | The longest `input` a speech request may carry; a whole number of at least 1 |
-| `SPEECH_CONFIG_FILE` | none, required | Absolute path of the TOML file that names the issuer, the service group and the apps whose tokens the speak route trusts; the process does not start without it ([`docs/wire.md`](docs/wire.md)) |
+| `SPEECH_CONFIG_FILE` | none, required | Absolute path of the TOML file that names the issuer, the service group, the apps whose tokens the speak route trusts and the voices each app may name; the process does not start without it ([`docs/wire.md`](docs/wire.md)) |
 
 When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 

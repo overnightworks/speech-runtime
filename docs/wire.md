@@ -17,7 +17,7 @@ A JSON object with exactly these fields, all required, all strict JSON types:
 |---|---|
 | `model` | `speech-runtime`. Any other value is refused, so a request naming another model is never answered by this one. |
 | `input` | Text with at least one letter or digit, at most `SPEECH_MAX_INPUT_CHARACTERS` characters (default 4096; the operator may raise it above OpenAI's 4096). |
-| `voice` | The id of the voice that is active and ready: `piper`, `chatterbox`, `qwen3-tts-0.6b`, `voxcpm2` or `nvidia-magpie`. The service speaks with the active voice only; no request switches it. |
+| `voice` | The id of the voice that is active and ready: `piper`, `chatterbox`, `qwen3-tts-0.6b`, `voxcpm2` or `nvidia-magpie`. The voice must be listed for the calling app (`voices` in its configuration) and be the active one. The service speaks with the active voice only; no request switches it. |
 | `response_format` | `wav`. OpenAI defaults an absent field to `mp3`, so it is required here. |
 
 The service speaks German only. There is no `language` field, and any field
@@ -42,7 +42,10 @@ when both tokens are valid and belong together:
   service group (no subgroup of it).
 
 The service checks the headers before it reads the body, and the wait of
-`busy` starts only after the tokens are accepted. Calls an app makes as itself,
+`busy` starts only after the tokens are accepted. A catalogue voice the app does
+not list is refused as `forbidden` after the body checks and before the active
+voice is checked, so the answer never says which voice is active; an unknown
+voice stays `invalid_request`. Calls an app makes as itself,
 without a person, are not offered in version 1.
 
 ## Response
@@ -69,7 +72,7 @@ read `code`.
 | `unsupported_version` | 400 | any method on `/v{n}` or `/v{n}/...` with `n` other than 1 | |
 | `not_found` | 404 | any other path or method under version 1 | |
 | `unauthorized` | 401 | a token is missing, malformed, expired, for another issuer or audience, badly signed, or lacks a subject or a valid group claim | `WWW-Authenticate`: `Bearer` |
-| `forbidden` | 403 | both tokens are valid but do not permit the request: not a workload token, an unregistered app, a workload token that lives too long, tokens of different clients or of one subject, or a person outside the app group or the service group | |
+| `forbidden` | 403 | both tokens are valid but do not permit the request: not a workload token, an unregistered app, a workload token that lives too long, tokens of different clients or of one subject, a person outside the app group or the service group, or a voice the app's configuration does not list (`param` `voice`) | |
 | `invalid_request` | 422 | the body is not a JSON object, a field is missing, unknown or mistyped, a value is not accepted, or `input` is empty, without a letter or digit, or over the limit | |
 | `busy` | 429 | the one synthesis is not free within `SPEECH_BUSY_WAIT_SECONDS` | `Retry-After`: the wait in whole seconds, at least 1 |
 | `unavailable` | 503 | the tokens cannot be checked because the issuer's key set is unreachable and no cached key serves, or the named voice is not the active, ready voice (loading, failed, switched away, or shutting down) | |
@@ -91,8 +94,9 @@ version path (`/v-1/...`, `/vx/...`, `/speak`) gets the app's default 404 with
   `service_group` (a group path such as `/services/speech-service`) and
   `leeway_seconds` (default 0). Each `[apps.<name>]` table, at least one,
   holds `workload_client`, the client id of that app's workload token; a client
-  belongs to one app, and the app group `/apps/<name>` follows from the name.
-  Unknown keys are refused.
+  belongs to one app, and the app group `/apps/<name>` follows from the name; and
+  `voices`, required, at least one catalogue id: the voices that app may name.
+  An unknown id is refused at start. Unknown keys are refused.
 
 ## Not offered
 

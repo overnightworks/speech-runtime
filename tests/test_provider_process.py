@@ -31,7 +31,7 @@ from speech_runtime_provider_contract import (
     write_frame,
 )
 
-from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL, Settings
+from speech_runtime_service.config import Settings
 from speech_runtime_service.provider_process import (
     ProviderFailedError,
     ProviderLaunch,
@@ -42,7 +42,12 @@ from speech_runtime_service.provider_process import (
 )
 from speech_runtime_service.selection import VoiceSelectionStore
 from speech_runtime_service.service import Runtime, RuntimeDependencies
-from speech_runtime_service.voices import VoiceId, VoiceLoadOutcome, VoiceRecoveryKind
+from speech_runtime_service.voices import (
+    CHATTERBOX_SPEAKING_MODEL,
+    VoiceId,
+    VoiceLoadOutcome,
+    VoiceRecoveryKind,
+)
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
 from tests.support.worker_support import assert_reaped, closed_provider, observed
 
