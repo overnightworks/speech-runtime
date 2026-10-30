@@ -1,1 +1,11 @@
 body_contract = "block"
+dependency_paths = [
+  ".github/workflows/",
+  "pyproject.toml",
+  "uv.lock",
+  "packages/client/pyproject.toml",
+  "providers/chatterbox/pyproject.toml",
+  "providers/chatterbox/uv.lock",
+  "providers/magpie/pyproject.toml",
+  "providers/magpie/uv.lock",
+]
