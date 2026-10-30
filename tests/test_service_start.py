@@ -63,8 +63,10 @@ def test_a_voice_whose_artifacts_are_missing_stops_the_start_before_building_it(
 
 
 def test_a_runtime_without_an_engine_factory_refuses_to_start() -> None:
+    runtime = Runtime(None)
+
     with pytest.raises(RuntimeError, match="no engine factory"):
-        Runtime(None).load()
+        runtime.load()
 
 
 def test_a_voice_that_fails_to_load_names_its_model_and_is_closed() -> None:
