@@ -19,7 +19,7 @@ dependencies = [
 speech-runtime-magpie-worker = "speech_runtime_magpie.__main__:main"
 
 [tool.uv]
-# nemo-text-processing 1.2.0 pins pynini==2.1.6.post1, which has no cp314 wheel
+# nemo-text-processing 1.2.0 pins pynini==2.1.6.post1 (no cp314 wheel); drop this once it relaxes that pin
 override-dependencies = ["pynini==2.1.7"]
 
 [tool.uv.sources]
