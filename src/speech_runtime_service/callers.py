@@ -49,6 +49,12 @@ _REFUSAL_CODE: Final[dict[CallerRefusalReason, RefusalCode]] = {
     CallerRefusalReason.SAME_SUBJECT: RefusalCode.FORBIDDEN,
     CallerRefusalReason.NOT_A_MEMBER: RefusalCode.FORBIDDEN,
 }
+_UNMAPPED_REASONS: Final = set(CallerRefusalReason) - _REFUSAL_CODE.keys()
+if _UNMAPPED_REASONS:
+    _UNMAPPED_MESSAGE = "no refusal code for " + ", ".join(
+        sorted(reason.name for reason in _UNMAPPED_REASONS)
+    )
+    raise ImportError(_UNMAPPED_MESSAGE)
 
 
 class SpeechCallers:

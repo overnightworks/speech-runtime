@@ -38,8 +38,8 @@ flowchart LR
   webauth against the issuer's key set (signature, issuer, audience, lifetime);
   the workload token must carry the realm role, come from a registered app's
   client and live at most 300 seconds; the person's token must come from the
-  same client, name another subject and belong to the app's group and exactly
-  to the configured service group. A call an app makes as itself is refused.
+  same client, name another subject, belong to the app's group or a group below
+  it and belong exactly to the configured service group. A call an app makes as itself is refused.
 - Which issuer, group and apps count is configuration
   (`SPEECH_CONFIG_FILE`); capabilities per app are not yet checked.
 - No token, subject or key-set address reaches a log, an error or a repr.

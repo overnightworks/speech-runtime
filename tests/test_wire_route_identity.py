@@ -143,17 +143,8 @@ def test_basic_authorization_counts_as_no_person_token() -> None:
     _answers(response, UNAUTHORIZED)
 
 
-@pytest.mark.parametrize(
-    ("sent", "expected"),
-    [
-        ("workload only", UNAUTHORIZED),
-        ("person only", UNAUTHORIZED),
-        ("neither", UNAUTHORIZED),
-    ],
-)
-def test_a_missing_token_is_unauthorized(
-    sent: str, expected: tuple[int, RefusalCode]
-) -> None:
+@pytest.mark.parametrize("sent", ["workload only", "person only", "neither"])
+def test_a_missing_token_is_unauthorized(sent: str) -> None:
     issuer = Issuer()
     workload, person = issuer.tokens()
     tokens = {
@@ -162,7 +153,7 @@ def test_a_missing_token_is_unauthorized(
         "neither": (None, None),
     }[sent]
 
-    _answers(issuer.speak(*tokens), expected)
+    _answers(issuer.speak(*tokens), UNAUTHORIZED)
 
 
 def _expired(token: str, clocks: Clocks) -> str:
