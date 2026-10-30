@@ -163,8 +163,12 @@ def test_term_stops_the_speech_server_through_its_teardown(tmp_path: Path) -> No
         wait_ready=lambda _socket_path: {},
     )
 
-    with pytest.raises(SystemExit), running:
-        os.kill(os.getpid(), signal.SIGTERM)
+    def term_while_running() -> None:
+        with running:
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    with pytest.raises(SystemExit):
+        term_while_running()
 
     server.terminate.assert_called_once_with()
 
