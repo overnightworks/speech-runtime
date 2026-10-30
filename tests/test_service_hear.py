@@ -163,8 +163,10 @@ def test_hear_failure_whose_close_also_fails_leaves_the_text_out_of_the_chain() 
         "subprotocols": [],
     }
 
+    session = asyncio.wait_for(app(scope, receive, send), timeout=5)
+
     with pytest.raises(_CloseSendError) as raised:
-        asyncio.run(asyncio.wait_for(app(scope, receive, send), timeout=5))
+        asyncio.run(session)
 
     assert _HEARD not in "".join(traceback.format_exception(raised.value))
 
