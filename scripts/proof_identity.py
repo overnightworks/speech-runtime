@@ -34,6 +34,7 @@ KEY_BITS: Final = 2048
 WORKLOAD_SECONDS: Final = 300
 PERSON_SECONDS: Final = 300
 CERTIFICATE_DAYS: Final = 1
+HANDSHAKE_TIMEOUT_SECONDS: Final = 5
 ALGORITHM: Final = "RS256"
 OWNER_ONLY_FILE: Final = 0o600
 OWNER_ONLY_DIRECTORY: Final = 0o700
@@ -150,6 +151,8 @@ def _key_server(
     key_set: bytes, certificate_path: Path, key_path: Path
 ) -> http.server.ThreadingHTTPServer:
     class Handler(http.server.BaseHTTPRequestHandler):
+        timeout = HANDSHAKE_TIMEOUT_SECONDS
+
         def do_GET(self) -> None:
             self.send_response(http.HTTPStatus.OK)
             self.send_header("Content-Type", "application/json")
@@ -163,8 +166,13 @@ def _key_server(
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(certificate_path, key_path)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    # The handshake runs on the request thread under its timeout, so a client
+    # that withholds it cannot block the accept loop or the shutdown.
+    server.socket = context.wrap_socket(
+        server.socket, server_side=True, do_handshake_on_connect=False
+    )
     return server
 
 

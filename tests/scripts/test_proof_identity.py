@@ -9,6 +9,7 @@ import stat
 import time
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import TYPE_CHECKING
 
@@ -100,11 +101,22 @@ def test_the_key_set_fetch_fails_on_the_certificate_without_the_proofs_ca(
     identity: ProofIdentity, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    context = ssl.create_default_context()
 
     with pytest.raises(urllib.error.URLError) as failure:
-        _fetch_key_set(identity, ssl.create_default_context())
+        _fetch_key_set(identity, context)
 
     assert isinstance(failure.value.reason, ssl.SSLCertVerificationError)
+
+
+def test_a_client_withholding_the_tls_handshake_does_not_block_the_key_set(
+    identity: ProofIdentity,
+) -> None:
+    address = urllib.parse.urlsplit(identity.jwks_url)
+    with socket.create_connection((address.hostname, address.port)):
+        key = _fetch_key_set(identity, _trusting_only(identity))
+
+    assert key.key_id
 
 
 def test_the_identity_directory_and_every_file_in_it_are_private(
