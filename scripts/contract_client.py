@@ -9,6 +9,7 @@ types of `speech_runtime_client`.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import contextlib
 import http.client
@@ -21,11 +22,16 @@ import time
 from array import array
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from websockets.asyncio.client import ClientConnection, unix_connect
 
-from speech_runtime_client.wire import SPEECH_PATH, speech_request_body
+from proof_identity import Minting, load_minting, mint_pair
+from speech_runtime_client.wire import (
+    SPEECH_PATH,
+    speech_request_body,
+    speech_request_headers,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -61,12 +67,17 @@ class _UnixHttpConnection(http.client.HTTPConnection):
         self.sock.connect(str(self._path))
 
 
+class _Post(NamedTuple):
+    body: bytes
+    headers: dict[str, str]
+
+
 def _request(
-    path: Path, method: str, target: str, body: bytes | None, timeout: float
+    path: Path, method: str, target: str, post: _Post | None, timeout: float
 ) -> bytes:
     connection = _UnixHttpConnection(path, timeout)
     try:
-        connection.request(method, target, body, {"Content-Type": "application/json"})
+        connection.request(method, target, *(post or (None, {})))
         response = connection.getresponse()
         data = response.read()
     except http.client.IncompleteRead:
@@ -121,9 +132,18 @@ def _resample(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
     return out.tobytes()
 
 
-def speak(path: Path, text: str, voice: str) -> bytes:
-    """POST German text to the speech socket and return the whole WAV bytes."""
-    return _request(path, "POST", SPEECH_PATH, speech_request_body(text, voice), 60)
+def speak(path: Path, text: str, voice: str, minting: Minting) -> bytes:
+    """POST German text to the speech socket and return the whole WAV bytes.
+
+    Each call mints a fresh pair of tokens, so a long run never presents an
+    expired one.
+    """
+    pair = mint_pair(minting)
+    headers = speech_request_headers(
+        workload_token=pair.workload, person_token=pair.person
+    )
+    post = _Post(speech_request_body(text, voice), headers)
+    return _request(path, "POST", SPEECH_PATH, post, 60)
 
 
 def _rms(pcm: bytes) -> float:
@@ -372,11 +392,11 @@ async def _measure_utterance(
     )
 
 
-async def _run_measure(path: Path, voice: str) -> None:
+async def _run_measure(path: Path, voice: str, minting: Minting) -> None:
     """Repeat the first sentence on one socket and print what each repetition cost."""
     health = get_json(path, "/health")
     sample_rate = int(health["sample_rate"])
-    rate, pcm = _pcm_from_wav(speak(path, SENTENCE, voice))
+    rate, pcm = _pcm_from_wav(speak(path, SENTENCE, voice, minting))
     pcm = _resample(pcm, rate, sample_rate)
     repetitions: list[Repetition] = []
     async with unix_connect(
@@ -401,7 +421,7 @@ async def _run_measure(path: Path, voice: str) -> None:
     print("measure_summary", json.dumps(summarize(repetitions), sort_keys=True))
 
 
-async def _run(path: Path, voice: str) -> None:
+async def _run(path: Path, voice: str, minting: Minting) -> None:
     health = get_json(path, "/health")
     print("contract_health", json.dumps(health, sort_keys=True))
     speaking = health["speaking"]
@@ -414,7 +434,7 @@ async def _run(path: Path, voice: str) -> None:
         raise SystemExit(message)
     sample_rate = int(health["sample_rate"])
 
-    wav = speak(path, SENTENCE, voice)
+    wav = speak(path, SENTENCE, voice, minting)
     rate, pcm = _pcm_from_wav(wav)
     pcm = _resample(pcm, rate, sample_rate)
     print(
@@ -456,7 +476,7 @@ async def _run(path: Path, voice: str) -> None:
             f"t={time.perf_counter() - first_started:.3f}s",
             json.dumps(first_final, ensure_ascii=False),
         )
-        second_wav = speak(path, SECOND, voice)
+        second_wav = speak(path, SECOND, voice, minting)
         rate2, pcm2 = _pcm_from_wav(second_wav)
         pcm2 = _resample(pcm2, rate2, sample_rate)
         second_started = time.perf_counter()
@@ -478,16 +498,22 @@ async def _run(path: Path, voice: str) -> None:
         )
 
 
+def parse_arguments(arguments: list[str]) -> argparse.Namespace:
+    """Read the command line: the socket, the voice and the minting file's path."""
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--measure", action="store_true")
+    parser.add_argument("--minting-file", type=Path, required=True)
+    parser.add_argument("socket", type=Path)
+    parser.add_argument("voice")
+    return parser.parse_args(arguments)
+
+
 def main() -> None:
     """Drive health, speak, and hear against the speech socket path."""
     _must_not_have_imported_speech()
-    arguments = sys.argv[1:]
-    measure = arguments[:1] == ["--measure"]
-    if len(arguments) != 2 + measure:
-        message = "usage: contract_client.py [--measure] SOCKET_PATH VOICE"
-        raise SystemExit(message)
-    run = _run_measure if measure else _run
-    asyncio.run(run(Path(arguments[-2]), arguments[-1]))
+    options = parse_arguments(sys.argv[1:])
+    run = _run_measure if options.measure else _run
+    asyncio.run(run(options.socket, options.voice, load_minting(options.minting_file)))
 
 
 if __name__ == "__main__":

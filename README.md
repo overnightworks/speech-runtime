@@ -226,6 +226,9 @@ large-v3) pass through; on `cpu` the card is hidden from speech with an empty
 uv run python scripts/prove_speech.py
 ```
 
+The proof serves its own throwaway key set over local HTTPS and speaks with
+fresh tokens minted from it; nothing of it outlives the run.
+
 Every run reports load to ready, the card's compute pids at health ready and
 the peak RSS of the speech process. `--measure` only swaps the contract markers
 for the hearing measurement behind "CPU" (five repetitions, two final timings,
