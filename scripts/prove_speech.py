@@ -69,8 +69,9 @@ FLOCK_COMMAND_UNAVAILABLE_STATUS = 69
 # lock form; together they stay within 1830 s. The grace covers the teardown
 # `speech_server` runs after TERM: terminate, wait up to 10 s, then kill and wait
 # up to 5 s, so 15 s at worst, with the providers stopped through the server.
-# The proof speaks through CPU Piper only; it needs a small fraction of the cap,
-# and the server exits within the grace after the proof body ends.
+# The proof speaks through the model named by SPEECH_SPEAKING_MODEL (Chatterbox
+# by default). A CPU Piper run needs only a small fraction of the cap, and the
+# server exits within the grace after the proof body ends.
 CAP_SECONDS = 1800
 KILL_GRACE_SECONDS = 30
 MEASURE_REPETITIONS = 5
