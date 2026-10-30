@@ -315,10 +315,12 @@ def _speech_server(
         text=True,
     )
     heard: list[str] = []
+    proof_failed = True
     try:
         started = time.monotonic()
         health = _wait_ready(socket_path)
         yield _RunningSpeech(server, health, time.monotonic() - started, heard)
+        proof_failed = False
     finally:
         server.terminate()
         try:
@@ -331,7 +333,11 @@ def _speech_server(
             print("server_log_tail:")
             print(log[-4000:])
         print("server_exit", server.returncode)
-        _require_log_without_text(log, [SENTENCE, ENGLISH, SECOND, *heard])
+        texts = [SENTENCE, ENGLISH, SECOND, *heard]
+        if proof_failed:
+            _report_log_text(log, texts)
+        else:
+            _require_log_without_text(log, texts)
 
 
 def heard_texts(contract_output: str) -> list[str]:
@@ -348,10 +354,23 @@ def spoken_or_heard_in_log(log: str, texts: Iterable[str]) -> list[str]:
     return [text for text in texts if text.strip() and text in log]
 
 
-def _require_log_without_text(log: str, texts: Iterable[str]) -> None:
+def _leak_message(log: str, texts: Iterable[str]) -> str | None:
     leaked = spoken_or_heard_in_log(log, texts)
     if leaked:
-        message = f"the service log holds {len(leaked)} spoken or heard text(s)"
+        return f"the service log holds {len(leaked)} spoken or heard text(s)"
+    return None
+
+
+def _report_log_text(log: str, texts: Iterable[str]) -> None:
+    """Print a leak without hiding the failure that is already propagating."""
+    message = _leak_message(log, texts)
+    if message:
+        print(message)
+
+
+def _require_log_without_text(log: str, texts: Iterable[str]) -> None:
+    message = _leak_message(log, texts)
+    if message:
         raise SystemExit(message)
 
 

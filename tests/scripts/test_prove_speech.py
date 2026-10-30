@@ -2,29 +2,13 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-from pathlib import Path
 
 import pytest
 
+from tests.support.script_support import script_module
 
-def _prove_speech() -> object:
-    path = Path(__file__).resolve().parents[2] / "scripts" / "prove_speech.py"
-    spec = importlib.util.spec_from_file_location("prove_speech", path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["prove_speech"] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.modules.pop("prove_speech")
-    return module
-
-
-PROVE = _prove_speech()
+PROVE = script_module("prove_speech")
 CONTRACT_OUTPUT = "\n".join(
     [
         "contract_health {}",

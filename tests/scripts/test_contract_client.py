@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
-import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -14,27 +11,10 @@ from speech_runtime_service.pcm import pcm_from_wav
 from speech_runtime_service.service import Runtime
 from tests.support.fakes_support import SPEAK_SAMPLE_RATE, FakeHearing, FakeSpeaking
 from tests.support.private_server_support import serving_privately
+from tests.support.script_support import script_module
 
-if TYPE_CHECKING:
-    from types import ModuleType
-
-
-def _script(name: str) -> ModuleType:
-    path = Path(__file__).resolve().parents[2] / "scripts" / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.modules.pop(name)
-    return module
-
-
-CLIENT = _script("contract_client")
-PROVE = _script("prove_speech")
+CLIENT = script_module("contract_client")
+PROVE = script_module("prove_speech")
 SAMPLE_RATE = 16_000
 SENTENCE_START = "Die Kamera zeigt den Vortragenden"
 
