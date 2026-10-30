@@ -22,7 +22,11 @@ from tests.support.identity_support import (
     caller_configuration_text,
     write_caller_configuration,
 )
-from tests.support.tcp_server_support import free_loopback_port, listens_on
+from tests.support.tcp_server_support import (
+    answers_http,
+    free_loopback_port,
+    listens_on,
+)
 
 if TYPE_CHECKING:
     import socket
@@ -68,7 +72,7 @@ def test_sigterm_stops_the_real_server_and_exits_zero_with_nothing_listening(
     ) as server:
         try:
             deadline = time.monotonic() + 30
-            while not listens_on(port):
+            while not answers_http(port):
                 assert server.poll() is None
                 assert time.monotonic() < deadline
                 time.sleep(0.05)
@@ -138,11 +142,12 @@ def test_help_prints_usage_and_exits_zero_without_loading_settings(
 
 
 @pytest.mark.parametrize("command", _ENTRY_POINTS, ids=["module", "console script"])
+@pytest.mark.parametrize("argument", ["--serve-faster", "--he"])
 def test_an_unknown_argument_is_a_usage_error_without_starting(
-    command: list[str],
+    command: list[str], argument: str
 ) -> None:
     finished = subprocess.run(
-        [*command, "--serve-faster"],
+        [*command, argument],
         capture_output=True,
         text=True,
         timeout=60,

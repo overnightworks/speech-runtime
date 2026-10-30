@@ -49,6 +49,7 @@ def main() -> None:
 def _argument_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(
         prog="speech-runtime-service",
+        allow_abbrev=False,
         description=_USAGE_DESCRIPTION,
         epilog=_USAGE_EPILOG,
     )

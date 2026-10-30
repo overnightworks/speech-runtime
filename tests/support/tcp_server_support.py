@@ -1,6 +1,7 @@
 """A real TCP speech server on a free local port for tests."""
 
 import asyncio
+import http.client
 import socket
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -35,6 +36,19 @@ def listens_on(port: int) -> bool:
     """Whether a TCP connection to the loopback port is accepted."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         return probe.connect_ex((_LOOPBACK, port)) == 0
+
+
+def answers_http(port: int) -> bool:
+    """Whether the loopback port answers an HTTP request with any status."""
+    connection = http.client.HTTPConnection(_LOOPBACK, port, timeout=5)
+    try:
+        connection.request("GET", "/health")
+        connection.getresponse()
+    except OSError, http.client.HTTPException:
+        return False
+    finally:
+        connection.close()
+    return True
 
 
 @dataclass(frozen=True, slots=True)
