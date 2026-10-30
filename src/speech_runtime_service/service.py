@@ -1,4 +1,4 @@
-"""HTTP contract: health, a streaming speak, and a socket that hears."""
+"""HTTP contract: health, the runtime that speaks, and a socket that hears."""
 
 from __future__ import annotations
 
@@ -7,13 +7,11 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated, Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from speech_runtime_provider_contract import QWEN_MODEL_ID
 from starlette.status import (
-    HTTP_503_SERVICE_UNAVAILABLE,
     WS_1009_MESSAGE_TOO_BIG,
     WS_1011_INTERNAL_ERROR,
     WS_1013_TRY_AGAIN_LATER,
@@ -41,6 +39,7 @@ from speech_runtime_service.selection import (
     VoiceSelectionStore,
 )
 from speech_runtime_service.speaking import speaking_for_voice
+from speech_runtime_service.synthesis_gate import Lease, SynthesisGate
 from speech_runtime_service.voices import (
     VoiceDownloadOutcome,
     VoiceId,
@@ -53,7 +52,6 @@ from speech_runtime_service.voices import (
     qwen_worker_is_usable,
     statuses,
 )
-from speech_runtime_service.wav_response import ClosingWavResponse
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -62,16 +60,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SpeakText = Annotated[str, Field(min_length=1)]
 HEARING_FAILED_REASON = "hearing failed"
 FRAME_TOO_LARGE_REASON = "frame too large"
-
-
-class SpeakRequest(BaseModel):
-    """One sentence to speak."""
-
-    text: SpeakText
-    language: str
 
 
 class SpeakingEngine(Protocol):
@@ -150,13 +140,13 @@ class Runtime:
             self._engines[dependencies.default_voice] = speaking
         self._state_changed = threading.Condition(self._state_lock)
         self._transition_guard = threading.Lock()
-        self._synthesis_gate = threading.Lock()
+        self.synthesis_gate = SynthesisGate()
         self._fatal_callback: Callable[[], None] = lambda: None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Runtime:
         """Build the production engines from the environment."""
-        default_voice = _voice_from_model(settings.speaking_model)
+        default_voice = voice_for_model(settings.speaking_model)
         return cls(
             None,
             hearing_from_settings(settings),
@@ -191,7 +181,7 @@ class Runtime:
 
     def health(self) -> dict[str, object]:
         """The contract body for GET /health."""
-        self._reconcile_failed_active()
+        self.reconcile_failed_active()
         return {
             "speaking": self._speaking_health(),
             "hearing": {
@@ -204,7 +194,7 @@ class Runtime:
 
     def snapshot(self, settings: Settings) -> VoiceSnapshot:
         """Read all public row state while holding one short state lock."""
-        self._reconcile_failed_active()
+        self.reconcile_failed_active()
         with self._state_lock:
             speaking = self.speaking
             selected = self._selected
@@ -256,9 +246,13 @@ class Runtime:
     def _may_start_qwen_download(self) -> bool:
         return not self._stopping and not self.loading
 
-    def capture_speaking(self) -> _VoiceAdmission | None:
-        """Capture one stable engine for an entire streaming response."""
-        self._reconcile_failed_active()
+    def capture_speaking(self) -> VoiceAdmission | None:
+        """Capture one stable engine for an entire streaming response.
+
+        It takes only the state lock, which every holder keeps briefly, so a
+        caller on the event loop is never held up by a failed engine's close;
+        `reconcile_failed_active` does that, after the refusal.
+        """
         with self._state_lock:
             speaking = self.speaking
             if self.loading or self._stopping or speaking is None or not speaking.ready:
@@ -267,7 +261,7 @@ class Runtime:
 
     def preacquire_sample(self, voice: VoiceId) -> VoiceSample | None:
         """Reserve one verified active voice without delaying an ongoing talk."""
-        self._reconcile_failed_active()
+        self.reconcile_failed_active()
         with self._state_lock:
             speaking = self.speaking
             if (
@@ -279,27 +273,22 @@ class Runtime:
             ):
                 return None
             admission = self._admit_locked(speaking)
-        if not self._synthesis_gate.acquire(blocking=False):
+        lease = self.synthesis_gate.try_acquire()
+        if lease is None:
             admission.close()
             raise SynthesisBusyError from None
-        lease = _Lease(self._synthesis_gate.release)
         return VoiceSample(admission, lease)
 
-    def _admit_locked(self, speaking: SpeakingEngine) -> _VoiceAdmission:
+    def _admit_locked(self, speaking: SpeakingEngine) -> VoiceAdmission:
         self._admitted += 1
-        lifetime = _Lease(self._release_admission)
-        return _VoiceAdmission(speaking, speaking.sample_rate, lifetime)
+        lifetime = Lease(self._release_admission)
+        return VoiceAdmission(speaking, self._selected, speaking.sample_rate, lifetime)
 
     def _release_admission(self) -> None:
         with self._state_changed:
             self._admitted -= 1
             if self._admitted == 0:
                 self._state_changed.notify_all()
-
-    def acquire_synthesis(self) -> _Lease:
-        """Wait for the one request-synthesis owner before generating PCM."""
-        self._synthesis_gate.acquire()
-        return _Lease(self._synthesis_gate.release)
 
     def begin_shutdown(self) -> None:
         """Refuse new work before the server starts its own shutdown."""
@@ -527,7 +516,8 @@ class Runtime:
             )
         return VoiceLoadOutcome.NOT_ACTIVATED
 
-    def _reconcile_failed_active(self) -> None:
+    def reconcile_failed_active(self) -> None:
+        """Close an active engine that stopped being ready, and record the failure."""
         if not self._transition_guard.acquire(blocking=False):
             return
         try:
@@ -587,7 +577,8 @@ def failed_to_load_message(which: str, model: str) -> str:
     return f"{which} model {model} failed to load"
 
 
-def _voice_from_model(model: str) -> VoiceId | None:
+def voice_for_model(model: str) -> VoiceId | None:
+    """The voice whose speaking model is `model`, if it is a baseline."""
     if model == DEFAULT_SPEAKING_MODEL:
         return VoiceId.PIPER
     if model == CHATTERBOX_SPEAKING_MODEL:
@@ -625,27 +616,17 @@ class SynthesisBusyError(RuntimeError):
     """The active voice is already generating a request."""
 
 
-class _Lease:
-    def __init__(self, release: Callable[[], None]) -> None:
-        self._release = release
-        self._closed = False
-        self._guard = threading.Lock()
-
-    def close(self) -> None:
-        with self._guard:
-            if self._closed:
-                return
-            self._closed = True
-            self._release()
-
-
 @dataclass(frozen=True, slots=True)
-class _VoiceAdmission:
+class VoiceAdmission:
+    """One captured engine, the voice it speaks for and the lifetime that holds it."""
+
     speaking: SpeakingEngine
+    voice: VoiceId | None
     sample_rate: int
-    lifetime: _Lease
+    lifetime: Lease
 
     def close(self) -> None:
+        """Release the hold on the captured engine."""
         self.lifetime.close()
 
 
@@ -653,13 +634,13 @@ class _VoiceAdmission:
 class VoiceSample:
     """One close-idempotent public sample lifetime."""
 
-    admission: _VoiceAdmission
-    lease: _Lease
+    admission: VoiceAdmission
+    lease: Lease
 
     def wav_chunks(self, text: str, language: str) -> Iterator[bytes]:
         """Yield one WAV from the captured voice."""
         engine = self.admission.speaking
-        return _wav_chunks(engine, text, language, self.admission.sample_rate)
+        return wav_chunks(engine, text, language, self.admission.sample_rate)
 
     def close(self) -> None:
         """Release its admission and synthesis lease."""
@@ -676,12 +657,13 @@ def _load_or_raise(which: str, model: str, load: Callable[[], None]) -> None:
         raise RuntimeError(message) from None
 
 
-def _wav_chunks(
+def wav_chunks(
     speaking: SpeakingEngine,
     text: str,
     language: str,
     sample_rate: int | None = None,
 ) -> Iterator[bytes]:
+    """One WAV from `speaking`: its header leaves with the first PCM chunk."""
     first = True
     with PayloadFreeFailure(logger, "speaking failed", reraise_as=SpeakingFailedError):
         synthesis = speaking.pcm_chunks(text, language)
@@ -696,37 +678,12 @@ def _wav_chunks(
             synthesis.close()
 
 
-def _public_wav_chunks(
-    runtime: Runtime, admission: _VoiceAdmission, text: str, language: str
-) -> Iterator[bytes]:
-    """Acquire Runtime's gate only when a returned public stream first runs."""
-    lease = runtime.acquire_synthesis()
-    try:
-        yield from _wav_chunks(
-            admission.speaking, text, language, admission.sample_rate
-        )
-    finally:
-        lease.close()
-
-
 def mount_speech_routes(app: FastAPI, runtime: Runtime) -> None:
-    """Mount /health, /speak and /hear over the one runtime."""
+    """Mount /health and /hear over the one runtime."""
 
     @app.get("/health")
     def health() -> dict[str, object]:
         return runtime.health()
-
-    @app.post("/speak")
-    def speak(body: SpeakRequest) -> ClosingWavResponse:
-        admitted = runtime.capture_speaking()
-        if admitted is None:
-            raise HTTPException(
-                status_code=HTTP_503_SERVICE_UNAVAILABLE,
-                detail="speaking model is not ready",
-            )
-        return ClosingWavResponse(
-            _public_wav_chunks(runtime, admitted, body.text, body.language), admitted
-        )
 
     @app.websocket("/hear")
     async def hear(websocket: WebSocket, language: str = "de") -> None:

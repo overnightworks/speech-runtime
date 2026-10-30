@@ -3,7 +3,6 @@
 import asyncio
 import builtins
 import importlib
-import json
 import os
 import sys
 import threading
@@ -45,6 +44,7 @@ from speech_runtime_service.voices import (
 from tests.support.fakes_support import FakeHearing, FakeSpeaking
 from tests.support.speak_support import (
     ASGI_TIMEOUT_SECONDS,
+    speak_body,
     speak_once,
     speak_scope,
     wav_body,
@@ -425,8 +425,8 @@ def test_magpie_catalogue_and_factory_import_no_provider_packages(
                 setattr(host, name, value)
 
 
-async def _disconnect_after_child_receives_request(
-    app: FastAPI, request_ids: Path, expected_request_count: int
+async def _disconnect_after_request_reaches_child(
+    app: FastAPI, voice: VoiceId, request_ids: Path
 ) -> list[dict[str, object]]:
     messages: list[dict[str, object]] = []
     sent_body = False
@@ -442,7 +442,7 @@ async def _disconnect_after_child_receives_request(
             sent_body = True
             return {
                 "type": "http.request",
-                "body": json.dumps({"text": "wait-cancel", "language": "de"}).encode(),
+                "body": speak_body(voice.value, "wait-cancel"),
                 "more_body": False,
             }
         await disconnect.wait()
@@ -459,9 +459,7 @@ async def _disconnect_after_child_receives_request(
                 await never.wait()
 
     call = asyncio.create_task(app(speak_scope(), receive, send))
-    await asyncio.to_thread(
-        _wait_for_request_count, request_ids, expected_request_count
-    )
+    await asyncio.to_thread(_wait_for_request_count, request_ids, 3)
     await asyncio.wait_for(pcm_sent.wait(), timeout=ASGI_TIMEOUT_SECONDS)
     disconnect.set()
     await asyncio.wait_for(delivered.wait(), timeout=ASGI_TIMEOUT_SECONDS)
@@ -533,12 +531,12 @@ def test_voxcpm_load_restore_samples_and_public_disconnect_cancel_the_child(
         public = create_control_app(settings, restored)
         request_ids = cache / "request-ids"
         disconnected = asyncio.run(
-            _disconnect_after_child_receives_request(public, request_ids, 3)
+            _disconnect_after_request_reaches_child(public, VoiceId.VOXCPM, request_ids)
         )
         assert any(message["type"] == "http.response.start" for message in disconnected)
         assert (cache / "cancel-observed").read_text().splitlines() == ["1"]
 
-        later = asyncio.run(speak_once(public))
+        later = asyncio.run(speak_once(public, VoiceId.VOXCPM.value))
         rate, pcm = pcm_from_wav(wav_body(later))
         assert rate == VOXCPM_SAMPLE_RATE
         assert pcm == b"\x00\x01"
@@ -599,12 +597,12 @@ def test_magpie_load_restore_samples_public_speech_and_deselect_reap(
         public = create_control_app(settings, restored)
         request_ids = cache / "request-ids"
         disconnected = asyncio.run(
-            _disconnect_after_child_receives_request(public, request_ids, 3)
+            _disconnect_after_request_reaches_child(public, VoiceId.MAGPIE, request_ids)
         )
         assert any(message["type"] == "http.response.start" for message in disconnected)
         assert (cache / "cancel-observed").read_text().splitlines() == ["1"]
 
-        later = asyncio.run(speak_once(public))
+        later = asyncio.run(speak_once(public, VoiceId.MAGPIE.value))
         rate, pcm = pcm_from_wav(wav_body(later))
         assert rate == MAGPIE_SAMPLE_RATE
         assert pcm == b"\x00\x01"

@@ -4,18 +4,25 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from speech_runtime_service.pcm import pcm_from_wav
 from speech_runtime_service.service import Runtime
+from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import SPEAK_SAMPLE_RATE, FakeHearing, FakeSpeaking
 from tests.support.private_server_support import serving_privately
 from tests.support.script_support import script_module
+from tests.support.speak_support import FailingSpeaking
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 CLIENT = script_module("contract_client")
 PROVE = script_module("prove_speech")
 SAMPLE_RATE = 16_000
+PIPER = VoiceId.PIPER.value
 SENTENCE_START = "Die Kamera zeigt den Vortragenden"
 
 
@@ -45,11 +52,12 @@ def test_both_proof_scripts_reach_a_running_speech_over_its_socket(
             return (
                 await asyncio.to_thread(CLIENT.get_json, server.path, "/health"),
                 await asyncio.to_thread(PROVE.get_json, server.path, "/health"),
-                await asyncio.to_thread(CLIENT.speak, server.path, "Hallo"),
+                await asyncio.to_thread(CLIENT.speak, server.path, "Hallo", PIPER),
                 await asyncio.to_thread(
                     PROVE.speak_measured,
                     server.path,
                     "Hallo",
+                    PIPER,
                 ),
             )
 
@@ -265,3 +273,20 @@ def test_prove_reads_measure_as_a_flag() -> None:
     """#515 Change: the CPU measurement is chosen by the --measure flag."""
     assert PROVE.parse_arguments(["--measure"]).measure is True
     assert PROVE.parse_arguments([]).measure is False
+
+
+@pytest.mark.parametrize("chunks_before_failing", [0, 1])
+@pytest.mark.parametrize("speak", [CLIENT.speak, PROVE.speak_measured])
+def test_a_proof_client_rejects_a_body_the_service_aborted(
+    tmp_path: Path,
+    speak: Callable[[Path, str, str], object],
+    chunks_before_failing: int,
+) -> None:
+    async def scenario() -> None:
+        voice = FailingSpeaking(chunks_before_failing=chunks_before_failing)
+        runtime = Runtime(voice, FakeHearing(), memory_probe=lambda: 0)
+        async with serving_privately(tmp_path, runtime) as server:
+            with pytest.raises(SystemExit):
+                await asyncio.to_thread(speak, server.path, "Hallo", PIPER)
+
+    asyncio.run(scenario())

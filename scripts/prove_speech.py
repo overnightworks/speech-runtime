@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import http.client
 import json
 import logging
 import os
@@ -31,9 +32,11 @@ from typing import TYPE_CHECKING, TextIO
 import httpx2
 from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
+from speech_runtime_client.wire import SPEECH_PATH, speech_request_body
 from speech_runtime_service.config import CHATTERBOX_SPEAKING_MODEL
 from speech_runtime_service.cuda_libs import cuda_library_dirs
 from speech_runtime_service.pcm import BYTES_PER_SAMPLE
+from speech_runtime_service.service import voice_for_model
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -42,13 +45,11 @@ SENTENCE = (
     "Die Kamera zeigt den Vortragenden, während im Hintergrund "
     "die nächste Folie automatisch vorbereitet wird."
 )
-ENGLISH = (
-    "The camera shows the presenter while the next slide is "
-    "automatically prepared in the background."
-)
 SECOND = "Die nächste Folie bitte."
 LOCK_PATH = Path("/tmp/probe-stack.lock")  # noqa: S108 - the one machine-wide probe lock must keep this exact path whatever TMPDIR says
 MEASURE_REPETITIONS = 5
+SPEAK_TIMEOUT_SECONDS = 120
+CONCURRENT_EXTRA_WAIT_SECONDS = 8.0
 MEASURE_FLAG = {False: [], True: ["--measure"]}
 HEARD_MARKERS = (
     "contract_hear_partial",
@@ -173,82 +174,55 @@ def _resample(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
     return out.tobytes()
 
 
-def _dechunk(body: bytes) -> bytes:
-    out = bytearray()
-    position = 0
-    while position < len(body):
-        line_end = body.find(b"\r\n", position)
-        if line_end < 0:
-            break
-        size_token = body[position:line_end].split(b";", 1)[0]
-        size = int(size_token, 16)
-        position = line_end + 2
-        if size == 0:
-            break
-        out.extend(body[position : position + size])
-        position += size + 2
-    return bytes(out)
-
-
-def _http_body_complete(header: bytes, body: bytes) -> bool:
-    lowered = header.lower()
-    if b"transfer-encoding: chunked" in lowered:
-        return b"\r\n0\r\n\r\n" in body or body == b"0\r\n\r\n"
-    for line in header.split(b"\r\n"):
-        if line.lower().startswith(b"content-length:"):
-            length = int(line.split(b":", 1)[1].strip())
-            return len(body) >= length
-    return False
-
-
 def speak_measured(
     socket_path: Path,
     text: str,
-    language: str = "de",
+    voice: str,
 ) -> tuple[bytes, float, float]:
-    """Stream one speak request; return the WAV, time to first audio and total time."""
-    payload = json.dumps({"text": text, "language": language}).encode("utf-8")
-    request = (
-        b"POST /speak HTTP/1.1\r\n"
-        b"Host: speech\r\n"
-        b"Content-Type: application/json\r\n"
-        + f"Content-Length: {len(payload)}\r\n".encode()
-        + b"Connection: close\r\n"
-        + b"\r\n"
-        + payload
-    )
+    """Speak one request; return the whole WAV, time to first audio and total time.
+
+    The headers leave before synthesis, so the first audio is the first body
+    byte. A body the service aborted raises `IncompleteRead` in `http.client`,
+    and the proof fails rather than keep the partial WAV.
+    """
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(120)
+    sock.settimeout(SPEAK_TIMEOUT_SECONDS)
     sock.connect(str(socket_path))
+    connection = http.client.HTTPConnection("speech", timeout=SPEAK_TIMEOUT_SECONDS)
+    connection.sock = sock
     try:
         start = time.perf_counter()
-        sock.sendall(request)
-        raw = bytearray()
-        first_byte_at = None
-        while True:
-            piece = sock.recv(4096)
-            if not piece:
-                break
-            raw.extend(piece)
-            header, separator, body = bytes(raw).partition(b"\r\n\r\n")
-            if separator and body and first_byte_at is None:
-                first_byte_at = time.perf_counter()
-            if separator and _http_body_complete(header, body):
-                break
+        connection.request(
+            "POST",
+            SPEECH_PATH,
+            speech_request_body(text, voice),
+            {"Content-Type": "application/json"},
+        )
+        response = connection.getresponse()
+        if response.status != http.client.OK:
+            message = f"speak HTTP status: {response.status}"
+            raise SystemExit(message)
+        first = response.read(1)
+        first_byte_at = time.perf_counter()
+        body = first + response.read()
         end = time.perf_counter()
+    except http.client.IncompleteRead:
+        message = "speak body ended before it was complete"
+        raise SystemExit(message) from None
     finally:
-        sock.close()
-    if first_byte_at is None:
+        connection.close()
+    if not first:
         message = "speak returned no bytes on the socket"
         raise SystemExit(message)
-    header, separator, body = bytes(raw).partition(b"\r\n\r\n")
-    if not separator or not header.startswith(b"HTTP/1.1 200"):
-        status = header.splitlines()[0] if header else b""
-        message = f"speak HTTP status: {status!r}"
-        raise SystemExit(message)
-    if b"transfer-encoding: chunked" in header.lower():
-        body = _dechunk(body)
     return body, first_byte_at - start, end - start
+
+
+def _voice_id(model: str) -> str:
+    voice = voice_for_model(model)
+    if voice is None:
+        message = f"{model} is not a baseline speaking model"
+        raise SystemExit(message)
+    return voice.value
 
 
 def _query_nvidia(*arguments: str) -> str:
@@ -333,7 +307,7 @@ def _speech_server(
             print("server_log_tail:")
             print(log[-4000:])
         print("server_exit", server.returncode)
-        texts = [SENTENCE, ENGLISH, SECOND, *heard]
+        texts = [SENTENCE, SECOND, *heard]
         if proof_failed:
             _report_log_text(log, texts)
         else:
@@ -407,12 +381,12 @@ def _require_speaking(health: dict[str, object], model: str) -> None:
 def _prove_one_speak(
     socket_path: Path,
     text: str,
-    language: str,
+    voice: str,
     *,
     limit: float,
     label: str,
 ) -> tuple[bytes, float, float]:
-    wav, ttfa, total = speak_measured(socket_path, text, language=language)
+    wav, ttfa, total = speak_measured(socket_path, text, voice)
     rate, pcm = _pcm_from_wav(wav)
     duration = (len(pcm) / BYTES_PER_SAMPLE) / rate
     rtf = duration / total if total else 0.0
@@ -442,7 +416,7 @@ def _prove_one_speak(
 def _prove_speak_medians(
     socket_path: Path,
     text: str,
-    language: str,
+    voice: str,
     *,
     limit: float,
     label: str,
@@ -455,7 +429,7 @@ def _prove_speak_medians(
         wav, ttfa, rtf = _prove_one_speak(
             socket_path,
             text,
-            language,
+            voice,
             limit=limit,
             label=f"{label}_rep{rep}",
         )
@@ -475,32 +449,31 @@ def _prove_speak_medians(
 
 
 def _prove_speak(socket_path: Path, model: str) -> bytes:
-    """Speak German and English MEASURE_REPETITIONS times each.
+    """Speak German MEASURE_REPETITIONS times.
 
-    `_prove_one_speak` fails the run the moment any single repetition, in
-    either language, misses `model`'s first-byte limit; a passing run is
-    the proof that every repetition held, not just the medians.
+    `_prove_one_speak` fails the run the moment any single repetition misses
+    `model`'s first-byte limit; a passing run is the proof that every
+    repetition held, not just the median.
     """
-    limit = _first_byte_limit(model)
-    german, _ttfa_de, _rtf_de = _prove_speak_medians(
+    german, _ttfa, _rtf = _prove_speak_medians(
         socket_path,
         SENTENCE,
-        "de",
-        limit=limit,
+        _voice_id(model),
+        limit=_first_byte_limit(model),
         label="speak_wire_de",
     )
-    _prove_speak_medians(socket_path, ENGLISH, "en", limit=limit, label="speak_wire_en")
     return german
 
 
 def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
     limit = _first_byte_limit(model)
+    voice = _voice_id(model)
     results: dict[str, tuple[bytes, float, float]] = {}
     errors: list[str] = []
 
     def run(key: str, text: str) -> None:
         try:
-            results[key] = speak_measured(socket_path, text, language="de")
+            results[key] = speak_measured(socket_path, text, voice)
         except Exception as error:
             LOGGER.exception("concurrent speak %s failed", key)
             errors.append(f"{key}: {error}")
@@ -533,10 +506,11 @@ def _prove_concurrent_speak(socket_path: Path, model: str) -> None:
         if duration < MIN_SPEECH_SECONDS:
             message = f"concurrent {key} produced too little audio"
             raise SystemExit(message)
-        if ttfa > limit + 8.0:
+        if ttfa > limit + CONCURRENT_EXTRA_WAIT_SECONDS:
             message = (
                 f"concurrent {key} first byte {ttfa:.3f}s; "
-                f"serialized limit is {limit}s plus 8s wait"
+                f"serialized limit is {limit}s plus "
+                f"{CONCURRENT_EXTRA_WAIT_SECONDS}s wait"
             )
             raise SystemExit(message)
     if results["first"][0] == results["second"][0]:
@@ -555,7 +529,13 @@ def _prove_contract(
     client = Path(__file__).with_name("contract_client.py")
     print("contract_client_start")
     completed = subprocess.run(  # noqa: S603 - argv is this interpreter and this repository's client script with no shell
-        [sys.executable, str(client), *MEASURE_FLAG[measure], str(socket_path)],
+        [
+            sys.executable,
+            str(client),
+            *MEASURE_FLAG[measure],
+            str(socket_path),
+            _voice_id(env["SPEECH_SPEAKING_MODEL"]),
+        ],
         check=False,
         cwd=private_directory,
         env=env,
@@ -587,6 +567,9 @@ def speech_environment(private_directory: Path, speaking_model: str) -> dict[str
     state_directory.mkdir(mode=0o700, exist_ok=True)
     env["SPEECH_STATE_DIRECTORY"] = str(state_directory)
     env["SPEECH_SPEAKING_MODEL"] = speaking_model
+    env["SPEECH_BUSY_WAIT_SECONDS"] = str(
+        _first_byte_limit(speaking_model) + CONCURRENT_EXTRA_WAIT_SECONDS
+    )
     env["SPEECH_HEARING_MODEL"] = os.environ.get(
         "SPEECH_HEARING_MODEL", DEFAULT_HEARING_MODEL
     )
