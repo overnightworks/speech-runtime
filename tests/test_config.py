@@ -4,6 +4,7 @@ import os
 from typing import TYPE_CHECKING
 
 import pytest
+from pydantic import ValidationError
 
 from speech_runtime_service.config import (
     HEAR_SAMPLE_RATE,
@@ -52,6 +53,37 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
     assert settings.device == "cpu"
     assert settings.speaking_model == "ResembleAI/chatterbox"
     assert settings.hearing_model == "Systran/faster-whisper-large-v3"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("SPEECH_BUSY_WAIT_SECONDS", "-1"),
+        ("SPEECH_BUSY_WAIT_SECONDS", "nan"),
+        ("SPEECH_BUSY_WAIT_SECONDS", "inf"),
+        ("SPEECH_MAX_INPUT_CHARACTERS", "0"),
+        ("SPEECH_MAX_INPUT_CHARACTERS", "-1"),
+    ],
+)
+def test_the_wire_settings_refuse_values_that_cannot_hold(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValidationError, match=name.removeprefix("SPEECH_").lower()):
+        Settings()
+
+
+def test_the_wire_settings_accept_the_smallest_whole_limit_and_no_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SPEECH_BUSY_WAIT_SECONDS", "0")
+    monkeypatch.setenv("SPEECH_MAX_INPUT_CHARACTERS", "1")
+
+    settings = Settings()
+
+    assert settings.busy_wait_seconds == 0
+    assert settings.max_input_characters == 1
 
 
 def test_settings_default_uses_the_provider_hub_cache(
