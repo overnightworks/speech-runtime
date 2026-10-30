@@ -52,6 +52,7 @@ LOCK_HELD_ENV = "SPEECH_PROOF_HOLDS_PROBE_LOCK"
 LOCK_DIRECTORY_PREFIX = "speech-lock-"
 LOCK_WAIT_SECONDS = 1200
 FLOCK_TIMED_OUT_STATUS = 1
+FLOCK_COMMAND_UNAVAILABLE_STATUS = 69
 # The cap and the kill grace are the numbers this script owns inside the fleet
 # lock form; together they stay within 1830 s. The grace covers the teardown
 # `speech_server` runs after TERM: terminate, wait up to 10 s, then kill and wait
@@ -116,6 +117,9 @@ def fleet_command(arguments: list[str]) -> list[str]:
         "-w",
         str(LOCK_WAIT_SECONDS),
         str(LOCK_PATH),
+        "setpriv",
+        "--pdeathsig",
+        "TERM",
         "timeout",
         "-k",
         str(KILL_GRACE_SECONDS),
@@ -140,6 +144,12 @@ def run_under_lock(
         message = (
             f"probe lock {LOCK_PATH} is busy: still held after {LOCK_WAIT_SECONDS} s,"
             " so the proof did not start"
+        )
+        raise SystemExit(message)
+    if status == FLOCK_COMMAND_UNAVAILABLE_STATUS and not lock_was_taken:
+        message = (
+            "flock could not run setpriv, which ties the proof to the lock;"
+            " install util-linux setpriv, the proof does not run without it"
         )
         raise SystemExit(message)
     return status
