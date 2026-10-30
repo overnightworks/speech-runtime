@@ -626,3 +626,110 @@ def test_download_refuses_a_missing_worker_before_starting_the_callback() -> Non
 
     assert runtime.start_qwen_download() is None
     assert not called
+
+
+class _HeldCheck:
+    """A check that blocks inside its call until the test releases it."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self) -> bool:
+        self.entered.set()
+        assert self.release.wait(5)
+        return True
+
+
+@dataclass(frozen=True, slots=True)
+class _HeldStart:
+    runtime: Runtime
+    held: _HeldCheck
+    results: list[VoiceDownloadOutcome | None]
+    starter: threading.Thread
+    downloaded: threading.Event
+
+
+def _start_held_in_check(tmp_path: Path, *, held_check: str) -> _HeldStart:
+    held = _HeldCheck()
+    complete = False
+    downloaded = threading.Event()
+    results: list[VoiceDownloadOutcome | None] = []
+    artifacts_are_complete: Callable[[], bool] = lambda: complete  # noqa: E731
+    worker_usable: Callable[[], bool] = lambda: True  # noqa: E731
+    if held_check == "artifacts":
+
+        def artifacts_are_complete() -> bool:
+            held()
+            return complete
+
+    else:
+        worker_usable = held
+    runtime = _runtime(
+        tmp_path,
+        complete=artifacts_are_complete,
+        download=downloaded.set,
+        overrides=_RuntimeOverrides(
+            speaking=FakeSpeaking(), worker_usable=worker_usable
+        ),
+    )
+    starter = threading.Thread(
+        target=lambda: results.append(runtime.start_qwen_download()), daemon=True
+    )
+    starter.start()
+    assert held.entered.wait(5)
+    return _HeldStart(runtime, held, results, starter, downloaded)
+
+
+@pytest.mark.parametrize("held_check", ["worker", "artifacts"])
+def test_speaking_admission_is_answered_while_a_download_start_checks_the_filesystem(
+    tmp_path: Path, held_check: str
+) -> None:
+    start = _start_held_in_check(tmp_path, held_check=held_check)
+    runtime, held, results, starter = (
+        start.runtime,
+        start.held,
+        start.results,
+        start.starter,
+    )
+    admissions: list[object] = []
+    capture = threading.Thread(
+        target=lambda: admissions.append(runtime.capture_speaking()), daemon=True
+    )
+    capture.start()
+    capture.join(timeout=5)
+    answered = not capture.is_alive()
+    held.release.set()
+    starter.join(timeout=5)
+
+    assert answered
+    assert admissions[0] is not None
+    admissions[0].close()  # type: ignore[attr-defined]
+    assert results == [VoiceDownloadOutcome.STARTED]
+
+
+@pytest.mark.parametrize("transition", ["begin_shutdown", "begin_loading"])
+def test_download_never_starts_once_shutdown_or_loading_began_during_its_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transition: str
+) -> None:
+    start = _start_held_in_check(tmp_path, held_check="artifacts")
+    runtime, held, results, starter = (
+        start.runtime,
+        start.held,
+        start.results,
+        start.starter,
+    )
+    mover = threading.Thread(target=getattr(runtime, transition), daemon=True)
+    mover.start()
+    mover.join(timeout=5)
+    returned = not mover.is_alive()
+    held.release.set()
+    starter.join(timeout=5)
+
+    assert returned
+    assert results == [None]
+    assert not start.downloaded.is_set()
+    assert (
+        _qwen_state(runtime, tmp_path, monkeypatch, complete=False)
+        is not VoiceState.DOWNLOADING
+    )
