@@ -1,4 +1,4 @@
-"""The private Unix-socket app: health and the speech wire."""
+"""The control app served over TCP: health and the speech wire."""
 
 from typing import TYPE_CHECKING
 
