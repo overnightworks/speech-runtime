@@ -1,0 +1,8 @@
+claim_id = "968843ff6f514443ae6f0a81781ce789"
+agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
+role = "builder"
+base = "be894bc60aa7abc2e2a65f393fe637aff47e1d9a"
+branch = "claude/issue-65-n4b3-an-app-names-only-the-voices-its-co"
+scope = ["README.md", "docs/ARCHITECTURE.md", "docs/wire.md", "scripts/proof_identity.py", "scripts/prove_speech.py", "src/speech_runtime_service/callers.py", "src/speech_runtime_service/config.py", "src/speech_runtime_service/service.py", "src/speech_runtime_service/speaking.py", "src/speech_runtime_service/voices.py", "src/speech_runtime_service/wire_route.py", "tests"]
+opened_commit = "2153ef09afe25399ef1d7dd843da858db22e4595"
+whole_reason = "Six production files of about 50 lines: the list, its check and its refusal are one behaviour; the catalogue takes the two model ids so the configuration can type the list, and two files change only that import; and the test support and the proof tooling change wherever an app table is written."
