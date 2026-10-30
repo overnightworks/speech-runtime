@@ -2,6 +2,7 @@
 
 import asyncio
 import itertools
+import json
 import os
 import threading
 import time
@@ -293,9 +294,29 @@ def assert_refusal(
     response: ClientResponse, status: int, code: RefusalCode, param: str | None
 ) -> None:
     """The response is OpenAI's error form with exactly the closed keys."""
-    assert response.status_code == status
     assert response.headers["content-type"] == "application/json"
-    body = response.json()
+    assert_refusal_body(response.status_code, response.json(), status, code, param)
+
+
+def assert_call_refusal(
+    call: SpeakCall, status: int, code: RefusalCode, param: str | None
+) -> None:
+    """The finished call was refused in OpenAI's error form."""
+    assert call.headers["content-type"] == "application/json"
+    assert_refusal_body(
+        call.status_code, json.loads(wav_body(call.messages)), status, code, param
+    )
+
+
+def assert_refusal_body(
+    actual_status: int,
+    body: dict[str, dict[str, object]],
+    status: int,
+    code: RefusalCode,
+    param: str | None,
+) -> None:
+    """`body` is the closed error form of the refusal `status`, `code`, `param`."""
+    assert actual_status == status
     assert set(body) == {"error"}
     assert set(body["error"]) == {"message", "type", "param", "code"}
     assert body["error"]["code"] == code

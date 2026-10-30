@@ -36,6 +36,7 @@ from tests.support.speak_support import (
     CommittingSelectionStore,
     SpeakCall,
     app_over,
+    assert_call_refusal,
     assert_refusal,
     assert_unavailable,
     fake_runtime,
@@ -470,7 +471,7 @@ def test_a_stream_holding_every_worker_cannot_push_the_busy_answer_past_the_wait
 
     runtime, first, second, later = asyncio.run(scenario())
 
-    assert second.status_code == HTTP_429_TOO_MANY_REQUESTS
+    assert_call_refusal(second, HTTP_429_TOO_MANY_REQUESTS, RefusalCode.BUSY, None)
     assert second.started_after < SHORT_WAIT_SECONDS + SLACK_SECONDS
     assert second.headers[RETRY_AFTER_HEADER.lower()] == "1"
     assert first.status_code == HTTP_200_OK
@@ -534,7 +535,10 @@ def test_a_failed_voice_whose_close_blocks_is_still_answered_within_the_wait() -
     first, second, sent_last = asyncio.run(scenario())
 
     assert sent_last
-    assert [first.status_code, second.status_code] == [HTTP_503_SERVICE_UNAVAILABLE] * 2
+    for call in (first, second):
+        assert_call_refusal(
+            call, HTTP_503_SERVICE_UNAVAILABLE, RefusalCode.UNAVAILABLE, None
+        )
     assert first.started_after < SHORT_WAIT_SECONDS + SLACK_SECONDS
     assert second.started_after < SHORT_WAIT_SECONDS + SLACK_SECONDS
 
