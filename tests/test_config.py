@@ -1,6 +1,6 @@
 """Configuration comes from the environment."""
 
-import os
+import ipaddress
 from typing import TYPE_CHECKING
 
 import pytest
@@ -30,8 +30,6 @@ if TYPE_CHECKING:
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("SPEECH_HOST", "example.invalid"),
-        ("SPEECH_PORT", "8090"),
         ("SPEECH_DEBUG", "true"),
         ("SPEECH_HEARING_MODEL", "Systran/faster-whisper-large-v3"),
         ("SPEECH_STATE_DIRECTORY", "relative/state"),
@@ -48,7 +46,6 @@ def test_a_stale_setting_in_the_environment_is_ignored(
 def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SPEECH_DEVICE", "cpu")
     monkeypatch.setenv("SPEECH_SPEAKING_MODEL", "ResembleAI/chatterbox")
-    monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", str(os.geteuid()))
 
     settings = Settings()
 
@@ -106,15 +103,37 @@ def test_settings_preserves_an_explicit_huggingface_cache(
     assert Settings().huggingface_cache == explicit_cache
 
 
-def test_settings_accepts_only_a_positive_shared_runtime_uid(
+def test_settings_bind_to_a_loopback_tcp_port_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("PRESENTATOR_RUNTIME_UID", raising=False)
+    monkeypatch.delenv("SPEECH_HOST", raising=False)
+    monkeypatch.delenv("SPEECH_PORT", raising=False)
 
-    assert Settings().runtime_uid is None
+    settings = Settings()
 
-    monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", "0")
-    with pytest.raises(ValueError, match="greater than 0"):
+    assert ipaddress.ip_address(settings.host).is_loopback
+    assert settings.port in range(1, 2**16)
+
+
+def test_settings_read_the_bind_address_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    all_interfaces = "0.0.0.0"  # noqa: S104 - the container form of the bind address
+    monkeypatch.setenv("SPEECH_HOST", all_interfaces)
+    monkeypatch.setenv("SPEECH_PORT", "65535")
+
+    settings = Settings()
+
+    assert (settings.host, settings.port) == (all_interfaces, 65535)
+
+
+@pytest.mark.parametrize("port", ["0", "65536", "-1", "http", ""])
+def test_settings_refuse_a_port_that_is_not_a_tcp_port(
+    monkeypatch: pytest.MonkeyPatch, port: str
+) -> None:
+    monkeypatch.setenv("SPEECH_PORT", port)
+
+    with pytest.raises(ValidationError, match="port"):
         Settings()
 
 

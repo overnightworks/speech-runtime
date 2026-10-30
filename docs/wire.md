@@ -2,8 +2,8 @@
 
 Audience: an app developer who speaks through this service.
 
-One request speaks one text: `POST /v1/audio/speech` on the private socket
-(`speech.sock` in `SPEECH_PRIVATE_DIRECTORY`). It is a strict subset of
+One request speaks one text: `POST /v1/audio/speech` on the TCP address
+`SPEECH_HOST:SPEECH_PORT`. It is a strict subset of
 OpenAI's speech endpoint, so an OpenAI-shaped client can build the body.
 `speech_runtime_client.wire` (the `overnightworks-speech-runtime-client`
 distribution) owns the path, the request type and the refusal list; build the

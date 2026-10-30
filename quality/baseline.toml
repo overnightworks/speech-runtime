@@ -13,7 +13,7 @@
 "speaking_for_voice" = 75
 
 [function_lines."tests/test_main.py"]
-"test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks" = 88
+"test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks" = 87
 
 [function_lines."tests/test_provider_process.py"]
 "test_direct_closed_entrypoint_streams_after_transient_loader_exits" = 80

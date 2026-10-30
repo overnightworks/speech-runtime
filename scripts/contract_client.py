@@ -1,4 +1,4 @@
-"""Drive health and the speak wire over the private socket.
+"""Drive health and the speak wire over TCP.
 
 This process must not import the `speech_runtime_service` package. It is the
 parallel-lane proof: a caller that only knows the HTTP contract, through the
@@ -12,11 +12,11 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
-import socket
 import sys
 from array import array
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from proof_identity import Minting, load_minting, mint_pair
 from speech_runtime_client.wire import (
@@ -39,15 +39,9 @@ def _must_not_have_imported_speech() -> None:
         raise SystemExit(message)
 
 
-class _UnixHttpConnection(http.client.HTTPConnection):
-    def __init__(self, path: Path, timeout: float) -> None:
-        super().__init__("speech", timeout=timeout)
-        self._path = path
-
-    def connect(self) -> None:
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(self.timeout)
-        self.sock.connect(str(self._path))
+def _connection(base_url: str, timeout: float) -> http.client.HTTPConnection:
+    address = urlsplit(base_url)
+    return http.client.HTTPConnection(address.hostname, address.port, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -57,9 +51,9 @@ class _Post:
 
 
 def _request(
-    path: Path, method: str, target: str, post: _Post | None, timeout: float
+    base_url: str, method: str, target: str, post: _Post | None, timeout: float
 ) -> bytes:
-    connection = _UnixHttpConnection(path, timeout)
+    connection = _connection(base_url, timeout)
     try:
         connection.request(
             method,
@@ -80,9 +74,9 @@ def _request(
     return data
 
 
-def get_json(path: Path, target: str) -> dict[str, object]:
-    """GET a path over the speech socket and decode the JSON body."""
-    return json.loads(_request(path, "GET", target, None, 30).decode("utf-8"))
+def get_json(base_url: str, target: str) -> dict[str, object]:
+    """GET a path over the speech service and decode the JSON body."""
+    return json.loads(_request(base_url, "GET", target, None, 30).decode("utf-8"))
 
 
 def _pcm_from_wav(data: bytes) -> tuple[int, bytes]:
@@ -102,8 +96,8 @@ def _pcm_from_wav(data: bytes) -> tuple[int, bytes]:
     raise SystemExit(message)
 
 
-def speak(path: Path, text: str, voice: str, minting: Minting) -> bytes:
-    """POST German text to the speech socket and return the whole WAV bytes.
+def speak(base_url: str, text: str, voice: str, minting: Minting) -> bytes:
+    """POST German text to the speech service and return the whole WAV bytes.
 
     Each call mints a fresh pair of tokens, so a long run never presents an
     expired one.
@@ -113,7 +107,7 @@ def speak(path: Path, text: str, voice: str, minting: Minting) -> bytes:
         workload_token=pair.workload, person_token=pair.person
     )
     post = _Post(speech_request_body(text, voice), headers)
-    return _request(path, "POST", SPEECH_PATH, post, 60)
+    return _request(base_url, "POST", SPEECH_PATH, post, 60)
 
 
 def _rms(pcm: bytes) -> float:
@@ -125,8 +119,8 @@ def _rms(pcm: bytes) -> float:
     return (total / len(samples)) ** 0.5 / 32768.0
 
 
-def _run(path: Path, voice: str, minting: Minting) -> None:
-    health = get_json(path, "/health")
+def _run(base_url: str, voice: str, minting: Minting) -> None:
+    health = get_json(base_url, "/health")
     print("contract_health", json.dumps(health, sort_keys=True))
     speaking = health["speaking"]
     if not isinstance(speaking, dict):
@@ -136,7 +130,7 @@ def _run(path: Path, voice: str, minting: Minting) -> None:
         message = "the speaking model is not ready"
         raise SystemExit(message)
 
-    wav = speak(path, SENTENCE, voice, minting)
+    wav = speak(base_url, SENTENCE, voice, minting)
     rate, pcm = _pcm_from_wav(wav)
     print(
         "contract_speak",
@@ -148,19 +142,19 @@ def _run(path: Path, voice: str, minting: Minting) -> None:
 
 
 def parse_arguments(arguments: list[str]) -> argparse.Namespace:
-    """Read the command line: the socket, the voice and the minting file's path."""
+    """Read the command line: the service URL, the voice and the minting file's path."""
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--minting-file", type=Path, required=True)
-    parser.add_argument("socket", type=Path)
+    parser.add_argument("base_url")
     parser.add_argument("voice")
     return parser.parse_args(arguments)
 
 
 def main() -> None:
-    """Drive health and speak against the speech socket path."""
+    """Drive health and speak against the speech service URL."""
     _must_not_have_imported_speech()
     options = parse_arguments(sys.argv[1:])
-    _run(options.socket, options.voice, load_minting(options.minting_file))
+    _run(options.base_url, options.voice, load_minting(options.minting_file))
 
 
 if __name__ == "__main__":

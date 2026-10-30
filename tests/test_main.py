@@ -1,11 +1,8 @@
-"""The private listener has a narrow, ownership-checked lifetime."""
+"""Serving binds the configured address first and ends with the listener closed."""
 
 import asyncio
-import fcntl
-import os
 import signal
 import socket
-import stat
 import subprocess
 import sys
 import threading
@@ -18,13 +15,13 @@ from fastapi.testclient import TestClient
 from speech_runtime_provider_contract import CHATTERBOX_SAMPLE_RATE
 
 from speech_runtime_service import __main__
-from speech_runtime_service.__main__ import PrivateSocket
 from speech_runtime_service.config import Settings
 from speech_runtime_service.provider_process import ProviderLaunch, ProviderProcess
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import CHATTERBOX_SPEAKING_MODEL, VoiceId
 from tests.support.fakes_support import FakeSpeaking
 from tests.support.identity_support import write_caller_configuration
+from tests.support.tcp_server_support import free_loopback_port, listens_on
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,8 +32,7 @@ def _serving_settings(directory: Path, **changes: object) -> Settings:
     """Settings that start `serve` in `directory` with a valid caller configuration."""
     return Settings(
         **{
-            "private_directory": directory,
-            "PRESENTATOR_RUNTIME_UID": os.geteuid(),
+            "port": free_loopback_port(),
             "config_file": write_caller_configuration(directory),
         }
         | changes
@@ -115,157 +111,7 @@ class _HealthServer:
         self._release.set()
 
 
-def test_private_socket_removes_only_the_inode_it_bound(tmp_path: Path) -> None:
-    owner_only_file = 0o600
-    with PrivateSocket(tmp_path, runtime_uid=os.geteuid()) as listener:
-        socket_path = tmp_path / "speech.sock"
-        inode = socket_path.stat().st_ino
-        assert stat.S_IMODE(socket_path.stat().st_mode) == owner_only_file
-        assert listener.fileno() >= 0
-
-    assert not (tmp_path / "speech.sock").exists()
-    assert inode > 0
-
-
-@pytest.mark.parametrize(
-    ("directory_mode", "uid_offset"),
-    [(0o755, 0), (0o700, 1)],
-    ids=["other-mode", "other-owner"],
-)
-def test_private_socket_refuses_an_unsafe_directory(
-    tmp_path: Path, directory_mode: int, uid_offset: int
-) -> None:
-    directory = tmp_path / "private"
-    directory.mkdir()
-    directory.chmod(directory_mode)
-
-    with (
-        pytest.raises(PermissionError, match="private speech directory is unsafe"),
-        PrivateSocket(directory, runtime_uid=os.geteuid() + uid_offset),
-    ):
-        pytest.fail("the socket must not be bound")
-
-    assert not (directory / "speech.sock").exists()
-
-
-def test_private_socket_preserves_an_existing_socket_path(tmp_path: Path) -> None:
-    existing = tmp_path / "speech.sock"
-    existing.touch()
-
-    with (
-        pytest.raises(FileExistsError),
-        PrivateSocket(tmp_path, runtime_uid=os.geteuid()),
-    ):
-        pass
-
-    assert existing.exists()
-
-
-def test_private_socket_replaces_a_dead_leftover_socket(tmp_path: Path) -> None:
-    path = tmp_path / "speech.sock"
-    dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    dead.bind(str(path))
-    dead.close()
-
-    with PrivateSocket(tmp_path, runtime_uid=os.geteuid()) as listener:
-        assert listener.family == socket.AF_UNIX
-        assert stat.S_ISSOCK(path.lstat().st_mode)
-
-    assert not path.exists()
-
-
-def test_private_socket_refuses_a_concurrent_start_while_the_listener_is_running(
-    tmp_path: Path,
-) -> None:
-    with (
-        PrivateSocket(tmp_path, runtime_uid=os.geteuid()),
-        pytest.raises(FileExistsError, match="starting or running"),
-        PrivateSocket(tmp_path, runtime_uid=os.geteuid()),
-    ):
-        pass
-
-
-def test_private_socket_refuses_when_the_socket_is_replaced_mid_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "speech.sock"
-    dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    dead.bind(str(path))
-    dead.close()
-
-    def swap_then_report_dead(swapped_path: Path) -> bool:
-        swapped_path.unlink()
-        swapped_path.write_text("replacement", encoding="utf-8")
-        return True
-
-    monkeypatch.setattr(__main__, "_probe_is_dead", swap_then_report_dead)
-
-    with (
-        pytest.raises(FileExistsError, match="changed during reclamation"),
-        PrivateSocket(tmp_path, runtime_uid=os.geteuid()),
-    ):
-        pass
-
-    assert path.read_text(encoding="utf-8") == "replacement"
-
-
-def test_private_socket_refuses_a_socket_with_a_live_listener(tmp_path: Path) -> None:
-    path = tmp_path / "speech.sock"
-    listening = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listening.bind(str(path))
-    listening.listen()
-
-    try:
-        with (
-            pytest.raises(FileExistsError),
-            PrivateSocket(tmp_path, runtime_uid=os.geteuid()),
-        ):
-            pass
-
-        assert stat.S_ISSOCK(path.lstat().st_mode)
-    finally:
-        listening.close()
-        path.unlink()
-
-
-def test_private_socket_lock_survives_release_and_the_next_start_reacquires_its_inode(
-    tmp_path: Path,
-) -> None:
-    lock_path = tmp_path / "speech.sock.lock"
-
-    with PrivateSocket(tmp_path, runtime_uid=os.geteuid()):
-        pass
-
-    first_inode = lock_path.stat().st_ino
-
-    with PrivateSocket(tmp_path, runtime_uid=os.geteuid()):
-        assert lock_path.stat().st_ino == first_inode
-
-
-def test_private_socket_refuses_when_another_process_holds_the_released_lock_inode(
-    tmp_path: Path,
-) -> None:
-    lock_path = tmp_path / "speech.sock.lock"
-
-    with PrivateSocket(tmp_path, runtime_uid=os.geteuid()):
-        pass  # starter A acquired, bound, and released; the lock path's inode remains
-
-    # starter B takes that same, still-existing lock inode directly, as it would
-    # between A's release and C's next attempt.
-    holder_b = os.open(lock_path, os.O_RDWR)
-    fcntl.flock(holder_b, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    try:
-        with (
-            pytest.raises(FileExistsError, match="starting or running"),
-            PrivateSocket(tmp_path, runtime_uid=os.geteuid()),
-        ):
-            pass
-    finally:
-        fcntl.flock(holder_b, fcntl.LOCK_UN)
-        os.close(holder_b)
-
-
-def test_failed_loader_stops_the_server_and_cleans_the_owned_socket(
+def test_failed_loader_stops_the_server_and_closes_the_listener(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = Runtime(
@@ -300,12 +146,13 @@ def test_failed_loader_stops_the_server_and_cleans_the_owned_socket(
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
     monkeypatch.setattr(__main__, "build_server", lambda _app: Server())
     monkeypatch.setattr(__main__, "_install_signal_handlers", lambda _stopping: None)
-    monkeypatch.setenv("PRESENTATOR_RUNTIME_UID", str(os.geteuid()))
 
-    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
+    settings = _serving_settings(tmp_path)
+
+    outcome = asyncio.run(__main__.serve(settings))
 
     assert outcome == 1
-    assert not (tmp_path / "speech.sock").exists()
+    assert not listens_on(settings.port)
 
 
 def test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks(
@@ -395,7 +242,6 @@ while True:
 
     assert outcome == 0
     assert close_before_await == [True]
-    assert not (tmp_path / "speech.sock").exists()
 
 
 def test_owned_speaking_failure_stops_the_server_and_returns_failure(
@@ -443,11 +289,13 @@ def test_owned_speaking_failure_stops_the_server_and_returns_failure(
     monkeypatch.setattr(__main__, "build_server", lambda _app: server)
     monkeypatch.setattr(__main__, "_install_signal_handlers", lambda _stopping: None)
 
-    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
+    settings = _serving_settings(tmp_path)
+
+    outcome = asyncio.run(__main__.serve(settings))
 
     assert outcome == 1
     assert server.should_exit
-    assert not (tmp_path / "speech.sock").exists()
+    assert not listens_on(settings.port)
 
 
 def test_orchestrator_serves_health_from_its_loading_runtime(
@@ -478,7 +326,9 @@ def test_orchestrator_serves_health_from_its_loading_runtime(
     monkeypatch.setattr(__main__, "build_server", healthy_server)
     monkeypatch.setattr(__main__, "_install_signal_handlers", lambda _stopping: None)
 
-    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
+    settings = _serving_settings(tmp_path)
+
+    outcome = asyncio.run(__main__.serve(settings))
 
     assert outcome == 1
     assert observed["speaking"] == {
@@ -516,7 +366,7 @@ def test_signal_handler_stops_the_async_orchestrator(
     assert stopping.is_set()
 
 
-def test_signal_exit_is_zero_and_cleans_the_owned_socket(
+def test_signal_exit_is_zero_and_closes_the_listener(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = Runtime(FakeSpeaking())
@@ -547,13 +397,15 @@ def test_signal_exit_is_zero_and_cleans_the_owned_socket(
         lambda stopping: stopping.set(),
     )
 
-    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
+    settings = _serving_settings(tmp_path)
+
+    outcome = asyncio.run(__main__.serve(settings))
 
     assert outcome == 0
-    assert not (tmp_path / "speech.sock").exists()
+    assert not listens_on(settings.port)
 
 
-def test_server_ending_on_its_own_returns_failure_and_cleans_the_owned_socket(
+def test_server_ending_on_its_own_returns_failure_and_closes_the_listener(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime = Runtime(FakeSpeaking())
@@ -569,35 +421,12 @@ def test_server_ending_on_its_own_returns_failure_and_cleans_the_owned_socket(
     monkeypatch.setattr(__main__, "build_server", lambda _app: Server())
     monkeypatch.setattr(__main__, "_install_signal_handlers", lambda _stopping: None)
 
-    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
+    settings = _serving_settings(tmp_path)
+
+    outcome = asyncio.run(__main__.serve(settings))
 
     assert outcome == 1
-    assert not (tmp_path / "speech.sock").exists()
-
-
-@pytest.mark.parametrize(
-    ("runtime_uid", "reason"),
-    [(None, "required"), (os.geteuid() + 1, "effective UID")],
-)
-def test_invalid_runtime_uid_refuses_before_runtime_or_listener_work(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    runtime_uid: int | None,
-    reason: str,
-) -> None:
-    monkeypatch.setattr(
-        __main__, "prepare_cuda_libraries", lambda: pytest.fail("prepared CUDA")
-    )
-    monkeypatch.setattr(
-        Runtime,
-        "from_settings",
-        lambda _settings: pytest.fail("constructed runtime"),
-    )
-
-    settings = _serving_settings(tmp_path, PRESENTATOR_RUNTIME_UID=runtime_uid)
-    serving = __main__.serve(settings)
-    with pytest.raises(PermissionError, match=reason):
-        asyncio.run(serving)
+    assert not listens_on(settings.port)
 
 
 @pytest.mark.parametrize(
@@ -628,3 +457,35 @@ def test_serve_refuses_to_start_without_a_readable_caller_configuration(
         asyncio.run(serving)
     rendered = "".join(traceback.format_exception(refusal.value))
     assert str(tmp_path) not in rendered
+
+
+@pytest.mark.parametrize(
+    "taken",
+    [True, False],
+    ids=["address taken", "host not on this machine"],
+)
+def test_serve_exits_nonzero_naming_the_address_before_any_runtime_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    taken: bool,  # noqa: FBT001 - a parametrized case selector
+) -> None:
+    monkeypatch.setattr(
+        __main__, "prepare_cuda_libraries", lambda: pytest.fail("prepared CUDA")
+    )
+    monkeypatch.setattr(
+        Runtime,
+        "from_settings",
+        lambda _settings: pytest.fail("constructed runtime"),
+    )
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
+        holder.bind(("127.0.0.1", 0))
+        holder.listen()
+        port = holder.getsockname()[1]
+        host = "127.0.0.1" if taken else "192.0.2.1"
+        settings = _serving_settings(tmp_path, host=host, port=port)
+
+        outcome = asyncio.run(__main__.serve(settings))
+
+    assert outcome == 1
+    assert f"{host}:{port}" in caplog.text

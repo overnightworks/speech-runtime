@@ -1,16 +1,22 @@
-"""speech.sock serves the speech routes over one runtime."""
+"""The speech routes over one runtime answer on a real TCP listener."""
 
 import asyncio
+import base64
 import os
-import stat
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import httpx2
 import pytest
-from starlette.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED, HTTP_404_NOT_FOUND
+from starlette.status import (
+    HTTP_200_OK,
+    HTTP_400_BAD_REQUEST,
+    HTTP_401_UNAUTHORIZED,
+    HTTP_404_NOT_FOUND,
+)
 
-from speech_runtime_client.wire import AUTHORIZATION_HEADER, SPEECH_PATH
+from speech_runtime_client.wire import AUTHORIZATION_HEADER, SPEECH_PATH, RefusalCode
 from speech_runtime_service.pcm import WAV_HEADER_BYTES, pcm_from_wav
 from speech_runtime_service.service import Runtime
 from tests.support.fakes_support import (
@@ -20,13 +26,17 @@ from tests.support.fakes_support import (
     GatedSpeaking,
 )
 from tests.support.identity_support import valid_headers
-from tests.support.private_server_support import PrivateServer, serving_privately
-from tests.support.speak_support import FailingSpeaking, gate_is_free, speak_body
+from tests.support.speak_support import (
+    FailingSpeaking,
+    assert_refusal,
+    gate_is_free,
+    speak_body,
+)
+from tests.support.tcp_server_support import TcpServer, serving_over_tcp
 
 if TYPE_CHECKING:
     import threading
     from collections.abc import AsyncIterator, Mapping
-    from pathlib import Path
 
 _SPEAK_BODY = speak_body()
 
@@ -40,16 +50,20 @@ async def _gates_released(voice: GatedSpeaking) -> AsyncIterator[None]:
         voice.release_all()
 
 
-def _socket_client(
-    server: PrivateServer, headers: Mapping[str, str] | None = None
+def _client(
+    server: TcpServer, headers: Mapping[str, str] | None = None
 ) -> httpx2.AsyncClient:
-    """A client on the socket; `headers` default to a valid pair of tokens."""
+    """A client on the listener; `headers` default to a valid pair of tokens."""
     return httpx2.AsyncClient(
-        transport=httpx2.AsyncHTTPTransport(uds=str(server.path)),
-        base_url="http://speech",
+        base_url=server.base_url,
         timeout=GATE_TIMEOUT_SECONDS,
         headers=valid_headers() if headers is None else headers,
     )
+
+
+def _address(server: TcpServer) -> tuple[str, int]:
+    address = urlsplit(server.base_url)
+    return address.hostname or "", address.port or 0
 
 
 def _gated_runtime(voice: FakeSpeaking | GatedSpeaking) -> Runtime:
@@ -74,24 +88,13 @@ def _assert_whole_wav(status_code: int, body: bytes, voice: GatedSpeaking) -> No
     assert pcm == voice.audio
 
 
-def _modes_and_owners(directory: Path, socket_path: Path) -> list[int]:
-    return [
-        stat.S_IMODE(directory.stat().st_mode),
-        stat.S_IMODE(socket_path.stat().st_mode),
-        directory.stat().st_uid,
-        socket_path.stat().st_uid,
-    ]
-
-
-def test_socket_streams_speak_while_the_voice_is_still_synthesizing(
-    tmp_path: Path,
-) -> None:
-    async def scenario() -> tuple[GatedSpeaking, int, bytes, bytes, list[int]]:
+def test_tcp_streams_speak_while_the_voice_is_still_synthesizing() -> None:
+    async def scenario() -> tuple[GatedSpeaking, int, bytes, bytes]:
         voice = GatedSpeaking(hold_last_chunk=True)
         voice.release_first_step.set()
         async with (
-            serving_privately(tmp_path, _gated_runtime(voice)) as server,
-            _socket_client(server) as client,
+            serving_over_tcp(_gated_runtime(voice)) as server,
+            _client(server) as client,
             _gates_released(voice),
             client.stream("POST", SPEECH_PATH, content=_SPEAK_BODY) as response,
         ):
@@ -99,29 +102,25 @@ def test_socket_streams_speak_while_the_voice_is_still_synthesizing(
             chunks = response.aiter_bytes()
             first = await _first_chunk(chunks)
             assert not voice.release_last_chunk.is_set()
-            modes = await asyncio.to_thread(_modes_and_owners, tmp_path, server.path)
             voice.release_last_chunk.set()
             rest = b"".join([chunk async for chunk in chunks])
-        return voice, response.status_code, first, first + rest, modes
+        return voice, response.status_code, first, first + rest
 
-    voice, status_code, first, whole, modes = asyncio.run(scenario())
+    voice, status_code, first, whole = asyncio.run(scenario())
 
     first_rate, first_pcm = pcm_from_wav(first)
     assert first_rate == SPEAK_SAMPLE_RATE
     assert 0 < len(first_pcm) < len(voice.audio)
     _assert_whole_wav(status_code, whole, voice)
-    assert modes == [0o700, 0o600, os.geteuid(), os.geteuid()]
 
 
-def test_socket_speak_disconnect_frees_the_voice_for_the_next_caller(
-    tmp_path: Path,
-) -> None:
+def test_tcp_speak_disconnect_frees_the_voice_for_the_next_caller() -> None:
     async def scenario() -> tuple[GatedSpeaking, httpx2.Response]:
         voice = GatedSpeaking(hold_last_chunk=True)
         voice.release_first_step.set()
         async with (
-            serving_privately(tmp_path, _gated_runtime(voice)) as server,
-            _socket_client(server) as client,
+            serving_over_tcp(_gated_runtime(voice)) as server,
+            _client(server) as client,
             _gates_released(voice),
         ):
             async with client.stream(
@@ -140,13 +139,13 @@ def test_socket_speak_disconnect_frees_the_voice_for_the_next_caller(
     _assert_whole_wav(later.status_code, later.content, voice)
 
 
-def test_a_speak_holds_the_one_synthesis_gate(tmp_path: Path) -> None:
+def test_a_speak_holds_the_one_synthesis_gate() -> None:
     async def scenario() -> tuple[GatedSpeaking, bool, httpx2.Response, bool]:
         voice = GatedSpeaking()
         runtime = _gated_runtime(voice)
         async with (
-            serving_privately(tmp_path, runtime) as server,
-            _socket_client(server) as socket_client,
+            serving_over_tcp(runtime) as server,
+            _client(server) as socket_client,
             _gates_released(voice),
         ):
             talk = asyncio.create_task(
@@ -167,14 +166,14 @@ def test_a_speak_holds_the_one_synthesis_gate(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("chunks_before_failing", [0, 1])
-def test_socket_speak_failure_aborts_the_body_and_the_next_request_is_whole(
-    tmp_path: Path, chunks_before_failing: int
+def test_tcp_speak_failure_aborts_the_body_and_the_next_request_is_whole(
+    chunks_before_failing: int,
 ) -> None:
     async def scenario() -> tuple[bool, httpx2.Response]:
         voice = FailingSpeaking(chunks_before_failing=chunks_before_failing)
         async with (
-            serving_privately(tmp_path, _gated_runtime(voice)) as server,
-            _socket_client(server) as client,
+            serving_over_tcp(_gated_runtime(voice)) as server,
+            _client(server) as client,
         ):
             try:
                 await client.post(SPEECH_PATH, content=_SPEAK_BODY)
@@ -192,27 +191,25 @@ def test_socket_speak_failure_aborts_the_body_and_the_next_request_is_whole(
 
 
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
-def test_socket_serves_no_api_documentation(tmp_path: Path, path: str) -> None:
+def test_tcp_serves_no_api_documentation(path: str) -> None:
     async def scenario() -> httpx2.Response:
         async with (
-            serving_privately(tmp_path, _gated_runtime(GatedSpeaking())) as server,
-            _socket_client(server) as client,
+            serving_over_tcp(_gated_runtime(GatedSpeaking())) as server,
+            _client(server) as client,
         ):
             return await client.get(path)
 
     assert asyncio.run(scenario()).status_code == HTTP_404_NOT_FOUND
 
 
-def test_the_socket_refuses_a_speak_without_the_persons_token(
-    tmp_path: Path,
-) -> None:
+def test_tcp_refuses_a_speak_without_the_persons_token() -> None:
     async def scenario() -> tuple[httpx2.Response, httpx2.Response]:
         headers = valid_headers()
         del headers[AUTHORIZATION_HEADER]
         async with (
-            serving_privately(tmp_path, _gated_runtime(FakeSpeaking())) as server,
-            _socket_client(server, headers) as client,
-            _socket_client(server) as admitted,
+            serving_over_tcp(_gated_runtime(FakeSpeaking())) as server,
+            _client(server, headers) as client,
+            _client(server) as admitted,
         ):
             return (
                 await client.post(SPEECH_PATH, content=_SPEAK_BODY),
@@ -223,3 +220,60 @@ def test_the_socket_refuses_a_speak_without_the_persons_token(
 
     assert refused.status_code == HTTP_401_UNAUTHORIZED
     assert served.status_code == HTTP_200_OK
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "status", "code"),
+    [
+        ("GET", "/health", HTTP_200_OK, None),
+        ("POST", SPEECH_PATH, HTTP_401_UNAUTHORIZED, RefusalCode.UNAUTHORIZED),
+        ("POST", "/v1/other", HTTP_404_NOT_FOUND, RefusalCode.NOT_FOUND),
+        (
+            "POST",
+            "/v2/audio/speech",
+            HTTP_400_BAD_REQUEST,
+            RefusalCode.UNSUPPORTED_VERSION,
+        ),
+        ("GET", "/voices", HTTP_404_NOT_FOUND, None),
+        ("GET", "/hear", HTTP_404_NOT_FOUND, None),
+    ],
+)
+def test_tcp_answers_without_tokens_only_health_and_the_wires_plain_refusals(
+    method: str, path: str, status: int, code: RefusalCode | None
+) -> None:
+    async def scenario() -> httpx2.Response:
+        async with (
+            serving_over_tcp(_gated_runtime(FakeSpeaking())) as server,
+            _client(server, {}) as client,
+        ):
+            return await client.request(method, path, content=_SPEAK_BODY)
+
+    response = asyncio.run(scenario())
+
+    if code is None:
+        assert response.status_code == status
+    else:
+        assert_refusal(response, status, code, None)
+
+
+def test_tcp_refuses_a_websocket_upgrade_on_hear() -> None:
+    upgrade = (
+        b"GET /hear HTTP/1.1\r\nHost: speech\r\nUpgrade: websocket\r\n"
+        b"Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
+        b"Sec-WebSocket-Key: " + base64.b64encode(os.urandom(16)) + b"\r\n\r\n"
+    )
+
+    async def scenario() -> bytes:
+        async with serving_over_tcp(_gated_runtime(FakeSpeaking())) as server:
+            host, port = _address(server)
+            reader, writer = await asyncio.open_connection(host, port)
+            writer.write(upgrade)
+            status_line = await asyncio.wait_for(
+                reader.readline(), timeout=GATE_TIMEOUT_SECONDS
+            )
+            writer.close()
+            return status_line
+
+    status_line = asyncio.run(scenario())
+
+    assert status_line.split()[1] == b"404"

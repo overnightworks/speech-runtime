@@ -1,11 +1,10 @@
-"""Serving ends with the signal that stops it and binds nothing but the socket."""
+"""Serving listens on the configured TCP address and ends with its stop signal."""
 
 from __future__ import annotations
 
 import asyncio
 import os
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -23,22 +22,26 @@ from tests.support.identity_support import (
     caller_configuration_text,
     write_caller_configuration,
 )
+from tests.support.tcp_server_support import (
+    answers_http,
+    free_loopback_port,
+    listens_on,
+)
 
 if TYPE_CHECKING:
+    import socket
+
     import uvicorn
 
 _SIGTERM_SERVER = """
 import asyncio
 import os
-from pathlib import Path
-
 from speech_runtime_service import __main__
 from speech_runtime_service.config import Settings
 from speech_runtime_service.service import Runtime, RuntimeDependencies
 from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import FakeSpeaking
 
-directory = Path(os.environ["SPEECH_TEST_DIRECTORY"])
 __main__.prepare_cuda_libraries = lambda: None
 Runtime.from_settings = lambda _settings: Runtime(
     None,
@@ -48,22 +51,19 @@ Runtime.from_settings = lambda _settings: Runtime(
         voice=VoiceId.PIPER,
     ),
 )
-settings = Settings(
-    private_directory=directory,
-    PRESENTATOR_RUNTIME_UID=os.geteuid(),
-)
+settings = Settings(port=int(os.environ["SPEECH_PORT"]))
 raise SystemExit(asyncio.run(__main__.serve(settings)))
 """
 
 
-def test_sigterm_stops_the_real_server_and_exits_zero_with_the_socket_removed(
+def test_sigterm_stops_the_real_server_and_exits_zero_with_nothing_listening(
     tmp_path: Path,
 ) -> None:
-    socket_path = tmp_path / "speech.sock"
+    port = free_loopback_port()
     speech_root = Path(__file__).resolve().parents[1]
     environment = {
         **os.environ,
-        "SPEECH_TEST_DIRECTORY": str(tmp_path),
+        "SPEECH_PORT": str(port),
         "SPEECH_CONFIG_FILE": str(write_caller_configuration(tmp_path)),
         "PYTHONPATH": os.pathsep.join([str(speech_root), str(speech_root / "scripts")]),
     }
@@ -72,7 +72,7 @@ def test_sigterm_stops_the_real_server_and_exits_zero_with_the_socket_removed(
     ) as server:
         try:
             deadline = time.monotonic() + 30
-            while not _accepts_connections(socket_path):
+            while not answers_http(port):
                 assert server.poll() is None
                 assert time.monotonic() < deadline
                 time.sleep(0.05)
@@ -81,44 +81,84 @@ def test_sigterm_stops_the_real_server_and_exits_zero_with_the_socket_removed(
         finally:
             server.kill()
 
-    assert not socket_path.exists()
+    assert not listens_on(port)
 
 
-def test_python_dash_m_starts_the_service_on_its_private_socket(tmp_path: Path) -> None:
-    socket_path = tmp_path / "speech.sock"
+def test_python_dash_m_starts_the_service_listening_on_the_configured_port(
+    tmp_path: Path,
+) -> None:
+    port = free_loopback_port()
     speech_root = Path(__file__).resolve().parents[1]
     environment = {
         **os.environ,
-        "SPEECH_PRIVATE_DIRECTORY": str(tmp_path),
+        "SPEECH_PORT": str(port),
         "SPEECH_STATE_DIRECTORY": str(tmp_path / "state"),
         "HF_HUB_OFFLINE": "1",
         "HF_HOME": str(tmp_path / "hf"),
-        "PRESENTATOR_RUNTIME_UID": str(os.geteuid()),
         "SPEECH_CONFIG_FILE": str(write_caller_configuration(tmp_path)),
         "PYTHONPATH": str(speech_root),
     }
     with subprocess.Popen(
-        [sys.executable, "-m", "speech_runtime_service"], env=environment
+        [sys.executable, "-m", "speech_runtime_service"],
+        cwd=tmp_path,
+        env=environment,
     ) as server:
         try:
             deadline = time.monotonic() + 30
-            while not _accepts_connections(socket_path):
+            while not listens_on(port):
                 assert time.monotonic() < deadline
                 time.sleep(0.05)
         finally:
             server.kill()
 
-
-def _accepts_connections(path: Path) -> bool:
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
-        try:
-            probe.connect(str(path))
-        except OSError:
-            return False
-    return True
+    assert list(tmp_path.glob("*.sock")) == []
 
 
-def test_serve_listens_only_on_the_private_socket(
+_ENTRY_POINTS = [
+    [sys.executable, "-m", "speech_runtime_service"],
+    [str(Path(sys.executable).parent / "speech-runtime-service")],
+]
+
+
+@pytest.mark.parametrize("command", _ENTRY_POINTS, ids=["module", "console script"])
+def test_help_prints_usage_and_exits_zero_without_loading_settings(
+    command: list[str],
+) -> None:
+    environment = {**os.environ, "SPEECH_PORT": "not-a-port"}
+    finished = subprocess.run(
+        [*command, "--help"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert finished.returncode == 0
+    assert "usage:" in finished.stdout
+    assert "SPEECH_CONFIG_FILE" in finished.stdout
+    assert "README" in finished.stdout
+    assert finished.stderr == ""
+
+
+@pytest.mark.parametrize("command", _ENTRY_POINTS, ids=["module", "console script"])
+@pytest.mark.parametrize("argument", ["--serve-faster", "--he"])
+def test_an_unknown_argument_is_a_usage_error_without_starting(
+    command: list[str], argument: str
+) -> None:
+    finished = subprocess.run(
+        [*command, argument],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert finished.returncode != 0
+    assert "usage:" in finished.stderr
+
+
+def test_serve_listens_only_on_one_tcp_socket_of_the_configured_address(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     built: list[uvicorn.Server] = []
@@ -142,35 +182,35 @@ def test_serve_listens_only_on_the_private_socket(
     def install(stop: asyncio.Event) -> None:
         stopping.append(stop)
 
-    async def scenario() -> tuple[int, list[socket.AddressFamily]]:
+    async def scenario() -> tuple[int, list[object]]:
         serving = asyncio.create_task(
             __main__.serve(
                 Settings(
-                    private_directory=tmp_path,
-                    PRESENTATOR_RUNTIME_UID=os.geteuid(),
+                    port=port,
                     config_file=write_caller_configuration(tmp_path),
                 )
             )
         )
         await started.wait()
-        families = [
-            bound.family
+        addresses = [
+            bound.getsockname()
             for listening in built[0].servers
             for bound in listening.sockets
         ]
         stopping[0].set()
-        return await serving, families
+        return await serving, addresses
 
+    port = free_loopback_port()
     runtime = _loadable_runtime()
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "prepare_cuda_libraries", lambda: None)
     monkeypatch.setattr(__main__, "build_server", observed_server)
     monkeypatch.setattr(__main__, "_install_signal_handlers", install)
 
-    outcome, families = asyncio.run(scenario())
+    outcome, addresses = asyncio.run(scenario())
 
     assert outcome == 0
-    assert families == [socket.AF_UNIX]
+    assert addresses == [("127.0.0.1", port)]
 
 
 def _loadable_runtime() -> Runtime:
@@ -201,9 +241,8 @@ def test_the_service_does_not_start_when_an_apps_voices_are_wrong(
     speech_root = Path(__file__).resolve().parents[1]
     environment = {
         **os.environ,
-        "SPEECH_PRIVATE_DIRECTORY": str(tmp_path),
+        "SPEECH_PORT": str(free_loopback_port()),
         "SPEECH_STATE_DIRECTORY": str(tmp_path / "state"),
-        "PRESENTATOR_RUNTIME_UID": str(os.geteuid()),
         "SPEECH_CONFIG_FILE": str(
             write_caller_configuration(
                 tmp_path, caller_configuration_text(apps=f"[apps.quiz]\n{apps}\n")
@@ -225,4 +264,3 @@ def test_the_service_does_not_start_when_an_apps_voices_are_wrong(
     assert f"apps.quiz.{named}" in finished.stderr
     assert "alloy" not in finished.stderr
     assert "chatterbox" not in finished.stderr
-    assert not (tmp_path / "speech.sock").exists()
