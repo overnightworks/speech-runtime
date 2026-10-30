@@ -3,6 +3,6 @@ agent = "Claude 81605327-e238-49d6-9cae-af033b504501"
 role = "builder"
 base = "e9f5a70f2c19aa987cfa2907bd797363ebc9908e"
 branch = "claude/issue-46-n4a1-no-text-in-logs"
-scope = ["README.md", "scripts/prove_speech.py", "src/speech_runtime_service/__main__.py", "src/speech_runtime_service/config.py", "src/speech_runtime_service/failures.py", "src/speech_runtime_service/service.py", "tests/scripts/test_prove_speech.py", "tests/support/fakes_support.py", "tests/test_config.py", "tests/test_control_sample.py", "tests/test_main_logging.py", "tests/test_service_hear.py", "tests/test_service_speak.py"]
+scope = ["README.md", "scripts/prove_speech.py", "src/speech_runtime_service/__main__.py", "src/speech_runtime_service/config.py", "src/speech_runtime_service/failures.py", "src/speech_runtime_service/service.py", "tests/scripts/test_contract_client.py", "tests/scripts/test_prove_speech.py", "tests/support/fakes_support.py", "tests/support/script_support.py", "tests/test_config.py", "tests/test_control_sample.py", "tests/test_main_logging.py", "tests/test_service_hear.py", "tests/test_service_speak.py"]
 opened_commit = "59119679da78b9bca1dd6f2c48b9a4406b058964"
 whole_reason = "K2 is one sentence across the switch, the two text boundaries, their one failure-log owner and the live proof; any part alone leaves a path on which text still reaches the log."
