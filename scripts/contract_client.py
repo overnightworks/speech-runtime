@@ -20,9 +20,9 @@ import statistics
 import sys
 import time
 from array import array
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from websockets.asyncio.client import ClientConnection, unix_connect
 
@@ -67,9 +67,10 @@ class _UnixHttpConnection(http.client.HTTPConnection):
         self.sock.connect(str(self._path))
 
 
-class _Post(NamedTuple):
+@dataclass(frozen=True)
+class _Post:
     body: bytes
-    headers: dict[str, str]
+    headers: dict[str, str] = field(repr=False)
 
 
 def _request(
@@ -77,7 +78,12 @@ def _request(
 ) -> bytes:
     connection = _UnixHttpConnection(path, timeout)
     try:
-        connection.request(method, target, *(post or (None, {})))
+        connection.request(
+            method,
+            target,
+            post.body if post else None,
+            post.headers if post else {},
+        )
         response = connection.getresponse()
         data = response.read()
     except http.client.IncompleteRead:

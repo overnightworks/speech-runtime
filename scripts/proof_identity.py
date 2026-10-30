@@ -17,7 +17,7 @@ import ssl
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Final
 
 import jwt
@@ -46,7 +46,7 @@ KEY_IDENTIFIER: Final = "proof-key"
 class Minting:
     """What the proof's own processes mint tokens from; the service never reads it."""
 
-    private_key_pem: str
+    private_key_pem: str = field(repr=False)
     key_identifier: str
     issuer: str
     audience: str
@@ -63,8 +63,8 @@ class Minting:
 class TokenPair:
     """The app's workload token and the person's token for one request."""
 
-    workload: str
-    person: str
+    workload: str = field(repr=False)
+    person: str = field(repr=False)
 
 
 @dataclass(frozen=True)

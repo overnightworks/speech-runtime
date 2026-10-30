@@ -55,6 +55,21 @@ def test_a_partial_arriving_after_the_last_frame_is_rejected_as_late() -> None:
     assert CLIENT.frames_remain_unsent(pcm, next_offset) is False
 
 
+def test_no_credential_holder_shows_a_key_or_token_when_represented(
+    minting: Minting,
+) -> None:
+    pair = CLIENT.mint_pair(minting)
+    request = CLIENT._Post(  # noqa: SLF001 - the credential-carrying request body
+        b"{}", {"Authorization": f"Bearer {pair.workload}", "X-Person": pair.person}
+    )
+
+    shown = [repr(minting), repr(pair), repr(request)]
+
+    for text in shown:
+        assert "-----BEGIN" not in text
+        assert "eyJ" not in text
+
+
 def test_both_proof_scripts_reach_a_running_speech_over_its_socket(
     tmp_path: Path, minting: Minting
 ) -> None:
