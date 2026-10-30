@@ -232,4 +232,5 @@ def test_the_service_does_not_start_when_an_apps_voices_are_wrong(
     assert finished.returncode != 0
     assert f"apps.quiz.{named}" in finished.stderr
     assert "alloy" not in finished.stderr
+    assert "chatterbox" not in finished.stderr
     assert not (tmp_path / "speech.sock").exists()
