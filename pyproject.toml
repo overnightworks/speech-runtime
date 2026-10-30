@@ -12,7 +12,7 @@ dependencies = [
     "faster-whisper==1.2.1",
     "huggingface-hub==2.3.0",
     "numpy==2.5.4",
-    "overnightworks-webauth @ git+https://github.com/overnightworks/webauth@16b63abd14a56848ccaaaa170e091f9ae6e3e7c3",
+    "overnightworks-webauth @ https://github.com/overnightworks/webauth/releases/download/v0.26.0/overnightworks_webauth-0.26.0-py3-none-any.whl#sha256=85191c4f41d1c287682f55625a4ad12f574dcc53c523376b48b419a2a469582f",
     "nvidia-cublas-cu12==12.9.2.10",
     "nvidia-cudnn-cu12==9.27.0.42",
     "piper-tts==1.8.0",
