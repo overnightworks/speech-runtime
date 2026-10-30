@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
 
     from httpx2 import Response
 
+    from speech_runtime_service.synthesis_gate import Lease
     from tests.support.identity_support import SigningKey
 
 UNAUTHORIZED = (HTTP_401_UNAUTHORIZED, RefusalCode.UNAUTHORIZED)
@@ -398,12 +400,20 @@ def test_a_valid_pair_with_an_invalid_body_is_unprocessable() -> None:
 
 
 def test_the_busy_wait_starts_after_a_slow_identity_check() -> None:
-    held_seconds = 0.4
     busy_wait_seconds = 0.2
+    deadlines: list[float] = []
+    check_released_at: list[float] = []
 
     async def scenario() -> SpeakCall:
         voice = GatedSpeaking()
         runtime = fake_runtime(voice)
+        acquire = runtime.synthesis_gate.acquire
+
+        async def recording_acquire(deadline: float) -> Lease | None:
+            deadlines.append(deadline)
+            return await acquire(deadline)
+
+        runtime.synthesis_gate.acquire = recording_acquire
         holder = SpeakCall(app_over(runtime, busy_wait_seconds=busy_wait_seconds))
         await holder.status()
         await asyncio.to_thread(voice.entered_first_step.wait, 5)
@@ -417,7 +427,7 @@ def test_the_busy_wait_starts_after_a_slow_identity_check() -> None:
         waiting = SpeakCall(slow)
         try:
             await asyncio.to_thread(key_set.held.wait, 5)
-            await asyncio.sleep(held_seconds)
+            check_released_at.append(time.monotonic())
             key_set.hold.set()
             await waiting.status()
         finally:
@@ -430,7 +440,7 @@ def test_the_busy_wait_starts_after_a_slow_identity_check() -> None:
     waiting = asyncio.run(scenario())
 
     assert_call_refusal(waiting, HTTP_429_TOO_MANY_REQUESTS, RefusalCode.BUSY, None)
-    assert waiting.started_after >= held_seconds + busy_wait_seconds - 0.05
+    assert deadlines[-1] >= check_released_at[0] + busy_wait_seconds
 
 
 def test_no_log_record_holds_a_token_a_subject_or_the_input(
@@ -463,22 +473,50 @@ def test_no_log_record_holds_a_token_a_subject_or_the_input(
         assert secret not in text
 
 
-@pytest.mark.parametrize(
-    "expected",
-    [UNAUTHORIZED, FORBIDDEN, UNAVAILABLE],
-    ids=["unauthorized", "forbidden", "unavailable"],
-)
-def test_every_refusal_is_in_openai_form_with_a_fixed_message(
-    expected: tuple[int, RefusalCode],
-) -> None:
+def _unauthorized_causes() -> list[Response]:
     issuer = Issuer()
     workload, person = issuer.tokens()
-    if expected == FORBIDDEN:
-        response = issuer.speak(person, person)
-    elif expected == UNAVAILABLE:
-        issuer.key_set.down = True
-        response = issuer.speak(workload, person)
-    else:
-        response = issuer.speak(None, None)
+    return [
+        issuer.speak(None, None),
+        issuer.speak(workload, _expired(person, issuer.clocks)),
+    ]
 
-    _answers(response, expected)
+
+def _forbidden_causes() -> list[Response]:
+    issuer = Issuer()
+    workload, person = issuer.tokens()
+    return [
+        issuer.speak(person, person),
+        issuer.speak(workload, altered(person, groups=["/apps/quiz"])),
+    ]
+
+
+def _unavailable_causes() -> list[Response]:
+    cold = Issuer()
+    cold.key_set.down = True
+    cold_workload, cold_person = cold.tokens()
+    warm = Issuer()
+    warm.speak_valid()
+    warm.key_set.down = True
+    warm.clocks.advance(2 * 60 * 60)
+    return [cold.speak(cold_workload, cold_person), warm.speak_valid()]
+
+
+@pytest.mark.parametrize(
+    ("expected", "causes"),
+    [
+        (UNAUTHORIZED, _unauthorized_causes),
+        (FORBIDDEN, _forbidden_causes),
+        (UNAVAILABLE, _unavailable_causes),
+    ],
+    ids=["unauthorized", "forbidden", "unavailable"],
+)
+def test_every_refusal_is_in_openai_form_and_says_the_same_whatever_its_cause(
+    expected: tuple[int, RefusalCode], causes: Callable[[], list[Response]]
+) -> None:
+    responses = causes()
+
+    for response in responses:
+        _answers(response, expected)
+    messages = {response.json()["error"]["message"] for response in responses}
+    assert len(messages) == 1
