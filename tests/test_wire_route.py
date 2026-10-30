@@ -142,6 +142,7 @@ def test_another_version_is_refused_as_unsupported(method: str, path: str) -> No
         ("PATCH", SPEECH_PATH),
         ("DELETE", SPEECH_PATH),
         ("OPTIONS", SPEECH_PATH),
+        ("PROPFIND", SPEECH_PATH),
     ],
 )
 def test_any_other_path_or_method_under_version_one_is_not_found(
@@ -214,14 +215,9 @@ def test_an_invalid_body_is_refused_naming_only_a_field_of_the_request_model(
     )
 
 
-@pytest.mark.parametrize(
-    ("limit", "lengths_served", "length_refused"),
-    [(None, [4096], 4097), (10, [1, 10], 11), (5000, [4097, 5000], 5001)],
-)
-def test_the_input_limit_is_configurable_and_may_exceed_openais(
-    limit: int | None, lengths_served: list[int], length_refused: int
+def _assert_input_limit(
+    settings: Settings, lengths_served: list[int], length_refused: int
 ) -> None:
-    settings = Settings() if limit is None else Settings(max_input_characters=limit)
     client = TestClient(speak_app(settings=settings))
 
     served = [
@@ -234,6 +230,25 @@ def test_the_input_limit_is_configurable_and_may_exceed_openais(
     assert_refusal(
         refused, HTTP_422_UNPROCESSABLE_CONTENT, RefusalCode.INVALID_REQUEST, "input"
     )
+
+
+@pytest.mark.parametrize(
+    ("limit", "lengths_served", "length_refused"),
+    [(10, [1, 10], 11), (5000, [4097, 5000], 5001)],
+)
+def test_the_input_limit_is_configurable_and_may_exceed_openais(
+    limit: int, lengths_served: list[int], length_refused: int
+) -> None:
+    _assert_input_limit(
+        Settings(max_input_characters=limit), lengths_served, length_refused
+    )
+
+
+def test_the_default_input_limit_is_the_settings_value() -> None:
+    settings = Settings()
+    limit = settings.max_input_characters
+
+    _assert_input_limit(settings, [limit], limit + 1)
 
 
 _SENTENCE = "Dieser Satz darf in keiner Antwort und keinem Log stehen"
