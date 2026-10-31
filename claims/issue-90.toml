@@ -1,0 +1,8 @@
+claim_id = "78d4fa75e77a4b32998ca48497811cf5"
+agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
+role = "builder"
+base = "8b0ddbc0ee2d9373bb1bfe2067791be3b4b9422c"
+branch = "claude/issue-90-h1b-hear-live-through-openai-s-realtime"
+scope = ["README.md", "docs/ARCHITECTURE.md", "docs/wire.md", "packages/client/src/speech_runtime_client/wire.py", "packages/client/tests", "pyproject.toml", "src/speech_runtime_service", "tests", "uv.lock"]
+opened_commit = "913951e7b314214203efa4c5f7373d8256bc17bd"
+whole_reason = "The live session is one state machine: its wire events, resampler, session, gate extension, route and documents change together, as #83's plan review judged."
