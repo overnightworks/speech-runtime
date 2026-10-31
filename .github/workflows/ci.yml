@@ -278,7 +278,7 @@ jobs:
           exit 1
 
       - name: Token shapes and the caller check with real tokens
-        run: uv run --locked pytest -p no:cacheprovider tests/test_callers_keycloak.py -m keycloak -q -rP
+        run: uv run --locked pytest -p no:cacheprovider tests/test_callers_keycloak.py -m keycloak -v -rP
 
       - name: Keycloak log on failure
         if: failure()
