@@ -270,6 +270,17 @@ def test_a_body_over_the_limit_is_too_large_whatever_it_holds(
     assert_refusal(response, HTTP_413_CONTENT_TOO_LARGE, RefusalCode.TOO_LARGE, None)
 
 
+def test_a_too_large_refusal_holds_no_admission_capacity() -> None:
+    app, limit = _over_the_limit_app()
+    client = TestClient(app)
+
+    refused = post_speech(client, b"x" * (limit + 1))
+    served = post_speech(client, speak_body())
+
+    assert refused.status_code == HTTP_413_CONTENT_TOO_LARGE
+    assert served.status_code == HTTP_200_OK
+
+
 def test_a_body_exactly_at_the_limit_is_parsed_and_served() -> None:
     app, _ = _over_the_limit_app()
 
@@ -310,7 +321,7 @@ def test_an_over_limit_chunked_body_is_refused_and_reading_stops_at_the_limit(
     asyncio.run(app(scope, receive, send))
 
     assert status_of(messages) == HTTP_413_CONTENT_TOO_LARGE
-    assert chunks_read < chunk_count
+    assert chunks_read == 2
 
 
 _SENTENCE = "Dieser Satz darf in keiner Antwort und keinem Log stehen"
