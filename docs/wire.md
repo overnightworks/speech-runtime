@@ -95,6 +95,10 @@ read `code`.
 | `busy` | 429 | the one synthesis is taken and `SPEECH_MAX_WAITING_REQUESTS` requests already wait (answered at once), or it is not free within `SPEECH_BUSY_WAIT_SECONDS` | `Retry-After`: the wait in whole seconds, at least 1 |
 | `unavailable` | 503 | the tokens cannot be checked because the issuer's key set is unreachable and no cached key serves, or the named voice is not the active, ready voice (loading, failed, switched away, or shutting down) | |
 
+Apps read the `busy` wait with `busy_wait(status, headers)` in
+`speech_runtime_client.wire`: it returns the wait in whole seconds, `None` for any
+other status, and fails loud on a `busy` without whole seconds, at least 1, in `Retry-After`.
+
 `n` is read as a decimal integer, so `/v01/...` is version 1. A path that is no
 version path (`/v-1/...`, `/vx/...`, `/speak`) gets the app's default 404 with
 `{"detail": "Not Found"}`, outside the wire.

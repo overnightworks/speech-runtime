@@ -51,7 +51,7 @@ overnightworks-speech-runtime-provider-contract = { path = "providers/provider-c
 addopts = "--strict-config --strict-markers --import-mode=importlib -m 'not keycloak'"
 markers = ["keycloak: needs the CI Keycloak that the keycloak-token-shapes job serves"]
 pythonpath = [".", "scripts"]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/client/tests"]
 
 [tool.coverage.run]
 branch = true
@@ -60,7 +60,7 @@ include = ["src/*", "packages/*/src/*", "providers/*/src/*"]
 
 [tool.ruff]
 target-version = "py314"
-src = [".", "scripts", "src", "packages/client/src", "tests"]
+src = [".", "scripts", "src", "packages/client/src", "tests", "packages/client/tests"]
 # The gate's layout rules forbid package markers in these directories.
 namespace-packages = ["scripts", "tests/scripts", "tests/support"]
 
@@ -86,3 +86,4 @@ convention = "google"
 # Asserts are the tests' checks; a test function's name is its documentation.
 # The tests start the service and the workers as subprocesses with fixed argv.
 "tests/**" = ["S101", "S603", "D103"]
+"packages/client/tests/**" = ["S101", "D103"]
