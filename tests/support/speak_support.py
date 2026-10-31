@@ -25,9 +25,9 @@ if TYPE_CHECKING:
     from httpx2 import Response as ClientResponse
     from starlette.responses import Response, StreamingResponse
 
+    from speech_runtime_service.admission_gate import Lease
     from speech_runtime_service.callers import SpeechCallers
     from speech_runtime_service.service import SpeakingEngine
-    from speech_runtime_service.synthesis_gate import Lease
 
 
 def info_comment_before_data(wav: bytes) -> str | None:

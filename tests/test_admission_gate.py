@@ -20,8 +20,8 @@ from starlette.status import (
 )
 
 from speech_runtime_client.wire import RETRY_AFTER_HEADER, RefusalCode
+from speech_runtime_service.admission_gate import AdmissionGate, Lease
 from speech_runtime_service.pcm import pcm_from_wav
-from speech_runtime_service.synthesis_gate import Lease, SynthesisGate
 from speech_runtime_service.voices import VoiceId
 from tests.support.fakes_support import (
     SPEAK_SAMPLE_RATE,
@@ -71,7 +71,7 @@ async def _settle() -> None:
 
 
 def test_a_free_gate_is_taken_even_past_the_deadline() -> None:
-    gate = SynthesisGate()
+    gate = AdmissionGate()
 
     lease = asyncio.run(gate.acquire(_in(-1), MANY_WAITERS))
 
@@ -79,7 +79,7 @@ def test_a_free_gate_is_taken_even_past_the_deadline() -> None:
 
 
 def test_try_acquire_refuses_while_the_gate_is_held_and_serves_after_release() -> None:
-    gate = SynthesisGate()
+    gate = AdmissionGate()
     held = gate.try_acquire()
     assert held is not None
 
@@ -91,7 +91,7 @@ def test_try_acquire_refuses_while_the_gate_is_held_and_serves_after_release() -
 
 def test_a_waiter_that_reaches_its_deadline_gets_none() -> None:
     async def scenario() -> tuple[object, bool]:
-        gate = SynthesisGate()
+        gate = AdmissionGate()
         held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
         timed_out = await gate.acquire(_in(SHORT_SECONDS), MANY_WAITERS)
@@ -106,7 +106,7 @@ def test_a_waiter_that_reaches_its_deadline_gets_none() -> None:
 
 def test_waiters_are_served_in_the_order_they_came() -> None:
     async def scenario() -> list[str]:
-        gate = SynthesisGate()
+        gate = AdmissionGate()
         first = await gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS)
         assert first is not None
         served: list[str] = []
@@ -132,7 +132,7 @@ def test_waiters_are_served_in_the_order_they_came() -> None:
 
 def test_a_release_from_another_thread_serves_the_waiter() -> None:
     async def scenario() -> bool:
-        gate = SynthesisGate()
+        gate = AdmissionGate()
         held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
         waiting = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS))
@@ -163,7 +163,7 @@ class _InterleavingGuard:
             action()
 
 
-class _InterleavedGate(SynthesisGate):
+class _InterleavedGate(AdmissionGate):
     def __init__(self) -> None:
         super().__init__()
         self.interleaving = _InterleavingGuard()
@@ -190,7 +190,7 @@ def test_a_release_right_after_the_gate_is_found_held_still_serves_the_waiter() 
 
 def test_a_cancelled_waiter_leaves_the_gate_to_the_next() -> None:
     async def scenario() -> bool:
-        gate = SynthesisGate()
+        gate = AdmissionGate()
         held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
         cancelled = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS))
@@ -210,7 +210,7 @@ def test_a_cancelled_waiter_leaves_the_gate_to_the_next() -> None:
 
 def test_a_waiter_cancelled_after_the_hand_off_is_scheduled_frees_the_gate() -> None:
     async def scenario() -> bool:
-        gate = SynthesisGate()
+        gate = AdmissionGate()
         held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
         waiting = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS))
@@ -225,7 +225,7 @@ def test_a_waiter_cancelled_after_the_hand_off_is_scheduled_frees_the_gate() -> 
 
 
 def test_a_lease_gives_the_gate_back_once() -> None:
-    gate = SynthesisGate()
+    gate = AdmissionGate()
     lease = gate.try_acquire()
     assert lease is not None
     lease.close()

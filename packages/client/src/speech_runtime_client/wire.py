@@ -1,9 +1,10 @@
 """The wire between an app and the speech service.
 
-This module is the one owner of what travels on `POST /v1/audio/speech`: the
-path, the request, and the closed list of refusals with their statuses,
-messages and the body they are answered in (OpenAI's error form). The service
-and its callers import these types and copy none of them.
+This module is the one owner of what travels on `POST /v1/audio/speech` and
+`POST /v1/audio/transcriptions`: the paths, the requests, the transcription
+answer, and the closed list of refusals with their statuses, messages and the
+body they are answered in (OpenAI's error form). The service and its callers
+import these types and copy none of them.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 SPEECH_PATH: Final = "/v1/audio/speech"
+TRANSCRIPTIONS_PATH: Final = "/v1/audio/transcriptions"
 API_VERSION: Final = 1
 MODEL: Final = "speech-runtime"
 RESPONSE_FORMAT: Final = "wav"
@@ -28,7 +30,7 @@ WORKLOAD_TOKEN_HEADER: Final = "Speech-Workload-Token"  # noqa: S105 - a header 
 AUTHORIZATION_HEADER: Final = "Authorization"
 AUTHENTICATE_HEADER: Final = "WWW-Authenticate"
 
-RequestField = Literal["model", "input", "voice", "response_format"]
+RequestField = Literal["file", "model", "input", "voice", "language", "response_format"]
 _INPUT_WITHOUT_CONTENT: Final = "input must hold a letter or a digit"
 
 
@@ -60,6 +62,31 @@ class SpeechRequest(BaseModel):
         return voice
 
 
+class HearingLanguage(StrEnum):
+    """The languages the service hears."""
+
+    DE = "de"
+    EN = "en"
+
+
+class TranscriptionRequest(BaseModel):
+    """The form fields of `POST /v1/audio/transcriptions` beside its `file`."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    model: Literal["speech-runtime"]
+    language: HearingLanguage = HearingLanguage.DE
+    response_format: Literal["json"] = "json"
+
+
+class Transcription(BaseModel):
+    """The answer of `POST /v1/audio/transcriptions`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str
+
+
 def speech_request_body(text: str, voice: str) -> bytes:
     """The JSON a caller posts to speak `text` with the voice `voice`."""
     request = SpeechRequest(
@@ -84,6 +111,7 @@ class RefusalCode(StrEnum):
     NOT_FOUND = "not_found"
     UNAUTHORIZED = "unauthorized"
     FORBIDDEN = "forbidden"
+    NOT_ENABLED = "not_enabled"
     INVALID_REQUEST = "invalid_request"
     TOO_LARGE = "too_large"
     BUSY = "busy"
@@ -95,6 +123,7 @@ REFUSAL_STATUS: Final[dict[RefusalCode, HTTPStatus]] = {
     RefusalCode.NOT_FOUND: HTTPStatus.NOT_FOUND,
     RefusalCode.UNAUTHORIZED: HTTPStatus.UNAUTHORIZED,
     RefusalCode.FORBIDDEN: HTTPStatus.FORBIDDEN,
+    RefusalCode.NOT_ENABLED: HTTPStatus.FORBIDDEN,
     RefusalCode.INVALID_REQUEST: HTTPStatus.UNPROCESSABLE_ENTITY,
     RefusalCode.TOO_LARGE: HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
     RefusalCode.BUSY: HTTPStatus.TOO_MANY_REQUESTS,
@@ -108,9 +137,10 @@ _REFUSAL_MESSAGE: Final[dict[RefusalCode, str]] = {
         "A workload token and the person's token are required, and both must be valid."
     ),
     RefusalCode.FORBIDDEN: "The tokens do not permit this request.",
+    RefusalCode.NOT_ENABLED: "This app is not permitted to use this feature.",
     RefusalCode.INVALID_REQUEST: "The request is not valid.",
     RefusalCode.TOO_LARGE: "The request body is too large.",
-    RefusalCode.BUSY: "The service is busy speaking; try again.",
+    RefusalCode.BUSY: "The service is busy; try again.",
     RefusalCode.UNAVAILABLE: "The service cannot serve this request right now.",
 }
 

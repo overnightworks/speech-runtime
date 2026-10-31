@@ -9,11 +9,14 @@ description = "Local speech synthesis, one process on the card."
 requires-python = ">=3.14"
 dependencies = [
     "fastapi==0.162.0",
+    "faster-whisper==1.2.1",
     "huggingface-hub==2.3.0",
     "overnightworks-webauth @ https://github.com/overnightworks/webauth/releases/download/v0.27.0/overnightworks_webauth-0.27.0-py3-none-any.whl#sha256=a22b557912ec97b4f4280ae3d99f815bb043e9fc90ebc86ee80febf1d968b1e7",
     "nvidia-cublas-cu12==12.9.2.10",
     "nvidia-cudnn-cu12==9.27.0.42",
+    "numpy==2.5.4",
     "piper-tts==1.8.0",
+    "python-multipart==0.0.32",
     "pydantic-settings==2.16.1",
     "uvicorn==0.54.0",
     "overnightworks-speech-runtime-client",

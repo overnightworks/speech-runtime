@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 
     from httpx2 import Response
 
-    from speech_runtime_service.synthesis_gate import Lease
+    from speech_runtime_service.admission_gate import Lease
     from tests.support.identity_support import SigningKey
 
 UNAUTHORIZED = (HTTP_401_UNAUTHORIZED, RefusalCode.UNAUTHORIZED)

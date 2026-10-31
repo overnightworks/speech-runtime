@@ -1,4 +1,4 @@
-"""One synthesis at a time: the gate every speaking request passes."""
+"""One job at a time: the gate a resource puts before its heavy work."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class _Waiter:
     future: asyncio.Future[Lease]
 
 
-class SynthesisGate:
+class AdmissionGate:
     """Serves waiters first come first served; a waiter holds no thread."""
 
     def __init__(self) -> None:
