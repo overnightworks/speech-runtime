@@ -41,6 +41,8 @@ from speech_runtime_service.voices import VoiceId
 from speech_runtime_service.wav_response import ClosingWavResponse
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
+
     from fastapi import FastAPI
     from starlette.datastructures import FormData
     from starlette.responses import Response
@@ -174,8 +176,8 @@ def _replayed(request: Request, body: bytes) -> Request:
     """A request over the same scope whose body is the already read `body`."""
     messages = iter([{"type": "http.request", "body": body, "more_body": False}])
 
-    async def receive() -> Message:
-        return next(messages, {"type": "http.disconnect"})
+    def receive() -> Awaitable[Message]:
+        return asyncio.sleep(0, next(messages, {"type": "http.disconnect"}))
 
     return Request(request.scope, receive)
 
@@ -265,7 +267,7 @@ class _TranscriptionRoute:
             return _refused(RefusalCode.TOO_LARGE, "file")
         except UndecodableRecordingError:
             return _refused(RefusalCode.INVALID_REQUEST, "file")
-        except Exception as error:  # noqa: BLE001 - logged by type, never by message
+        except Exception as error:  # noqa: BLE001 - logged by type and never by message
             log_failure(logger, "hearing failed", error)
             return _refused(RefusalCode.UNAVAILABLE)
         return JSONResponse(Transcription(text=text).model_dump())
