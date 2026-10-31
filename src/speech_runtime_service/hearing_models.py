@@ -5,8 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from huggingface_hub import snapshot_download, try_to_load_from_cache
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _CONFIGURATION_FILE = "config.json"
 
@@ -73,10 +77,17 @@ def model_directory(model: HearingModel, cache: Path) -> Path:
     return Path(found[0]).parent
 
 
-def fetch_model(model: HearingModel, cache: Path) -> Path:
-    """Download the pinned files of `model` into `cache`, and return their directory."""
+def fetch_model(
+    model: HearingModel,
+    cache: Path,
+    download: Callable[..., str] = snapshot_download,
+) -> Path:
+    """Download the pinned files of `model` into `cache`, and return their directory.
+
+    `download` is the Hugging Face snapshot downloader.
+    """
     artifacts = _ARTIFACTS[model]
-    snapshot_download(
+    download(
         artifacts.repository,
         revision=artifacts.revision,
         cache_dir=cache,

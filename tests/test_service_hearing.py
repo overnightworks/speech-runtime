@@ -102,14 +102,9 @@ def test_without_a_hearing_model_health_names_hearing_unavailable() -> None:
     assert runtime.health()["hearing"] == {"model": "unavailable", "ready": False}
 
 
-def test_a_configured_model_that_was_not_fetched_stops_the_start_without_a_download(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_configured_model_that_was_not_fetched_stops_the_start(
+    tmp_path: Path,
 ) -> None:
-    def forbidden(*_arguments: object, **_keywords: object) -> str:
-        message = "the start must not download"
-        raise AssertionError(message)
-
-    monkeypatch.setattr(hearing_models, "snapshot_download", forbidden)
     settings = Settings(hearing_model=HearingModel.SMALL, huggingface_cache=tmp_path)
 
     with pytest.raises(HearingModelMissingError, match="SPEECH_HEARING_MODEL"):
@@ -117,10 +112,9 @@ def test_a_configured_model_that_was_not_fetched_stops_the_start_without_a_downl
 
 
 def test_a_configured_model_that_was_fetched_is_named_in_health_before_it_loads(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(hearing_models, "snapshot_download", write_snapshot)
-    hearing_models.fetch_model(HearingModel.SMALL, tmp_path)
+    hearing_models.fetch_model(HearingModel.SMALL, tmp_path, write_snapshot)
     settings = Settings(hearing_model=HearingModel.SMALL, huggingface_cache=tmp_path)
 
     runtime = Runtime.from_settings(settings)

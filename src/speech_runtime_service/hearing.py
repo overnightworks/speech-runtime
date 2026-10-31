@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import gc
 import logging
-from typing import TYPE_CHECKING, Final, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from speech_runtime_service.admission_gate import AdmissionGate
 from speech_runtime_service.cuda_libs import prepare_cuda_libraries
 from speech_runtime_service.hearing_models import model_directory
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from speech_runtime_client.wire import HearingLanguage
@@ -48,27 +50,48 @@ def _is_resource_failure(error: RuntimeError) -> bool:
     return "out of memory" in str(error).lower()
 
 
+@dataclass(frozen=True, slots=True)
+class HearingLibraries:
+    """The two entry points of the inference libraries that hearing needs."""
+
+    model_factory: Callable[..., Any]
+    cuda_device_count: Callable[[], int]
+
+
+def installed_libraries() -> HearingLibraries:
+    """The installed faster-whisper and CTranslate2, imported only now."""
+    prepare_cuda_libraries()
+    import ctranslate2  # noqa: PLC0415 - heavy, and loaded only once hearing is configured
+    from faster_whisper import WhisperModel  # noqa: PLC0415 - as above
+
+    return HearingLibraries(WhisperModel, ctranslate2.get_cuda_device_count)
+
+
 class WhisperHearing:
     """One faster-whisper model, loaded once from local files and held."""
 
-    def __init__(self, model: HearingModel, directory: Path, device: str) -> None:
+    def __init__(
+        self,
+        model: HearingModel,
+        directory: Path,
+        device: str,
+        libraries: Callable[[], HearingLibraries] = installed_libraries,
+    ) -> None:
         """Remember the model, where its files are and the device it will occupy."""
         self.model_name = model.value
         self._directory = directory
         self._cuda = device.startswith("cuda")
+        self._libraries = libraries
         self._model = None
 
     def load(self) -> None:
         """Load the CTranslate2 weights from the local directory, never the network."""
-        prepare_cuda_libraries()
-        import ctranslate2  # noqa: PLC0415 - heavy, and loaded only once hearing is configured
-        from faster_whisper import WhisperModel  # noqa: PLC0415 - as above
-
-        if self._cuda and ctranslate2.get_cuda_device_count() == 0:
+        libraries = self._libraries()
+        if self._cuda and libraries.cuda_device_count() == 0:
             message = "no CUDA device"
             raise ResourceUnavailableError(message)
         try:
-            self._model = WhisperModel(
+            self._model = libraries.model_factory(
                 str(self._directory),
                 device="cuda" if self._cuda else "cpu",
                 compute_type="float16" if self._cuda else "int8",
