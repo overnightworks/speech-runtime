@@ -21,7 +21,7 @@ def test_busy_answer_gives_the_wait_in_seconds() -> None:
 
 
 def test_header_name_is_matched_case_insensitively() -> None:
-    assert busy_wait(int(BUSY), {RETRY_AFTER_HEADER.lower(): "0"}) == BusyWait(0)
+    assert busy_wait(int(BUSY), {RETRY_AFTER_HEADER.lower(): "1"}) == BusyWait(1)
 
 
 @pytest.mark.parametrize(
@@ -40,8 +40,9 @@ def test_other_statuses_give_no_wait(status: HTTPStatus) -> None:
         {RETRY_AFTER_HEADER: "1.5"},
         {RETRY_AFTER_HEADER: "Wed, 21 Oct 2026 07:28:00 GMT"},
         {RETRY_AFTER_HEADER: ""},
+        {RETRY_AFTER_HEADER: "0"},
     ],
-    ids=["missing", "negative", "fraction", "http-date", "empty"],
+    ids=["missing", "negative", "fraction", "http-date", "empty", "zero"],
 )
 def test_busy_answer_without_whole_seconds_fails_loud(headers: dict[str, str]) -> None:
     with pytest.raises(RetryAfterError, match=RETRY_AFTER_HEADER):

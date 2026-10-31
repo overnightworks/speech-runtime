@@ -169,13 +169,15 @@ def busy_wait(status: int, headers: Mapping[str, str]) -> BusyWait | None:
     """The wait a `busy` answer asks for, or `None` for any other status.
 
     Raises `RetryAfterError` when a `busy` answer lacks a `Retry-After` of whole
-    seconds: the service never sends a date.
+    seconds, at least 1: the service never sends a date.
     """
     if status != REFUSAL_STATUS[RefusalCode.BUSY]:
         return None
     wanted = RETRY_AFTER_HEADER.lower()
     value = next((v for name, v in headers.items() if name.lower() == wanted), None)
-    if value is None or not (value.isascii() and value.isdigit()):
-        message = f"{RETRY_AFTER_HEADER} must be whole seconds, got {value!r}"
+    if value is None or not (value.isascii() and value.isdigit()) or int(value) < 1:
+        message = (
+            f"{RETRY_AFTER_HEADER} must be whole seconds, at least 1, got {value!r}"
+        )
         raise RetryAfterError(message)
     return BusyWait(retry_after_seconds=int(value))

@@ -97,7 +97,7 @@ read `code`.
 
 Apps read the `busy` wait with `busy_wait(status, headers)` in
 `speech_runtime_client.wire`: it returns the wait in whole seconds, `None` for any
-other status, and fails loud on a `busy` without whole seconds in `Retry-After`.
+other status, and fails loud on a `busy` without whole seconds, at least 1, in `Retry-After`.
 
 `n` is read as a decimal integer, so `/v01/...` is version 1. A path that is no
 version path (`/v-1/...`, `/vx/...`, `/speak`) gets the app's default 404 with
