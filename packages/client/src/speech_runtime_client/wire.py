@@ -8,11 +8,15 @@ and its callers import these types and copy none of them.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
 from http import HTTPStatus
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 SPEECH_PATH: Final = "/v1/audio/speech"
 API_VERSION: Final = 1
@@ -148,3 +152,30 @@ def refusal(code: RefusalCode, param: RequestField | None = None) -> Refusal:
             message=_REFUSAL_MESSAGE[code], type=kind, param=param, code=code
         )
     )
+
+
+class RetryAfterError(ValueError):
+    """A `busy` answer whose `Retry-After` is not a whole number of seconds."""
+
+
+@dataclass(frozen=True)
+class BusyWait:
+    """How long the service asks the app to wait after a `busy` refusal."""
+
+    retry_after_seconds: int
+
+
+def busy_wait(status: int, headers: Mapping[str, str]) -> BusyWait | None:
+    """The wait a `busy` answer asks for, or `None` for any other status.
+
+    Raises `RetryAfterError` when a `busy` answer lacks a `Retry-After` of whole
+    seconds: the service never sends a date.
+    """
+    if status != REFUSAL_STATUS[RefusalCode.BUSY]:
+        return None
+    wanted = RETRY_AFTER_HEADER.lower()
+    value = next((v for name, v in headers.items() if name.lower() == wanted), None)
+    if value is None or not (value.isascii() and value.isdigit()):
+        message = f"{RETRY_AFTER_HEADER} must be whole seconds, got {value!r}"
+        raise RetryAfterError(message)
+    return BusyWait(retry_after_seconds=int(value))
