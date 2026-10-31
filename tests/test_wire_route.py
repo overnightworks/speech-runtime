@@ -301,6 +301,7 @@ def test_an_over_limit_chunked_body_is_refused_and_reading_stops_at_the_limit(
 ) -> None:
     limit = 10
     chunk_count = 50
+    chunks_to_pass_the_limit = 2
     app = speak_app(settings=Settings(max_body_bytes=limit))
     chunks_read = 0
     messages: list[dict[str, object]] = []
@@ -321,7 +322,7 @@ def test_an_over_limit_chunked_body_is_refused_and_reading_stops_at_the_limit(
     asyncio.run(app(scope, receive, send))
 
     assert status_of(messages) == HTTP_413_CONTENT_TOO_LARGE
-    assert chunks_read == 2
+    assert chunks_read == chunks_to_pass_the_limit
 
 
 _SENTENCE = "Dieser Satz darf in keiner Antwort und keinem Log stehen"
