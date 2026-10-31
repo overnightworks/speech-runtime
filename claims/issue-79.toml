@@ -1,8 +1,0 @@
-claim_id = "947ef1ca883b4fd1bac3d3020332258d"
-agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
-role = "builder"
-base = "4f4974607dd51aaab6762f73f3f29f070cd6f7d7"
-branch = "claude/issue-79-n4d-keycloak-token-shapes"
-scope = [".github/workflows/ci.yml", "AGENTS.md", "README.md", "docs/ARCHITECTURE.md", "pyproject.toml", "quality/config.toml", "tests/fixtures/keycloak", "tests/support/keycloak_support.py", "tests/test_callers_keycloak.py"]
-opened_commit = "b9575bf8e009e685744d3ba23ee2f47d5f6c9e30"
-whole_reason = "One proof: the realm fixture, the tests that read it, the job that serves it and the gate entry that requires it only prove something together."
