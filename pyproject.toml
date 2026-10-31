@@ -10,7 +10,7 @@ requires-python = ">=3.14"
 dependencies = [
     "fastapi==0.162.0",
     "huggingface-hub==2.3.0",
-    "overnightworks-webauth @ https://github.com/overnightworks/webauth/releases/download/v0.26.0/overnightworks_webauth-0.26.0-py3-none-any.whl#sha256=85191c4f41d1c287682f55625a4ad12f574dcc53c523376b48b419a2a469582f",
+    "overnightworks-webauth @ https://github.com/overnightworks/webauth/releases/download/v0.27.0/overnightworks_webauth-0.27.0-py3-none-any.whl#sha256=a22b557912ec97b4f4280ae3d99f815bb043e9fc90ebc86ee80febf1d968b1e7",
     "nvidia-cublas-cu12==12.9.2.10",
     "nvidia-cudnn-cu12==9.27.0.42",
     "piper-tts==1.8.0",
