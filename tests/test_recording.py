@@ -33,8 +33,8 @@ def test_a_recording_exactly_as_long_as_the_limit_is_decoded() -> None:
 
 @pytest.mark.parametrize(
     "bytes_sent",
-    [b"", b"not audio at all" * 64, recording(seconds=0.5)[:20]],
-    ids=["empty", "garbage", "cut-header"],
+    [b"", b"not audio at all" * 64, recording(seconds=0.5)[:20], recording(0)],
+    ids=["empty", "garbage", "cut-header", "no-samples"],
 )
 def test_bytes_that_are_not_sound_are_refused(bytes_sent: bytes) -> None:
     with pytest.raises(UndecodableRecordingError):

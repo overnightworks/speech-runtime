@@ -127,3 +127,14 @@ def test_the_audio_is_heard_greedily_at_temperature_zero_in_the_asked_language(
 def test_hearing_before_the_load_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="not loaded"):
         _engine(tmp_path).transcribe(b"", HearingLanguage.DE)
+
+
+@pytest.mark.usefixtures("library")
+def test_a_closed_engine_no_longer_hears(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+    engine.load()
+
+    engine.close()
+
+    with pytest.raises(RuntimeError, match="not loaded"):
+        engine.transcribe(b"", HearingLanguage.DE)

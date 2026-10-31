@@ -172,14 +172,10 @@ class _SpeechRoute:
 
 def _replayed(request: Request, body: bytes) -> Request:
     """A request over the same scope whose body is the already read `body`."""
-    delivered = False
+    messages = iter([{"type": "http.request", "body": body, "more_body": False}])
 
     async def receive() -> Message:
-        nonlocal delivered
-        if delivered:
-            return {"type": "http.disconnect"}
-        delivered = True
-        return {"type": "http.request", "body": body, "more_body": False}
+        return next(messages, {"type": "http.disconnect"})
 
     return Request(request.scope, receive)
 

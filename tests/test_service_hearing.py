@@ -84,6 +84,16 @@ def test_a_loaded_engine_is_ready_in_health() -> None:
     assert runtime.health()["hearing"] == {"model": engine.model_name, "ready": True}
 
 
+def test_closing_the_runtime_frees_the_hearing_engine() -> None:
+    engine = FakeHearing()
+    runtime = _starting(engine)
+    runtime.load()
+
+    runtime.close()
+
+    assert engine.closed == 1
+
+
 def test_without_a_hearing_model_health_names_hearing_unavailable() -> None:
     runtime = _starting(None)
 

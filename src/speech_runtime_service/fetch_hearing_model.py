@@ -21,7 +21,3 @@ def main() -> None:
     parser.add_argument("model", type=HearingModel, choices=list(HearingModel))
     model = parser.parse_args().model
     print(fetch_model(model, load_settings().huggingface_cache))
-
-
-if __name__ == "__main__":
-    main()
