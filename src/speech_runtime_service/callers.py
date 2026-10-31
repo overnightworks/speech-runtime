@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Final
 
 from webauth.oidc_login import AdmissionConfig, NoAdmins
 from webauth.service_callers import (
-    CallerRefusalReason,
+    CallerRefusalClass,
     PersonCaller,
     RegisteredApp,
     ServiceCallerCheck,
@@ -39,26 +39,11 @@ if TYPE_CHECKING:
 
 MAX_WORKLOAD_SECONDS: Final = 300
 _BEARER_SCHEME: Final = "bearer"
-_REFUSAL_CODE: Final[dict[CallerRefusalReason, RefusalCode]] = {
-    CallerRefusalReason.KEY_SET_UNAVAILABLE: RefusalCode.UNAVAILABLE,
-    CallerRefusalReason.MISSING_TOKEN: RefusalCode.UNAUTHORIZED,
-    CallerRefusalReason.TOKEN_REJECTED: RefusalCode.UNAUTHORIZED,
-    CallerRefusalReason.INVALID_SUBJECT: RefusalCode.UNAUTHORIZED,
-    CallerRefusalReason.MALFORMED_GROUPS: RefusalCode.UNAUTHORIZED,
-    CallerRefusalReason.NOT_A_WORKLOAD: RefusalCode.FORBIDDEN,
-    CallerRefusalReason.UNBOUND_CLIENT: RefusalCode.FORBIDDEN,
-    CallerRefusalReason.UNREGISTERED_CLIENT: RefusalCode.FORBIDDEN,
-    CallerRefusalReason.WORKLOAD_LIVES_TOO_LONG: RefusalCode.FORBIDDEN,
-    CallerRefusalReason.CLIENT_MISMATCH: RefusalCode.FORBIDDEN,
-    CallerRefusalReason.SAME_SUBJECT: RefusalCode.FORBIDDEN,
-    CallerRefusalReason.NOT_A_MEMBER: RefusalCode.FORBIDDEN,
+_REFUSAL_CODE: Final = {
+    CallerRefusalClass.UNAUTHENTICATED: RefusalCode.UNAUTHORIZED,
+    CallerRefusalClass.UNAVAILABLE: RefusalCode.UNAVAILABLE,
+    CallerRefusalClass.FORBIDDEN: RefusalCode.FORBIDDEN,
 }
-_UNMAPPED_REASONS: Final = set(CallerRefusalReason) - _REFUSAL_CODE.keys()
-if _UNMAPPED_REASONS:
-    _UNMAPPED_MESSAGE = "no refusal code for " + ", ".join(
-        sorted(reason.name for reason in _UNMAPPED_REASONS)
-    )
-    raise ImportError(_UNMAPPED_MESSAGE)
 
 
 class SpeechCallers:
@@ -123,7 +108,7 @@ class SpeechCallers:
             _bearer_token(headers.get(AUTHORIZATION_HEADER)),
         )
         if not isinstance(caller, PersonCaller):
-            return _REFUSAL_CODE[caller.reason]
+            return _REFUSAL_CODE[caller.refusal_class]
         if self._service_group not in caller.groups:
             return RefusalCode.FORBIDDEN
         return caller
