@@ -3,5 +3,6 @@ agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
 role = "builder"
 base = "88cf9989f6b1a55ea21bbf85152a0907ed8cb78d"
 branch = "claude/issue-86-client-reads-429-busy-wait"
-scope = ["docs/wire.md", "packages/client/src/speech_runtime_client/wire.py", "tests/test_wire.py"]
+scope = ["docs/wire.md", "packages/client/src/speech_runtime_client/wire.py", "packages/client/tests/test_wire.py", "pyproject.toml"]
 opened_commit = "05ffe4cdb2ade30374c0c752846683c8f10c96b0"
+whole_reason = "The reader, its test in the client package's own tests folder (where the gate's test-layout rule mirrors it), the root test run that collects that folder, and the wire document change together."
