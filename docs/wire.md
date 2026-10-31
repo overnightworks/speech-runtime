@@ -1,13 +1,17 @@
 # The speech wire
 
-Audience: an app developer who speaks through this service.
+Audience: an app developer who speaks, or has a recording heard, through this
+service.
 
 One request speaks one text: `POST /v1/audio/speech` on the TCP address
 `SPEECH_HOST:SPEECH_PORT`. It is a strict subset of
 OpenAI's speech endpoint, so an OpenAI-shaped client can build the body.
+One request hears one recording: `POST /v1/audio/transcriptions`, a strict
+subset of OpenAI's transcription endpoint, described under
+[Hearing a recording](#hearing-a-recording).
 `speech_runtime_client.wire` (the `overnightworks-speech-runtime-client`
-distribution) owns the path, the request type and the refusal list; build the
-body and read the refusals through it.
+distribution) owns the paths, the request types, the transcription answer and
+the refusal list; build the body and read the refusals through it.
 
 ## Request
 
@@ -50,9 +54,11 @@ without a person, are not offered in version 1.
 
 ## Admission
 
-The scarce resource is the one synthesis a process runs at a time. A request
-that finds it taken may wait, within two limits, and anything beyond them is
-refused before any work starts:
+Speaking and hearing each have one scarce resource, the one synthesis and the
+one decode a process runs at a time, each under its own limits; a request is
+refused only by the limits of its own resource. For speaking, a request that
+finds the synthesis taken may wait, within two limits, and anything beyond
+them is refused before any work starts:
 
 - `SPEECH_MAX_WAITING_REQUESTS` places for requests that wait for the synthesis.
   A request that finds the synthesis taken and every place taken is refused at
@@ -64,6 +70,51 @@ refused before any work starts:
   parsing the body. It answers only a caller whose tokens are accepted.
 
 A refused request holds no place, so the next one is served.
+
+## Hearing a recording
+
+`POST /v1/audio/transcriptions` answers the words of one recording. It carries
+the same two headers as a speak request and is checked in this order, each step
+before the next: the tokens, the app's `hear` permission, whether hearing is
+available, the body's size, the form, the decode's admission, the recording's
+length, the decoding itself.
+
+The body is `multipart/form-data` with exactly these fields:
+
+| Field | Accepted value |
+|---|---|
+| `file` | The recording, required, in any container and codec PyAV reads (WAV, MP3, Ogg, FLAC, ...). |
+| `model` | `speech-runtime`, required. |
+| `language` | `de` or `en`; `de` when absent. Any other value is refused. |
+| `response_format` | `json`; `json` when absent. |
+
+Any other field (`prompt`, `temperature`, `timestamp_granularities[]`, ...) is
+refused. The answer is `200` with `{"text": "..."}`; the same recording gives
+the same text.
+
+An app hears only if its table in `SPEECH_CONFIG_FILE` says `hear = true`;
+otherwise the answer is `not_enabled`, after the tokens are accepted. Hearing
+is `unavailable` while no model is configured (`SPEECH_HEARING_MODEL`), while
+it loads, when its load found no CUDA device or no room on the card, and when a
+decode fails.
+
+The limits, each answered without decoding more than it must:
+
+- `SPEECH_MAX_RECORDING_BYTES` bounds the request body. The service stops
+  reading at the limit, whatever `Content-Length` says, and answers `too_large`
+  before it parses the form.
+- `SPEECH_MAX_RECORDING_SECONDS` bounds the recording's length. The decoder
+  stops at the limit and the answer is `too_large` with `param` `file`; a
+  recording longer than the limit is never transcribed in part.
+- `SPEECH_HEARING_MAX_WAITING_REQUESTS` places for requests that wait for the
+  one decode, and `SPEECH_HEARING_BUSY_WAIT_SECONDS` for how long they wait. A
+  request that finds the decode taken and every place taken is refused at once
+  with `busy` and `Retry-After`; so is one whose wait runs out. The decode is
+  freed only when it has finished, even if the caller has gone.
+
+Audio that PyAV cannot read, or that holds no sound, is `invalid_request` with
+`param` `file`. A body that is not a multipart form, or has no `file`, is
+`invalid_request` with `param` `file` as well.
 
 ## Response
 
@@ -80,9 +131,9 @@ Every refusal is `Content-Type: application/json` in OpenAI's error form,
 `{"error": {"message", "type", "param", "code"}}`. `message` is a fixed
 sentence per code and never echoes the request. `type` is
 `invalid_request_error` for a 4xx and `server_error` for a 5xx. `param` is one
-of `model`, `input`, `voice`, `response_format`, or `null` when no request
-field is at fault (an unknown field, a body that is not a JSON object). Apps
-read `code`.
+of `file`, `model`, `input`, `voice`, `language`, `response_format`, or `null`
+when no request field is at fault (an unknown field, a body that is not a JSON
+object). Apps read `code`.
 
 | `code` | Status | When | Header |
 |---|---|---|---|
@@ -90,10 +141,11 @@ read `code`.
 | `not_found` | 404 | any other path or method under version 1 | |
 | `unauthorized` | 401 | a token is missing, malformed, expired, for another issuer or audience, badly signed, or lacks a subject or a valid group claim | `WWW-Authenticate`: `Bearer` |
 | `forbidden` | 403 | both tokens are valid but do not permit the request: not a workload token, an unregistered app, a workload token that lives too long, tokens of different clients or of one subject, a person outside the app group or the service group, or a voice the app's configuration does not list (`param` `voice`) | |
-| `invalid_request` | 422 | the body is not a JSON object, a field is missing, unknown or mistyped, a value is not accepted, or `input` is empty, without a letter or digit, or over the limit | |
-| `too_large` | 413 | the body is over `SPEECH_MAX_BODY_BYTES` | |
-| `busy` | 429 | the one synthesis is taken and `SPEECH_MAX_WAITING_REQUESTS` requests already wait (answered at once), or it is not free within `SPEECH_BUSY_WAIT_SECONDS` | `Retry-After`: the wait in whole seconds, at least 1 |
-| `unavailable` | 503 | the tokens cannot be checked because the issuer's key set is unreachable and no cached key serves, or the named voice is not the active, ready voice (loading, failed, switched away, or shutting down) | |
+| `not_enabled` | 403 | the app's table does not say `hear = true` (`POST /v1/audio/transcriptions` only) | |
+| `invalid_request` | 422 | the body is not a JSON object, a field is missing, unknown or mistyped, a value is not accepted, or `input` is empty, without a letter or digit, or over the limit; for a recording: the form or `file` is missing, a field is unknown or not accepted, or the audio cannot be decoded (`param` `file`) | |
+| `too_large` | 413 | the body is over `SPEECH_MAX_BODY_BYTES` (a recording: `SPEECH_MAX_RECORDING_BYTES`), or the recording is longer than `SPEECH_MAX_RECORDING_SECONDS` (`param` `file`) | |
+| `busy` | 429 | the one synthesis (a recording: the one decode) is taken and its waiting places are taken (answered at once), or it is not free within its wait: `SPEECH_MAX_WAITING_REQUESTS` and `SPEECH_BUSY_WAIT_SECONDS`, for a recording `SPEECH_HEARING_MAX_WAITING_REQUESTS` and `SPEECH_HEARING_BUSY_WAIT_SECONDS` | `Retry-After`: the wait in whole seconds, at least 1 |
+| `unavailable` | 503 | the tokens cannot be checked because the issuer's key set is unreachable and no cached key serves, or the named voice is not the active, ready voice (loading, failed, switched away, or shutting down); for a recording: hearing is not loaded or configured, or its decode failed | |
 
 Apps read the `busy` wait with `busy_wait(status, headers)` in
 `speech_runtime_client.wire`: it returns the wait in whole seconds, `None` for any
@@ -122,17 +174,28 @@ version path (`/v-1/...`, `/vx/...`, `/speak`) gets the app's default 404 with
   `leeway_seconds` (default 0). Each `[apps.<name>]` table, at least one,
   holds `workload_client`, the client id of that app's workload token; a client
   belongs to one app, and the app group `/apps/<name>` follows from the name; and
-  `voices`, required, at least one catalogue id: the voices that app may name.
-  An unknown id is refused at start. Unknown keys are refused.
+  `voices`, required, at least one catalogue id: the voices that app may name;
+  and `hear`, `false` when absent: whether that app may have recordings
+  heard. An unknown id is refused at start. Unknown keys are refused.
+- `SPEECH_HEARING_MODEL` (`large-v3` or `small`, none when absent): the hearing
+  model the process loads at start. With none, hearing is `unavailable`.
+- `SPEECH_HEARING_BUSY_WAIT_SECONDS` (default `30.0`, at least 0) and
+  `SPEECH_HEARING_MAX_WAITING_REQUESTS` (default `3`, at least 0): the
+  decode's wait and its waiting places, as for speaking.
+- `SPEECH_MAX_RECORDING_BYTES` (default 25 MiB, at least 1) and
+  `SPEECH_MAX_RECORDING_SECONDS` (default `300`, above 0): the largest request
+  body and the longest recording.
 
 ## Health
 
 `GET /health` answers without a token, so a supervisor can poll it:
-`{"speaking": {"model", "ready", "streams", "sample_rate"}, "card_memory_mb"}`.
-It answers while the voice is still loading, with `ready` false.
+`{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "card_memory_mb"}`.
+It answers while the voice is still loading, with `ready` false. `hearing.model`
+is the configured hearing model, or `unavailable` when none is configured;
+`hearing.ready` is false while it loads and for good when its load found no
+CUDA device or no room on the card, which leaves speaking up.
 
 ## Not offered
 
-Version 1 has no hearing and no voice administration: `/v1/audio/transcriptions`
-and `/v1/voices` answer `not_found`, and the service mounts no `/hear` and no
-`/voices*` route at all.
+Version 1 has no live hearing and no voice administration: `/v1/voices` answers
+`not_found`, and the service mounts no `/hear` and no `/voices*` route at all.

@@ -5,16 +5,17 @@ what it trusts.
 
 ## Purpose
 
-One process keeps a German voice resident on the home server and serves it to
-Presentator and to apps that speak for a person.
+One process keeps a German voice, and optionally a hearing model, resident on
+the home server and serves them to Presentator and to apps that speak or have a
+recording heard for a person.
 [`README.md`](../README.md) holds the contract and the settings,
-[`wire.md`](wire.md) the speech wire.
+[`wire.md`](wire.md) the speech and transcription wire.
 
 ## Context
 
 ```mermaid
 flowchart LR
-    app[App holding both tokens] -->|speak| listener[TCP listener]
+    app[App holding both tokens] -->|speak, hear a recording| listener[TCP listener]
     edge[Edge, app network] -->|health| listener
     listener --> service[speech_runtime_service]
     service -->|isolated processes| providers[providers/*]
@@ -24,9 +25,32 @@ flowchart LR
 ## Building blocks
 
 - `src/speech_runtime_service`: the one process, its TCP listener and the
-  routes. `callers.py` decides who may speak; `wire_route.py` serves the wire.
+  routes. `callers.py` decides who may speak and who may hear; `wire_route.py`
+  serves the wire; `hearing.py` holds the hearing engine behind a port and its
+  gate, `hearing_models.py` the pinned models, `recording.py` the incremental
+  decode of an uploaded recording.
 - `packages/client`: the wire types an app and the service share.
 - `providers/*`: the voices that run in their own processes and environments.
+
+### Hearing
+
+- **One engine, local files only.** faster-whisper runs in the process, its
+  inference in a worker thread off the event loop. It loads at start from the
+  pinned snapshot in the Hugging Face cache (`local_files_only`) on
+  `SPEECH_DEVICE`; the command `speech-runtime-fetch-hearing-model` is the only
+  thing that downloads. The compute type follows the device. Decoding is
+  deterministic (greedy, temperature 0).
+- **Load isolation.** A load that fails for want of the resource (no CUDA
+  device, a card too full) frees what it allocated and leaves the process up:
+  `/health` names hearing not ready, the route answers 503 `unavailable`, and
+  speaking is untouched. A misconfiguration (a model that was not fetched, an
+  unknown model, a malformed setting) stops the start naming the setting.
+- **Two admission resources.** Speaking and hearing are separate scarce
+  resources, one job at a time each. Each has an `AdmissionGate` with its own
+  waiting places and wait, so a busy synthesis never refuses a recording nor a
+  busy decode a speak request. A gate lease is given back only when the native
+  call has returned: CTranslate2 cannot be interrupted, so a caller that left
+  does not free the decode.
 
 ## Crosscutting Concepts
 
@@ -35,7 +59,8 @@ flowchart LR
 - Keycloak is the root. A registered app with valid tokens is trusted within
   its config; one app can only slow another, bounded by the busy wait and the
   input limit. Nothing is kept.
-- Every capability passes the caller check. Only `GET /health` and the wire's
+- Every capability passes the caller check, and hearing also the app's `hear`
+  permission in the configuration (off unless listed). Only `GET /health` and the wire's
   refusals that carry no capability (404 `not_found`, 400 `unsupported_version`)
   answer before it; nothing else is mounted.
 - `/health` is reachable only inside edge's app network: the code default binds
@@ -50,8 +75,10 @@ flowchart LR
   same client, name another subject, belong to the app's group or a group below
   it and belong exactly to the configured service group. A call an app makes as itself is refused.
 - Which issuer, group and apps count is configuration
-  (`SPEECH_CONFIG_FILE`); each app may name only the voices its table lists.
-- No token, subject or key-set address reaches a log, an error or a repr.
+  (`SPEECH_CONFIG_FILE`); each app may name only the voices its table lists
+  and hears only if its table says so.
+- No token, subject or key-set address reaches a log, an error or a repr, and
+  no spoken or heard text reaches a log.
 - A refusal never says which token or claim failed beyond its code.
 
 Residues:

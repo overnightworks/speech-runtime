@@ -3,11 +3,14 @@
 Audience: the operator starting this process on the home server, and
 Presentator, which calls it.
 
-One process holds a German voice resident and offers `GET /health` and the
-speak wire over HTTP on a TCP address (`SPEECH_HOST`, `SPEECH_PORT`). The
-caller owns the address. The voice is the one `SPEECH_SPEAKING_MODEL` names:
-Piper, Chatterbox, Qwen3-TTS 0.6B, VoxCPM2 or NVIDIA Magpie, from weights that
-are already cached. The service stores no choice of its own.
+One process holds a German voice resident and offers `GET /health`, the
+speak wire and a route that hears a recording, over HTTP on a TCP address
+(`SPEECH_HOST`, `SPEECH_PORT`). The caller owns the address. The voice is the
+one `SPEECH_SPEAKING_MODEL` names: Piper, Chatterbox, Qwen3-TTS 0.6B, VoxCPM2
+or NVIDIA Magpie, from weights that are already cached. When
+`SPEECH_HEARING_MODEL` names a model, the process also holds a faster-whisper
+model resident, loaded from local files only. The service stores no choice of
+its own.
 
 The code was extracted, with its history, from `speech/` in
 [overnightworks/presentator](https://github.com/overnightworks/presentator).
@@ -21,6 +24,14 @@ The code was extracted, with its history, from `speech/` in
 | Speaking (optional) | [`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice), snapshot `85e237c12c027371202489a0ec509ded67b5e4b5` | Apache-2.0 (`qwen-tts` 0.1.1) | German and English through one configured built-in preset, initially Ryan. It returns a complete 24 kHz waveform, so `speaking.streams` is false. The isolated provider accepts the repository's `cuda` setting as `cuda:0`, uses bfloat16 and package-default attention, and reads only the pinned local snapshot. Runtime quality and latency remain unmeasured. |
 | Speaking (optional) | [`openbmb/VoxCPM2`](https://huggingface.co/openbmb/VoxCPM2), snapshot `32279effe8c19989596f05d353d1447f51d9e915` | Apache-2.0 (`voxcpm` 2.0.3) | German and English text-only streaming at 48 kHz through its isolated provider. It reads only the pinned local snapshot, uses no prompt, reference audio, cloning, or voice-design controls, and has no measured quality, latency, residency, or deployment result. |
 | Speaking (optional) | [`nvidia/magpie_tts_multilingual_357m`](https://huggingface.co/nvidia/magpie_tts_multilingual_357m), revision `5023df68bd3f5b5ce6d666a50979bc501af145cc` with NanoCodec revision `fc00890b604aa2de298d2641ffc6c5f6caf8c4d7` | NVIDIA Open Model License (`nemo-toolkit[tts]` 3.0.0) | German and English through one configured fixed voice, initially Sofia, at 22,050 Hz. It restores both pinned archives from the local Hub cache only and also needs `microsoft/wavlm-base-plus` and `google/byt5-small` there, which nothing pins yet (#2). It installs on Python 3.14 with torch 2.15; its provider worker has spoken German on the GPU once (30.10.2026, torch 2.15.0+cu132, NVIDIA driver 595.99.02), and has not yet run through the service. Hearing, quality, and latency against Piper are unmeasured. |
+
+Hearing, optional, `SPEECH_HEARING_MODEL`: faster-whisper (MIT) with the CTranslate2 conversions of OpenAI's Whisper (MIT) in
+[`Systran/faster-whisper-large-v3`](https://huggingface.co/Systran/faster-whisper-large-v3)
+(`large-v3`, the reference model) and
+[`Systran/faster-whisper-small`](https://huggingface.co/Systran/faster-whisper-small)
+(`small`, small enough for a CPU proof), each pinned to a commit. German and
+English. The model is never downloaded by the service: `speech-runtime-fetch-hearing-model <model>`
+fetches the pinned files into `SPEECH_HUGGINGFACE_CACHE` once, and the start loads them from there only.
 
 Checked and not chosen:
 
@@ -82,15 +93,16 @@ Weights stay in:
 
 ## Contract
 
-- `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "card_memory_mb"}`. Answers while the model is still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
+- `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "card_memory_mb"}`. Answers while the model is still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
 - `POST /v1/audio/speech` → chunked `audio/wav`, German, with the AI mark. It needs a workload token and the person's token. The request, the tokens, the refusals and the settings that shape them are in [`docs/wire.md`](docs/wire.md).
-- `/health` and `/v1/audio/speech` answer on `SPEECH_HOST:SPEECH_PORT` and
+- `POST /v1/audio/transcriptions` → `{"text"}`, for an app whose table says `hear = true`, in German or English (`language`, `de` when absent). The request, the limits and the refusals are in [`docs/wire.md`](docs/wire.md).
+- `/health`, `/v1/audio/speech` and `/v1/audio/transcriptions` answer on `SPEECH_HOST:SPEECH_PORT` and
   nothing else is mounted (no `/docs`, no `/openapi.json`, no voice
-  administration, no hearing). `python -m speech_runtime_service --help` (or the
+  administration, no live hearing). `python -m speech_runtime_service --help` (or the
   `speech-runtime-service` command) prints usage; any other argument is a usage
   error.
 
-The service never writes spoken text to its log. A speaking failure is logged with its exception types and stack frames, never with an exception message.
+The service never writes spoken or heard text to its log. A speaking failure is logged with its exception types and stack frames, never with an exception message.
 
 ## Settings
 
@@ -110,14 +122,19 @@ All `SPEECH_*`:
 | `SPEECH_MAX_WAITING_REQUESTS` | `3` | How many speech requests may wait for the one synthesis; a request beyond them answers 429 `busy` at once. A whole number of at least 0, where 0 allows no waiting |
 | `SPEECH_MAX_BODY_BYTES` | `32768` | The largest speech request body; a larger one answers 413 `too_large` before it is parsed. A whole number of at least 1 |
 | `SPEECH_MAX_INPUT_CHARACTERS` | `4096` | The longest `input` a speech request may carry; a whole number of at least 1 |
-| `SPEECH_CONFIG_FILE` | none, required | Absolute path of the TOML file that names the issuer, the service group, the apps whose tokens the speak route trusts and the voices each app may name; the process does not start without it ([`docs/wire.md`](docs/wire.md)) |
+| `SPEECH_HEARING_MODEL` | none | The hearing model the process loads at start, on `SPEECH_DEVICE`: `large-v3` or `small`. None: hearing answers 503 `unavailable`. A model that was not fetched stops the start naming this setting (fetch it with `speech-runtime-fetch-hearing-model <model>`); a card that is missing, taken or too small leaves hearing unavailable in `/health` while speaking stays up |
+| `SPEECH_HEARING_BUSY_WAIT_SECONDS` | `30.0` | How long a recording waits for the one decode before it answers 429 `busy`; at least 0, where 0 refuses at once |
+| `SPEECH_HEARING_MAX_WAITING_REQUESTS` | `3` | How many recordings may wait for the one decode; a request beyond them answers 429 `busy` at once. A whole number of at least 0, where 0 allows no waiting |
+| `SPEECH_MAX_RECORDING_BYTES` | `26214400` | The largest transcription request body; a larger one answers 413 `too_large` before it is parsed. A whole number of at least 1 |
+| `SPEECH_MAX_RECORDING_SECONDS` | `300` | The longest recording; a longer one answers 413 `too_large` and is not transcribed. Above 0 |
+| `SPEECH_CONFIG_FILE` | none, required | Absolute path of the TOML file that names the issuer, the service group, the apps whose tokens the routes trust, the voices each app may name and whether it may hear; the process does not start without it ([`docs/wire.md`](docs/wire.md)) |
 
 When `SPEECH_HUGGINGFACE_CACHE` is absent, `HF_HUB_CACHE` and `HF_HOME` influence the provider default. An explicit `SPEECH_HUGGINGFACE_CACHE` value is already the Hub-cache root.
 
 One instance serves the one device `SPEECH_DEVICE` names, on one address; the
 platform starts one instance per card. The service holds no lock per card.
 
-If the voice cannot be loaded the process exits and names the model.
+If the voice cannot be loaded the process exits and names the model. The hearing model is loaded after the voice: a missing resource leaves hearing unavailable and the process up.
 
 ## Run
 
