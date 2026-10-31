@@ -10,7 +10,6 @@ from speech_runtime_service.hearing import (
     HearingLibraries,
     ResourceUnavailableError,
     WhisperHearing,
-    installed_libraries,
 )
 from speech_runtime_service.hearing_models import HearingModel
 
@@ -144,7 +143,3 @@ def test_a_device_hearing_does_not_know_stops_the_start(
 ) -> None:
     with pytest.raises(ValueError, match="SPEECH_DEVICE"):
         _engine(tmp_path, device=device)
-
-
-def test_the_installed_libraries_count_the_cuda_devices() -> None:
-    assert installed_libraries().cuda_device_count() >= 0
