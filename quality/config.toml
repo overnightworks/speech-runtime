@@ -14,11 +14,6 @@ path = "providers/chatterbox/tests/test_worker.py"
 rule = "test-layout"
 reason = "it tests the provider contract, a sibling project with no tests of its own"
 
-[[layout.allow]]
-path = "tests/test_wire.py"
-rule = "test-layout"
-reason = "it tests the speech wire client package, a workspace member with no tests of its own"
-
 # providers/chatterbox/uv.lock: advisories no relock reaches
 [[advisories.allow]]
 id = "PYSEC-2026-2446"
