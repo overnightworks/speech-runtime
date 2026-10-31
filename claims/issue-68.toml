@@ -1,8 +1,0 @@
-claim_id = "9f9a811114da4d5ab4cb0a5cd625d282"
-agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
-role = "builder"
-base = "be12057f079fe339654dae02c82230a2c6f04492"
-branch = "claude/issue-68-webauth-0-27-refusal-class"
-scope = ["pyproject.toml", "src/speech_runtime_service/callers.py", "tests", "uv.lock"]
-opened_commit = "db80eb1708d913ba3e26312c037d0b25d5526229"
-whole_reason = "One bump: the pin, the lock and the per-reason map that the release's class replaces change together, and the refusal tests pin every code across them."
