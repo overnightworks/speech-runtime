@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 HEARING_SAMPLE_RATE: Final = 16_000
 CPU_THREADS: Final = 4
 _SETTING: Final = "SPEECH_HEARING_MODEL"
+_DEVICES: Final = frozenset({"cpu", "cuda"})
 
 
 class ResourceUnavailableError(Exception):
@@ -77,10 +78,18 @@ class WhisperHearing:
         device: str,
         libraries: Callable[[], HearingLibraries] = installed_libraries,
     ) -> None:
-        """Remember the model, where its files are and the device it will occupy."""
+        """Remember the model, where its files are and the device it will occupy.
+
+        Raises `ValueError` for a device other than `cpu` or `cuda`.
+        """
+        if device not in _DEVICES:
+            message = (
+                f"SPEECH_DEVICE={device} is not a device hearing runs on: cpu or cuda"
+            )
+            raise ValueError(message)
         self.model_name = model.value
         self._directory = directory
-        self._cuda = device.startswith("cuda")
+        self._cuda = device == "cuda"
         self._libraries = libraries
         self._model = None
 

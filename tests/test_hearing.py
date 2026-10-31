@@ -138,5 +138,13 @@ def test_a_closed_engine_no_longer_hears(
         engine.transcribe(b"", HearingLanguage.DE)
 
 
+@pytest.mark.parametrize("device", ["gpu", "cuda-invalid", "cuda:0", "CPU", ""])
+def test_a_device_hearing_does_not_know_stops_the_start(
+    tmp_path: Path, device: str
+) -> None:
+    with pytest.raises(ValueError, match="SPEECH_DEVICE"):
+        _engine(tmp_path, device=device)
+
+
 def test_the_installed_libraries_count_the_cuda_devices() -> None:
     assert installed_libraries().cuda_device_count() >= 0
