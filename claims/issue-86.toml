@@ -1,0 +1,7 @@
+claim_id = "01cd113678ec4264b2c51b220afb758f"
+agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
+role = "builder"
+base = "88cf9989f6b1a55ea21bbf85152a0907ed8cb78d"
+branch = "claude/issue-86-client-reads-429-busy-wait"
+scope = ["packages/client/src/speech_runtime_client/wire.py", "tests/scripts/test_contract_client.py"]
+opened_commit = "05ffe4cdb2ade30374c0c752846683c8f10c96b0"
