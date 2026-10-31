@@ -25,9 +25,9 @@ if TYPE_CHECKING:
     from httpx2 import Response as ClientResponse
     from starlette.responses import Response, StreamingResponse
 
+    from speech_runtime_service.admission_gate import Lease
     from speech_runtime_service.callers import SpeechCallers
     from speech_runtime_service.service import SpeakingEngine
-    from speech_runtime_service.synthesis_gate import Lease
 
 
 def info_comment_before_data(wav: bytes) -> str | None:
@@ -103,19 +103,24 @@ def response_body(response: StreamingResponse) -> bytes:
     return asyncio.run(deliver())
 
 
-def speak_scope(headers: Mapping[str, str] | None = None) -> dict[str, object]:
-    """The scope of a speak request; `headers` default to a valid pair of tokens."""
+def speak_scope(
+    headers: Mapping[str, str] | None = None,
+    *,
+    path: str = SPEECH_PATH,
+    content_type: str = "application/json",
+) -> dict[str, object]:
+    """The scope of a POST to `path`; `headers` default to a valid pair of tokens."""
     sent = valid_headers() if headers is None else headers
     return {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
         "http_version": "1.1",
         "method": "POST",
-        "path": SPEECH_PATH,
-        "raw_path": SPEECH_PATH.encode(),
+        "path": path,
+        "raw_path": path.encode(),
         "query_string": b"",
         "headers": [
-            (b"content-type", b"application/json"),
+            (b"content-type", content_type.encode()),
             *((name.lower().encode(), value.encode()) for name, value in sent.items()),
         ],
         "client": ("test", 123),
@@ -167,8 +172,13 @@ async def speak_once(
 class SpeakCall:
     """One request running as a task, so a test sees its status before its end."""
 
-    def __init__(self, app: FastAPI, body: bytes | None = None) -> None:
-        """Start the request now."""
+    def __init__(
+        self,
+        app: FastAPI,
+        body: bytes | None = None,
+        scope: dict[str, object] | None = None,
+    ) -> None:
+        """Start the request now; `scope` defaults to a speak request's."""
         self.messages: list[dict[str, object]] = []
         self.began = time.monotonic()
         self.started_after = 0.0
@@ -176,9 +186,11 @@ class SpeakCall:
         self.headers: dict[str, str] = {}
         self._started = asyncio.Event()
         self._disconnect = asyncio.Event()
-        self.task = asyncio.create_task(self._run(app, body or speak_body()))
+        self.task = asyncio.create_task(
+            self._run(app, body or speak_body(), scope or speak_scope())
+        )
 
-    async def _run(self, app: FastAPI, body: bytes) -> None:
+    async def _run(self, app: FastAPI, body: bytes, scope: dict[str, object]) -> None:
         sent = False
 
         async def receive() -> dict[str, object]:
@@ -199,7 +211,7 @@ class SpeakCall:
                 }
                 self._started.set()
 
-        await app(speak_scope(), receive, send)
+        await app(scope, receive, send)
 
     async def status(self) -> int:
         """Wait for the status line and return it."""

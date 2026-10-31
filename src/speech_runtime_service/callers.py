@@ -2,9 +2,9 @@
 
 webauth proves the tokens (`ServiceCallerCheck.person_caller`); this module adds
 the policy that is the service's: only a person call is admitted, the person
-must belong to exactly the configured service group, and an app may name only
-the voices its table lists. It logs nothing, and
-nothing taken from a token leaves it.
+must belong to exactly the configured service group, an app may name only the
+voices its table lists, and it hears only if its table says so. It logs
+nothing, and nothing taken from a token leaves it.
 """
 
 from __future__ import annotations
@@ -54,11 +54,13 @@ class SpeechCallers:
         check: ServiceCallerCheck,
         service_group: str,
         voices_by_app: Mapping[str, frozenset[VoiceId]],
+        hearing_apps: frozenset[str],
     ) -> None:
-        """Hold `check`, the group a person must belong to and each app's voices."""
+        """Hold `check`, the person's group, each app's voices and the hearing apps."""
         self._check = check
         self._service_group = service_group
         self._voices_by_app = voices_by_app
+        self._hearing_apps = hearing_apps
 
     @classmethod
     def from_config(
@@ -98,7 +100,8 @@ class SpeechCallers:
             monotonic_clock=monotonic_clock,
         )
         voices_by_app = {name: app.voices for name, app in config.apps.items()}
-        return cls(check, identity.service_group, voices_by_app)
+        hearing_apps = frozenset(name for name, app in config.apps.items() if app.hear)
+        return cls(check, identity.service_group, voices_by_app, hearing_apps)
 
     async def admit(self, headers: Headers) -> PersonCaller | RefusalCode:
         """The person call the request's tokens prove, or the refusal to answer."""
@@ -116,6 +119,10 @@ class SpeechCallers:
     def may_name(self, app: str, voice: VoiceId) -> bool:
         """Whether the configuration lists `voice` for the admitted `app`."""
         return voice in self._voices_by_app[app]
+
+    def may_hear(self, app: str) -> bool:
+        """Whether the configuration permits the admitted `app` to hear."""
+        return app in self._hearing_apps
 
 
 def _bearer_token(authorization: str | None) -> str | None:

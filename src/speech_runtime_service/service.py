@@ -7,11 +7,12 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from speech_runtime_service.admission_gate import AdmissionGate
 from speech_runtime_service.card import card_memory_mb
 from speech_runtime_service.failures import PayloadFreeFailure, SpeakingFailedError
+from speech_runtime_service.hearing import Hearing, hearing_from_settings
 from speech_runtime_service.pcm import wav_header
 from speech_runtime_service.speaking import speaking_for_voice
-from speech_runtime_service.synthesis_gate import SynthesisGate
 from speech_runtime_service.voices import VoiceId, installed_voice_ids, voice_for_model
 
 if TYPE_CHECKING:
@@ -52,7 +53,7 @@ class RuntimeDependencies:
 
 
 class Runtime:
-    """The resident speaking model and the flags a caller waits on."""
+    """The resident speaking model, hearing, and the flags a caller waits on."""
 
     def __init__(
         self,
@@ -60,9 +61,11 @@ class Runtime:
         *,
         memory_probe: Callable[[], int] | None = None,
         dependencies: RuntimeDependencies | None = None,
+        hearing: Hearing | None = None,
     ) -> None:
-        """Hold the speaking engine. It is not loaded until `load`."""
+        """Hold the speaking engine and hearing. Neither is loaded until `load`."""
         self.speaking = speaking
+        self.hearing = hearing or Hearing(None)
         self.loading = False
         self._memory_probe = memory_probe or card_memory_mb
         self._dependencies = dependencies or RuntimeDependencies()
@@ -72,14 +75,15 @@ class Runtime:
         self._pending_engine: SpeakingEngine | None = None
         self._closing_engine: SpeakingEngine | None = None
         self._stopping = False
-        self.synthesis_gate = SynthesisGate()
+        self.synthesis_gate = AdmissionGate()
         self._fatal_callback: Callable[[], None] = lambda: None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Runtime:
-        """Build the production engine for the configured voice from the environment."""
+        """Build the production engines the environment configures."""
         return cls(
             None,
+            hearing=hearing_from_settings(settings),
             dependencies=RuntimeDependencies(
                 voice=voice_for_model(settings.speaking_model),
                 engine_factory=lambda voice: speaking_for_voice(settings, voice),
@@ -88,7 +92,7 @@ class Runtime:
         )
 
     def load(self) -> None:
-        """Start the configured voice, leaving process ownership to the orchestrator."""
+        """Start the configured voice, then hearing; the orchestrator owns processes."""
         self.begin_loading()
         engine: SpeakingEngine | None = None
         registered = False
@@ -98,6 +102,7 @@ class Runtime:
             if registered:
                 _load_or_raise(engine)
                 self._publish(engine)
+                self.hearing.load()
         finally:
             self._finish_loading(engine, registered=registered)
 
@@ -111,6 +116,7 @@ class Runtime:
         self.reconcile_failed_active()
         return {
             "speaking": self._speaking_health(),
+            "hearing": self.hearing.health(),
             "card_memory_mb": self._memory_probe(),
         }
 
@@ -154,6 +160,7 @@ class Runtime:
             self._pending_engine = None
             self.speaking = None
             self._ready_speaking = None
+        self.hearing.close()
         failed = False
         for engine in _unique_engines(engines):
             try:

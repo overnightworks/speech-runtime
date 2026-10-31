@@ -19,6 +19,7 @@ from starlette.status import (
 
 from speech_runtime_client.wire import (
     SPEECH_PATH,
+    TRANSCRIPTIONS_PATH,
     RefusalCode,
 )
 from speech_runtime_service.config import Settings
@@ -130,7 +131,8 @@ def test_another_version_is_refused_as_unsupported(method: str, path: str) -> No
         ("GET", "/v1/"),
         ("POST", "/v1/audio/speech/"),
         ("POST", "/v01/audio/speech"),
-        ("POST", "/v1/audio/transcriptions"),
+        ("POST", "/v1/audio/translations"),
+        ("GET", TRANSCRIPTIONS_PATH),
         ("GET", "/v1/voices"),
         ("GET", SPEECH_PATH),
         ("PUT", SPEECH_PATH),

@@ -16,6 +16,7 @@ from speech_runtime_service.config import (
     QwenSpeaker,
     Settings,
 )
+from speech_runtime_service.hearing_models import HearingModel
 from speech_runtime_service.pcm import wav_header
 from speech_runtime_service.voices import (
     CHATTERBOX_SPEAKING_MODEL,
@@ -31,7 +32,6 @@ if TYPE_CHECKING:
     ("name", "value"),
     [
         ("SPEECH_DEBUG", "true"),
-        ("SPEECH_HEARING_MODEL", "Systran/faster-whisper-large-v3"),
         ("SPEECH_STATE_DIRECTORY", "relative/state"),
     ],
 )
@@ -65,6 +65,12 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
         ("SPEECH_MAX_WAITING_REQUESTS", "1.5"),
         ("SPEECH_MAX_BODY_BYTES", "0"),
         ("SPEECH_MAX_BODY_BYTES", "many"),
+        ("SPEECH_HEARING_MODEL", "gigantic"),
+        ("SPEECH_HEARING_BUSY_WAIT_SECONDS", "-1"),
+        ("SPEECH_HEARING_MAX_WAITING_REQUESTS", "-1"),
+        ("SPEECH_MAX_RECORDING_BYTES", "0"),
+        ("SPEECH_MAX_RECORDING_SECONDS", "0"),
+        ("SPEECH_MAX_RECORDING_SECONDS", "inf"),
     ],
 )
 def test_the_wire_settings_refuse_values_that_cannot_hold(
@@ -90,6 +96,24 @@ def test_the_wire_settings_accept_the_smallest_whole_limit_and_no_wait(
     assert settings.max_input_characters == 1
     assert settings.max_waiting_requests == 0
     assert settings.max_body_bytes == 1
+
+
+def test_the_hearing_settings_are_read_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SPEECH_HEARING_MODEL", HearingModel.LARGE_V3.value)
+    monkeypatch.setenv("SPEECH_HEARING_BUSY_WAIT_SECONDS", "0")
+    monkeypatch.setenv("SPEECH_HEARING_MAX_WAITING_REQUESTS", "0")
+    monkeypatch.setenv("SPEECH_MAX_RECORDING_BYTES", "1")
+    monkeypatch.setenv("SPEECH_MAX_RECORDING_SECONDS", "0.5")
+
+    settings = Settings()
+
+    assert settings.hearing_model is HearingModel.LARGE_V3
+    assert settings.hearing_busy_wait_seconds == 0
+    assert settings.hearing_max_waiting_requests == 0
+    assert settings.max_recording_bytes == 1
+    assert settings.max_recording_seconds == float("0.5")
 
 
 def test_settings_default_uses_the_provider_hub_cache(

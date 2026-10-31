@@ -9,11 +9,14 @@ description = "Local speech synthesis, one process on the card."
 requires-python = ">=3.14"
 dependencies = [
     "fastapi==0.162.0",
+    "faster-whisper==1.2.1",
     "huggingface-hub==2.3.0",
     "overnightworks-webauth @ https://github.com/overnightworks/webauth/releases/download/v0.27.0/overnightworks_webauth-0.27.0-py3-none-any.whl#sha256=a22b557912ec97b4f4280ae3d99f815bb043e9fc90ebc86ee80febf1d968b1e7",
     "nvidia-cublas-cu12==12.9.2.10",
     "nvidia-cudnn-cu12==9.27.0.42",
+    "numpy==2.5.4",
     "piper-tts==1.8.0",
+    "python-multipart==0.0.32",
     "pydantic-settings==2.16.1",
     "uvicorn==0.54.0",
     "overnightworks-speech-runtime-client",
@@ -22,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 speech-runtime-service = "speech_runtime_service.__main__:main"
+speech-runtime-fetch-hearing-model = "speech_runtime_service.fetch_hearing_model:main"
 
 [dependency-groups]
 dev = [
@@ -74,6 +78,8 @@ ignore = [
 [tool.ruff.lint.flake8-type-checking]
 # FastAPI evaluates the route handlers' annotations when it builds the app.
 runtime-evaluated-decorators = ["fastapi.FastAPI.get", "fastapi.FastAPI.post"]
+# Pydantic resolves the field annotations of its models when the class is built.
+runtime-evaluated-base-classes = ["pydantic.BaseModel", "pydantic_settings.BaseSettings"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 # Piper stays unloaded until the process holds it.
