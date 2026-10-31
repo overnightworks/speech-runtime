@@ -21,8 +21,10 @@ def test_a_recording_is_decoded_to_the_rate_the_engine_hears() -> None:
 
 
 def test_a_recording_longer_than_the_limit_is_refused_not_cut() -> None:
+    audio = recording(seconds=1.0)
+
     with pytest.raises(RecordingTooLongError):
-        decode_recording(recording(seconds=1.0), 0.5)
+        decode_recording(audio, 0.5)
 
 
 def test_a_recording_exactly_as_long_as_the_limit_is_decoded() -> None:

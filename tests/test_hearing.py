@@ -80,8 +80,10 @@ def test_on_the_cpu_the_model_runs_int8_on_four_threads(
 def test_a_cuda_device_that_is_not_there_is_a_missing_resource(
     library: type[_FakeWhisperModel], tmp_path: Path
 ) -> None:
+    engine = _engine(tmp_path, library, "cuda")
+
     with pytest.raises(ResourceUnavailableError):
-        _engine(tmp_path, library, "cuda").load()
+        engine.load()
 
     assert library.built == []
 
@@ -91,8 +93,10 @@ def test_a_full_card_is_a_missing_resource(
 ) -> None:
     library.failure = RuntimeError("CUDA failed with error out of memory")
 
+    engine = _engine(tmp_path, library)
+
     with pytest.raises(ResourceUnavailableError):
-        _engine(tmp_path, library).load()
+        engine.load()
 
 
 def test_any_other_runtime_error_of_the_load_is_not_hidden(
@@ -100,8 +104,10 @@ def test_any_other_runtime_error_of_the_load_is_not_hidden(
 ) -> None:
     library.failure = RuntimeError("unsupported model format")
 
+    engine = _engine(tmp_path, library)
+
     with pytest.raises(RuntimeError, match="unsupported model format"):
-        _engine(tmp_path, library).load()
+        engine.load()
 
 
 @pytest.mark.parametrize("language", list(HearingLanguage))
@@ -121,8 +127,10 @@ def test_the_audio_is_heard_greedily_at_temperature_zero_in_the_asked_language(
 
 
 def test_hearing_before_the_load_is_an_error(tmp_path: Path) -> None:
+    engine = _engine(tmp_path)
+
     with pytest.raises(RuntimeError, match="not loaded"):
-        _engine(tmp_path).transcribe(b"", HearingLanguage.DE)
+        engine.transcribe(b"", HearingLanguage.DE)
 
 
 def test_a_closed_engine_no_longer_hears(
