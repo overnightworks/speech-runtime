@@ -61,6 +61,10 @@ def test_settings_read_speech_environment(monkeypatch: pytest.MonkeyPatch) -> No
         ("SPEECH_BUSY_WAIT_SECONDS", "inf"),
         ("SPEECH_MAX_INPUT_CHARACTERS", "0"),
         ("SPEECH_MAX_INPUT_CHARACTERS", "-1"),
+        ("SPEECH_MAX_WAITING_REQUESTS", "-1"),
+        ("SPEECH_MAX_WAITING_REQUESTS", "1.5"),
+        ("SPEECH_MAX_BODY_BYTES", "0"),
+        ("SPEECH_MAX_BODY_BYTES", "many"),
     ],
 )
 def test_the_wire_settings_refuse_values_that_cannot_hold(
@@ -77,11 +81,15 @@ def test_the_wire_settings_accept_the_smallest_whole_limit_and_no_wait(
 ) -> None:
     monkeypatch.setenv("SPEECH_BUSY_WAIT_SECONDS", "0")
     monkeypatch.setenv("SPEECH_MAX_INPUT_CHARACTERS", "1")
+    monkeypatch.setenv("SPEECH_MAX_WAITING_REQUESTS", "0")
+    monkeypatch.setenv("SPEECH_MAX_BODY_BYTES", "1")
 
     settings = Settings()
 
     assert settings.busy_wait_seconds == 0
     assert settings.max_input_characters == 1
+    assert settings.max_waiting_requests == 0
+    assert settings.max_body_bytes == 1
 
 
 def test_settings_default_uses_the_provider_hub_cache(

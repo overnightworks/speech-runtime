@@ -13,6 +13,7 @@ from starlette.status import (
     HTTP_200_OK,
     HTTP_400_BAD_REQUEST,
     HTTP_404_NOT_FOUND,
+    HTTP_413_CONTENT_TOO_LARGE,
     HTTP_422_UNPROCESSABLE_CONTENT,
 )
 
@@ -29,6 +30,7 @@ from tests.support.fakes_support import (
     FakeSpeaking,
     GatedSpeaking,
 )
+from tests.support.identity_support import valid_headers
 from tests.support.speak_support import (
     ASGI_TIMEOUT_SECONDS,
     app_over,
@@ -49,7 +51,7 @@ from tests.support.speak_support import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from fastapi import FastAPI
 
@@ -244,6 +246,71 @@ def test_the_default_input_limit_is_the_settings_value() -> None:
     limit = settings.max_input_characters
 
     _assert_input_limit(settings, [limit], limit + 1)
+
+
+def _over_the_limit_app() -> tuple[FastAPI, int]:
+    limit = len(speak_body())
+    return speak_app(settings=Settings(max_body_bytes=limit)), limit
+
+
+@pytest.mark.parametrize(
+    "excess_body",
+    [
+        pytest.param(lambda limit: b"x" * (limit + 1), id="not-json"),
+        pytest.param(lambda limit: speak_body(text="a" * limit), id="valid-json"),
+    ],
+)
+def test_a_body_over_the_limit_is_too_large_whatever_it_holds(
+    excess_body: Callable[[int], bytes],
+) -> None:
+    app, limit = _over_the_limit_app()
+
+    response = post_speech(TestClient(app), excess_body(limit))
+
+    assert_refusal(response, HTTP_413_CONTENT_TOO_LARGE, RefusalCode.TOO_LARGE, None)
+
+
+def test_a_body_exactly_at_the_limit_is_parsed_and_served() -> None:
+    app, _ = _over_the_limit_app()
+
+    response = post_speech(TestClient(app), speak_body())
+
+    assert response.status_code == HTTP_200_OK
+
+
+@pytest.mark.parametrize(
+    "length_header",
+    [
+        pytest.param({}, id="no-content-length"),
+        pytest.param({"content-length": "1"}, id="content-length-understates"),
+    ],
+)
+def test_an_over_limit_chunked_body_is_refused_and_reading_stops_at_the_limit(
+    length_header: dict[str, str],
+) -> None:
+    limit = 10
+    chunk_count = 50
+    app = speak_app(settings=Settings(max_body_bytes=limit))
+    chunks_read = 0
+    messages: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        nonlocal chunks_read
+        chunks_read += 1
+        return {
+            "type": "http.request",
+            "body": b"x" * limit,
+            "more_body": chunks_read < chunk_count,
+        }
+
+    async def send(message: dict[str, object]) -> None:
+        messages.append(message)
+
+    scope = speak_scope({**valid_headers(), **length_header})
+    asyncio.run(app(scope, receive, send))
+
+    assert status_of(messages) == HTTP_413_CONTENT_TOO_LARGE
+    assert chunks_read < chunk_count
 
 
 _SENTENCE = "Dieser Satz darf in keiner Antwort und keinem Log stehen"

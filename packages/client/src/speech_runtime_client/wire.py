@@ -81,6 +81,7 @@ class RefusalCode(StrEnum):
     UNAUTHORIZED = "unauthorized"
     FORBIDDEN = "forbidden"
     INVALID_REQUEST = "invalid_request"
+    TOO_LARGE = "too_large"
     BUSY = "busy"
     UNAVAILABLE = "unavailable"
 
@@ -91,6 +92,7 @@ REFUSAL_STATUS: Final[dict[RefusalCode, HTTPStatus]] = {
     RefusalCode.UNAUTHORIZED: HTTPStatus.UNAUTHORIZED,
     RefusalCode.FORBIDDEN: HTTPStatus.FORBIDDEN,
     RefusalCode.INVALID_REQUEST: HTTPStatus.UNPROCESSABLE_ENTITY,
+    RefusalCode.TOO_LARGE: HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
     RefusalCode.BUSY: HTTPStatus.TOO_MANY_REQUESTS,
     RefusalCode.UNAVAILABLE: HTTPStatus.SERVICE_UNAVAILABLE,
 }
@@ -103,6 +105,7 @@ _REFUSAL_MESSAGE: Final[dict[RefusalCode, str]] = {
     ),
     RefusalCode.FORBIDDEN: "The tokens do not permit this request.",
     RefusalCode.INVALID_REQUEST: "The request is not valid.",
+    RefusalCode.TOO_LARGE: "The request body is too large.",
     RefusalCode.BUSY: "The service is busy speaking; try again.",
     RefusalCode.UNAVAILABLE: "The service cannot serve this request right now.",
 }

@@ -48,6 +48,23 @@ voice is checked, so the answer never says which voice is active; an unknown
 voice stays `invalid_request`. Calls an app makes as itself,
 without a person, are not offered in version 1.
 
+## Admission
+
+The scarce resource is the one synthesis a process runs at a time. A request
+that finds it taken may wait, within two limits, and anything beyond them is
+refused before any work starts:
+
+- `SPEECH_MAX_WAITING_REQUESTS` places for requests that wait for the synthesis.
+  A request that finds the synthesis taken and every place taken is refused at
+  once with `busy` and `Retry-After`.
+- `SPEECH_BUSY_WAIT_SECONDS`: how long a waiting request waits. When it runs out,
+  the answer is the same `busy` with `Retry-After`.
+- `SPEECH_MAX_BODY_BYTES`: the largest request body. The service stops reading
+  at the limit, whatever `Content-Length` says, and answers `too_large` without
+  parsing the body. It answers only a caller whose tokens are accepted.
+
+A refused request holds no place, so the next one is served.
+
 ## Response
 
 `200` with `Content-Type: audio/wav`, chunked: 16-bit mono PCM at the voice's
@@ -74,7 +91,8 @@ read `code`.
 | `unauthorized` | 401 | a token is missing, malformed, expired, for another issuer or audience, badly signed, or lacks a subject or a valid group claim | `WWW-Authenticate`: `Bearer` |
 | `forbidden` | 403 | both tokens are valid but do not permit the request: not a workload token, an unregistered app, a workload token that lives too long, tokens of different clients or of one subject, a person outside the app group or the service group, or a voice the app's configuration does not list (`param` `voice`) | |
 | `invalid_request` | 422 | the body is not a JSON object, a field is missing, unknown or mistyped, a value is not accepted, or `input` is empty, without a letter or digit, or over the limit | |
-| `busy` | 429 | the one synthesis is not free within `SPEECH_BUSY_WAIT_SECONDS` | `Retry-After`: the wait in whole seconds, at least 1 |
+| `too_large` | 413 | the body is over `SPEECH_MAX_BODY_BYTES` | |
+| `busy` | 429 | the one synthesis is taken and `SPEECH_MAX_WAITING_REQUESTS` requests already wait (answered at once), or it is not free within `SPEECH_BUSY_WAIT_SECONDS` | `Retry-After`: the wait in whole seconds, at least 1 |
 | `unavailable` | 503 | the tokens cannot be checked because the issuer's key set is unreachable and no cached key serves, or the named voice is not the active, ready voice (loading, failed, switched away, or shutting down) | |
 
 `n` is read as a decimal integer, so `/v01/...` is version 1. A path that is no
@@ -85,6 +103,11 @@ version path (`/v-1/...`, `/vx/...`, `/speak`) gets the app's default 404 with
 
 - `SPEECH_BUSY_WAIT_SECONDS` (default `5.0`, at least 0): how long a request
   waits for the synthesis before `busy`.
+- `SPEECH_MAX_WAITING_REQUESTS` (default `3`, at least 0, where 0 allows no
+  waiting): how many requests wait for the synthesis.
+- `SPEECH_MAX_BODY_BYTES` (default `32768`, at least 1): the largest body. It
+  holds a 4096-character `input` even when every character is escaped as a
+  six-byte `\uXXXX`, plus the other fields.
 - `SPEECH_MAX_INPUT_CHARACTERS` (default `4096`, at least 1): the longest
   `input`.
 - `SPEECH_CONFIG_FILE` (absolute path, required): a TOML file that says whom the

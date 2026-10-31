@@ -56,6 +56,7 @@ SLACK_SECONDS = 0.5
 CHATTERBOX = VoiceId.CHATTERBOX.value
 ALIEN_SAMPLE_RATE = 24_000
 
+MANY_WAITERS = 100
 WAIT_SECONDS = 5.0
 SHORT_SECONDS = 0.05
 
@@ -72,7 +73,7 @@ async def _settle() -> None:
 def test_a_free_gate_is_taken_even_past_the_deadline() -> None:
     gate = SynthesisGate()
 
-    lease = asyncio.run(gate.acquire(_in(-1)))
+    lease = asyncio.run(gate.acquire(_in(-1), MANY_WAITERS))
 
     assert lease is not None
 
@@ -91,9 +92,9 @@ def test_try_acquire_refuses_while_the_gate_is_held_and_serves_after_release() -
 def test_a_waiter_that_reaches_its_deadline_gets_none() -> None:
     async def scenario() -> tuple[object, bool]:
         gate = SynthesisGate()
-        held = await gate.acquire(_in(0))
+        held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
-        timed_out = await gate.acquire(_in(SHORT_SECONDS))
+        timed_out = await gate.acquire(_in(SHORT_SECONDS), MANY_WAITERS)
         held.close()
         return timed_out, gate.try_acquire() is not None
 
@@ -106,12 +107,12 @@ def test_a_waiter_that_reaches_its_deadline_gets_none() -> None:
 def test_waiters_are_served_in_the_order_they_came() -> None:
     async def scenario() -> list[str]:
         gate = SynthesisGate()
-        first = await gate.acquire(_in(WAIT_SECONDS))
+        first = await gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS)
         assert first is not None
         served: list[str] = []
 
         async def wait(name: str) -> None:
-            lease = await gate.acquire(_in(WAIT_SECONDS))
+            lease = await gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS)
             assert lease is not None
             served.append(name)
             lease.close()
@@ -132,9 +133,9 @@ def test_waiters_are_served_in_the_order_they_came() -> None:
 def test_a_release_from_another_thread_serves_the_waiter() -> None:
     async def scenario() -> bool:
         gate = SynthesisGate()
-        held = await gate.acquire(_in(0))
+        held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
-        waiting = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS)))
+        waiting = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS))
         await _settle()
         releasing = threading.Thread(target=held.close)
         releasing.start()
@@ -180,7 +181,7 @@ def test_a_release_right_after_the_gate_is_found_held_still_serves_the_waiter() 
         held = gate.try_acquire()
         assert held is not None
         gate.interleaving.after_exit = lambda: release_from_another_thread(held)
-        lease = await gate.acquire(_in(WAIT_SECONDS))
+        lease = await gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS)
         assert gate.interleaving.after_exit is None
         return lease
 
@@ -190,11 +191,13 @@ def test_a_release_right_after_the_gate_is_found_held_still_serves_the_waiter() 
 def test_a_cancelled_waiter_leaves_the_gate_to_the_next() -> None:
     async def scenario() -> bool:
         gate = SynthesisGate()
-        held = await gate.acquire(_in(0))
+        held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
-        cancelled = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS)))
+        cancelled = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS))
         await _settle()
-        next_in_line = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS)))
+        next_in_line = asyncio.create_task(
+            gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS)
+        )
         await _settle()
         cancelled.cancel()
         await _settle()
@@ -208,9 +211,9 @@ def test_a_cancelled_waiter_leaves_the_gate_to_the_next() -> None:
 def test_a_waiter_cancelled_after_the_hand_off_is_scheduled_frees_the_gate() -> None:
     async def scenario() -> bool:
         gate = SynthesisGate()
-        held = await gate.acquire(_in(0))
+        held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
-        waiting = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS)))
+        waiting = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS))
         await _settle()
         held.close()  # the hand-off to `waiting` is now scheduled on the loop
         waiting.cancel()
@@ -255,6 +258,53 @@ def test_a_request_that_finds_the_gate_held_waits_then_is_told_to_retry_after(
 
     assert time.monotonic() - began < wait + SLACK_SECONDS
     _busy(response, retry_after)
+
+
+def test_a_request_beyond_the_waiting_places_is_told_busy_at_once() -> None:
+    async def scenario() -> tuple[GatedSpeaking, SpeakCall, SpeakCall]:
+        voice = GatedSpeaking()
+        runtime = fake_runtime(voice, VoiceId.CHATTERBOX)
+        app = app_over(
+            runtime, busy_wait_seconds=ASGI_TIMEOUT_SECONDS, max_waiting_requests=1
+        )
+        running = SpeakCall(app, speak_body(CHATTERBOX))
+        await asyncio.to_thread(voice.entered_first_step.wait, ASGI_TIMEOUT_SECONDS)
+        waiting = SpeakCall(app, speak_body(CHATTERBOX))
+        await _settle()
+        beyond = SpeakCall(app, speak_body(CHATTERBOX))
+        await beyond.status()
+        voice.release_all()
+        await asyncio.gather(running.finish(), waiting.finish(), beyond.finish())
+        return voice, waiting, beyond
+
+    voice, waiting, beyond = asyncio.run(scenario())
+
+    assert_call_refusal(beyond, HTTP_429_TOO_MANY_REQUESTS, RefusalCode.BUSY, None)
+    assert beyond.headers[RETRY_AFTER_HEADER.lower()] == "5"
+    assert beyond.started_after < SLACK_SECONDS
+    assert waiting.status_code == HTTP_200_OK
+    assert voice.most_concurrent_syntheses == 1
+
+
+def test_a_request_refused_at_once_leaves_no_place_taken_for_the_next() -> None:
+    async def scenario() -> tuple[Runtime, int, int]:
+        voice = GatedSpeaking()
+        runtime = fake_runtime(voice, VoiceId.CHATTERBOX)
+        app = app_over(
+            runtime, busy_wait_seconds=ASGI_TIMEOUT_SECONDS, max_waiting_requests=0
+        )
+        running = SpeakCall(app, speak_body(CHATTERBOX))
+        await asyncio.to_thread(voice.entered_first_step.wait, ASGI_TIMEOUT_SECONDS)
+        refused = await _status_of(SpeakCall(app, speak_body(CHATTERBOX)))
+        voice.release_all()
+        await running.finish()
+        return runtime, refused, status_of(await speak_once(app, CHATTERBOX))
+
+    runtime, refused, served = asyncio.run(scenario())
+
+    assert refused == HTTP_429_TOO_MANY_REQUESTS
+    assert served == HTTP_200_OK
+    assert gate_is_free(runtime)
 
 
 def _async_runtime(

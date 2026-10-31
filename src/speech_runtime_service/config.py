@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8080, ge=1, le=65535)
     busy_wait_seconds: float = Field(default=5.0, ge=0, allow_inf_nan=False)
+    max_waiting_requests: int = Field(default=3, ge=0)
+    max_body_bytes: int = Field(default=32_768, ge=1)
     max_input_characters: int = Field(default=4096, ge=1)
     config_file: Path | None = None
 

@@ -77,11 +77,15 @@ class Issuer:
 
     key_set: FakeKeySet = field(default_factory=lambda: FakeKeySet(DEFAULT_KEY))
     clocks: Clocks = field(default_factory=Clocks)
+    settings: Settings = field(default_factory=Settings)
 
     def __post_init__(self) -> None:
-        """Build the wire over the scenario's key set and clocks."""
+        """Build the wire over the scenario's key set, clocks and settings."""
         self.client = TestClient(
-            speak_app(callers=callers_over(self.key_set, self.clocks))
+            speak_app(
+                settings=self.settings,
+                callers=callers_over(self.key_set, self.clocks),
+            )
         )
 
     def tokens(self) -> tuple[str, str]:
@@ -89,14 +93,16 @@ class Issuer:
         pair = valid_pair(self.clocks.wall)
         return pair.workload, pair.person
 
-    def speak(self, workload: str | None, person: str | None) -> Response:
-        """POST a valid body with the given tokens; `None` sends no header."""
+    def speak(
+        self, workload: str | None, person: str | None, body: bytes | None = None
+    ) -> Response:
+        """POST `body` (default: a valid one) with tokens; `None` sends no header."""
         headers: dict[str, str] = {}
         if workload is not None:
             headers[WORKLOAD_TOKEN_HEADER] = workload
         if person is not None:
             headers[AUTHORIZATION_HEADER] = f"Bearer {person}"
-        return post_speech(self.client, speak_body(), headers)
+        return post_speech(self.client, body or speak_body(), headers)
 
     def speak_valid(self) -> Response:
         """POST a valid body with a valid pair."""
@@ -108,6 +114,25 @@ def _answers(response: Response, expected: tuple[int, RefusalCode]) -> None:
     assert_refusal(response, status, code, None)
     challenge = response.headers.get(AUTHENTICATE_HEADER)
     assert challenge == ("Bearer" if status == HTTP_401_UNAUTHORIZED else None)
+
+
+@pytest.mark.parametrize(
+    ("tokens", "expected"),
+    [
+        pytest.param(lambda _person: (None, None), UNAUTHORIZED, id="no-tokens"),
+        pytest.param(lambda person: (person, person), FORBIDDEN, id="wrong-kind"),
+    ],
+)
+def test_a_caller_refused_by_identity_is_not_told_the_body_is_too_large(
+    tokens: Callable[[str], tuple[str | None, str | None]],
+    expected: tuple[int, RefusalCode],
+) -> None:
+    issuer = Issuer(settings=Settings(max_body_bytes=1))
+    _, person = issuer.tokens()
+
+    response = issuer.speak(*tokens(person), body=speak_body())
+
+    _answers(response, expected)
 
 
 def test_a_valid_pair_is_served_a_wav_with_its_comment() -> None:
@@ -400,9 +425,9 @@ def test_the_busy_wait_starts_after_a_slow_identity_check() -> None:
         runtime = fake_runtime(voice)
         acquire = runtime.synthesis_gate.acquire
 
-        async def recording_acquire(deadline: float) -> Lease | None:
+        async def recording_acquire(deadline: float, max_waiters: int) -> Lease | None:
             deadlines.append(deadline)
-            return await acquire(deadline)
+            return await acquire(deadline, max_waiters)
 
         runtime.synthesis_gate.acquire = recording_acquire
         holder = SpeakCall(app_over(runtime, busy_wait_seconds=busy_wait_seconds))
