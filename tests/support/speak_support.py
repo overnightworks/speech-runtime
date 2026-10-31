@@ -238,9 +238,9 @@ def gate_acquisition_began(runtime: Runtime) -> asyncio.Event:
     gate = runtime.synthesis_gate
     acquire = gate.acquire
 
-    async def noting(deadline: float) -> Lease | None:
+    async def noting(deadline: float, max_waiters: int) -> Lease | None:
         began.set()
-        return await acquire(deadline)
+        return await acquire(deadline, max_waiters)
 
     gate.acquire = noting
     return began

@@ -74,6 +74,16 @@ def _parse(raw: bytes) -> SpeechRequest | JSONResponse:
         return _refused(RefusalCode.INVALID_REQUEST, _refused_field(error))
 
 
+async def _read_within(request: Request, limit: int) -> bytes | None:
+    """The body, or `None` once it exceeds `limit` bytes; the rest is never read."""
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
 class _SpeechRoute:
     def __init__(
         self, runtime: Runtime, settings: Settings, callers: SpeechCallers
@@ -87,7 +97,7 @@ class _SpeechRoute:
         if isinstance(admitted, RefusalCode):
             return _refused(admitted)
         deadline = time.monotonic() + self._settings.busy_wait_seconds
-        parsed = self._checked(await request.body())
+        parsed = await self._checked(request)
         if isinstance(parsed, JSONResponse):
             return parsed
         text, voice = parsed
@@ -96,7 +106,9 @@ class _SpeechRoute:
         admission = self._admit(voice)
         if isinstance(admission, JSONResponse):
             return admission
-        lease = await self._runtime.synthesis_gate.acquire(deadline)
+        lease = await self._runtime.synthesis_gate.acquire(
+            deadline, self._settings.max_waiting_requests
+        )
         if lease is None:
             return self._busy()
         chunks = wav_chunks(
@@ -104,7 +116,10 @@ class _SpeechRoute:
         )
         return ClosingWavResponse(chunks, lease)
 
-    def _checked(self, raw: bytes) -> tuple[str, VoiceId] | JSONResponse:
+    async def _checked(self, request: Request) -> tuple[str, VoiceId] | JSONResponse:
+        raw = await _read_within(request, self._settings.max_body_bytes)
+        if raw is None:
+            return _refused(RefusalCode.TOO_LARGE)
         parsed = _parse(raw)
         if isinstance(parsed, JSONResponse):
             return parsed

@@ -54,11 +54,12 @@ class SynthesisGate:
             self._held = True
         return Lease(self._release)
 
-    async def acquire(self, deadline: float) -> Lease | None:
+    async def acquire(self, deadline: float, max_waiters: int) -> Lease | None:
         """Take the gate, waiting until `deadline` (monotonic) for it.
 
-        A free gate is taken even past the deadline. A cancellation or a
-        timeout leaves the gate to the next waiter.
+        A free gate is taken even past the deadline. A held gate with
+        `max_waiters` already waiting answers `None` at once. A cancellation or
+        a timeout leaves the gate to the next waiter.
         """
         loop = asyncio.get_running_loop()
         waiter = _Waiter(loop, loop.create_future())
@@ -66,6 +67,8 @@ class SynthesisGate:
             if not self._held:
                 self._held = True
                 return Lease(self._release)
+            if len(self._waiters) >= max_waiters:
+                return None
             self._waiters.append(waiter)
         try:
             async with asyncio.timeout(deadline - time.monotonic()):
