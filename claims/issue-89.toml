@@ -1,0 +1,8 @@
+claim_id = "9ec92f2aed8a485b992352d084114d7c"
+agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
+role = "builder"
+base = "775f1f11636d88b74c8042d2fcee3fdd442ad251"
+branch = "claude/issue-89-h1a-hear-a-recording"
+scope = [".github/workflows/ci.yml", "README.md", "docs/ARCHITECTURE.md", "docs/wire.md", "packages/client/src/speech_runtime_client/wire.py", "packages/client/tests", "pyproject.toml", "quality/config.toml", "scripts", "src/speech_runtime_service", "tests", "uv.lock"]
+opened_commit = "f11e784a5e2b43796a38b8cbbe34650556f5ed59"
+whole_reason = "The first end-to-end proof of hearing: the wire, the permission, the engine with its load isolation, the gate, the route, its dependencies and the documents change together, as #83's plan review folded them."
