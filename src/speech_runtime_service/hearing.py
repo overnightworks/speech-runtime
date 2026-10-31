@@ -62,7 +62,7 @@ class HearingLibraries:
 def installed_libraries() -> HearingLibraries:
     """The installed faster-whisper and CTranslate2, imported only now."""
     prepare_cuda_libraries()
-    import ctranslate2  # noqa: PLC0415 - heavy, and loaded only once hearing is configured
+    import ctranslate2  # noqa: PLC0415 - heavy and loaded only once hearing is configured
     from faster_whisper import WhisperModel  # noqa: PLC0415 - as above
 
     return HearingLibraries(WhisperModel, ctranslate2.get_cuda_device_count)
