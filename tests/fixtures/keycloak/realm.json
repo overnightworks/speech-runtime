@@ -1,0 +1,430 @@
+{
+  "realm": "speech-test",
+  "enabled": true,
+  "accessTokenLifespan": 300,
+  "roles": {
+    "realm": [
+      {
+        "name": "speech-workload",
+        "description": "Service-account-only marker of an app workload calling the speech service."
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "services",
+      "subGroups": [
+        {
+          "name": "speech-service",
+          "subGroups": [
+            {
+              "name": "reserved"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "apps",
+      "subGroups": [
+        {
+          "name": "quiz",
+          "subGroups": [
+            {
+              "name": "players"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "basic",
+      "description": "OpenID Connect scope for add all basic claims to the token",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "auth_time",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "AUTH_TIME",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "auth_time",
+            "jsonType.label": "long"
+          }
+        },
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "roles",
+      "description": "OpenID Connect scope for add user roles to the access token",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "consent.screen.text": "${rolesScopeConsentText}",
+        "display.on.consent.screen": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "client roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "foo",
+            "introspection.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "resource_access.${client_id}.roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "audience resolve",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-resolve-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "foo",
+            "introspection.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "service_account",
+      "description": "Specific scope for a client enabled for service accounts",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "Client IP Address",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "clientAddress",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "clientAddress",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "Client Host",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "clientHost",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "clientHost",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "Client ID",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "client_id",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "client_id",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "name": "groups",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "speech-service-audience",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "speech-service-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "speech-service",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "quiz-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "quiz-client-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "service_account",
+        "groups"
+      ],
+      "optionalClientScopes": [
+        "speech-service-audience"
+      ]
+    },
+    {
+      "clientId": "other-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "other-client-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "service_account",
+        "groups"
+      ],
+      "optionalClientScopes": [
+        "speech-service-audience"
+      ]
+    },
+    {
+      "clientId": "roleless-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "roleless-client-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "service_account",
+        "groups"
+      ],
+      "optionalClientScopes": [
+        "speech-service-audience"
+      ]
+    },
+    {
+      "clientId": "unscoped-client",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "unscoped-client-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles",
+        "service_account",
+        "groups"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "speech-service",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "speech-service-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "defaultClientScopes": [
+        "basic"
+      ],
+      "optionalClientScopes": []
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-quiz-client",
+      "enabled": true,
+      "serviceAccountClientId": "quiz-client",
+      "realmRoles": [
+        "speech-workload"
+      ]
+    },
+    {
+      "username": "service-account-other-client",
+      "enabled": true,
+      "serviceAccountClientId": "other-client",
+      "realmRoles": [
+        "speech-workload"
+      ]
+    },
+    {
+      "username": "service-account-roleless-client",
+      "enabled": true,
+      "serviceAccountClientId": "roleless-client"
+    },
+    {
+      "username": "service-account-unscoped-client",
+      "enabled": true,
+      "serviceAccountClientId": "unscoped-client",
+      "realmRoles": [
+        "speech-workload"
+      ]
+    },
+    {
+      "username": "ann",
+      "enabled": true,
+      "email": "ann@example.test",
+      "emailVerified": true,
+      "firstName": "Ann",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ann-test-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/apps/quiz",
+        "/services/speech-service"
+      ]
+    },
+    {
+      "username": "ben",
+      "enabled": true,
+      "email": "ben@example.test",
+      "emailVerified": true,
+      "firstName": "Ben",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ben-test-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/apps/quiz"
+      ]
+    },
+    {
+      "username": "cy",
+      "enabled": true,
+      "email": "cy@example.test",
+      "emailVerified": true,
+      "firstName": "Cy",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "cy-test-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/services/speech-service"
+      ]
+    },
+    {
+      "username": "dot",
+      "enabled": true,
+      "email": "dot@example.test",
+      "emailVerified": true,
+      "firstName": "Dot",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dot-test-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/apps/quiz/players",
+        "/services/speech-service"
+      ]
+    },
+    {
+      "username": "eli",
+      "enabled": true,
+      "email": "eli@example.test",
+      "emailVerified": true,
+      "firstName": "Eli",
+      "lastName": "Test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "eli-test-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/apps/quiz",
+        "/services/speech-service/reserved"
+      ]
+    }
+  ]
+}

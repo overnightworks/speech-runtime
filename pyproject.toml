@@ -48,7 +48,8 @@ overnightworks-speech-runtime-client = { workspace = true }
 overnightworks-speech-runtime-provider-contract = { path = "providers/provider-contract", editable = true }
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers --import-mode=importlib"
+addopts = "--strict-config --strict-markers --import-mode=importlib -m 'not keycloak'"
+markers = ["keycloak: needs the CI Keycloak that the keycloak-token-shapes job serves"]
 pythonpath = [".", "scripts"]
 testpaths = ["tests"]
 
