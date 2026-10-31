@@ -22,6 +22,12 @@ for it, so a new mandatory CI job is added there by its display name. Secret
 scanning and the SonarCloud scan run inside the gate, and
 `sonar-project.properties` may carry only the keys the gate allows.
 
+The `keycloak-token-shapes` job serves the throwaway realm of
+`tests/fixtures/keycloak/realm.json` from Keycloak and runs the tests marked
+`keycloak` (`tests/test_callers_keycloak.py`) from the root's locked environment;
+the default run deselects them. Run them locally only with a Keycloak you start
+yourself on a free port, under the probe-stack lock, and `KEYCLOAK_URL` naming it.
+
 Each speech job writes a Cobertura report (`coverage-<job>.xml`, paths relative
 to the repository root, set by `[tool.coverage.run]` in the root `pyproject.toml`);
 the `coverage` job gathers the five into the artifact the gate hands to SonarCloud.
