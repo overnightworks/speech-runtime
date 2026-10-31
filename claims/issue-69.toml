@@ -1,0 +1,8 @@
+claim_id = "4eae97176dea48bc871a2c2c2a1b8378"
+agent = "Claude f9263e7c-770c-4714-a559-669466757d0c"
+role = "builder"
+base = "390d61aedb4a24e74d36eeb8d1672487f7db6921"
+branch = "claude/issue-69-bounded-admission-429-and-413"
+scope = ["README.md", "docs/wire.md", "packages/client/src/speech_runtime_client/wire.py", "src/speech_runtime_service/config.py", "src/speech_runtime_service/service.py", "src/speech_runtime_service/synthesis_gate.py", "src/speech_runtime_service/wire_route.py", "tests"]
+opened_commit = "5f914514d3ae2fbb5a2b0ab120554e6600c8778a"
+whole_reason = "One admission rule across the gate, the route, their two settings, the wire's new 413 code and the documents naming them; each file gains a few lines and the tests follow the refusals."
