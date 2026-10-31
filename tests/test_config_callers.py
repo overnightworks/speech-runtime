@@ -41,6 +41,18 @@ def test_the_file_is_read_into_the_identity_and_the_apps(tmp_path: Path) -> None
     assert config.apps[APP].voices == ALL_VOICES
 
 
+def test_an_app_hears_only_when_its_table_says_so(tmp_path: Path) -> None:
+    deaf = load_caller_config(write_caller_configuration(tmp_path))
+    hearing = load_caller_config(
+        write_caller_configuration(
+            tmp_path, caller_configuration_text(apps=QUIZ_TABLE + "hear = true\n")
+        )
+    )
+
+    assert not deaf.apps[APP].hear
+    assert hearing.apps[APP].hear
+
+
 def test_leeway_has_no_upper_cap(tmp_path: Path) -> None:
     text = caller_configuration_text(identity=f"leeway_seconds = {LARGE_LEEWAY}")
 
@@ -141,8 +153,9 @@ def test_the_configuration_file_must_be_absolute() -> None:
         (QUIZ_TABLE.replace('["piper"]', '["alloy"]'), "voices"),
         (QUIZ_TABLE.replace('["piper"]', '"piper"'), "voices"),
         (QUIZ_TABLE + "speak = true\n", "speak"),
+        (QUIZ_TABLE + 'hear = "yes"\n', "hear"),
     ],
-    ids=["missing", "empty", "unknown voice", "not a list", "speak flag"],
+    ids=["missing", "empty", "unknown voice", "not a list", "speak flag", "hear text"],
 )
 def test_an_app_table_without_a_valid_voice_list_fails_naming_the_key(
     tmp_path: Path, table: str, field: str

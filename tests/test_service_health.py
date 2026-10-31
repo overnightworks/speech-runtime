@@ -21,7 +21,7 @@ def test_health_answers_while_models_are_not_ready() -> None:
 
     body = client.get("/health").json()
 
-    assert set(body) == {"speaking", "card_memory_mb"}
+    assert set(body) == {"speaking", "hearing", "card_memory_mb"}
     assert body["speaking"] == {
         "model": "fake-voice",
         "ready": False,

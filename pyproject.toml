@@ -25,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 speech-runtime-service = "speech_runtime_service.__main__:main"
+speech-runtime-fetch-hearing-model = "speech_runtime_service.fetch_hearing_model:main"
 
 [dependency-groups]
 dev = [
@@ -77,6 +78,8 @@ ignore = [
 [tool.ruff.lint.flake8-type-checking]
 # FastAPI evaluates the route handlers' annotations when it builds the app.
 runtime-evaluated-decorators = ["fastapi.FastAPI.get", "fastapi.FastAPI.post"]
+# Pydantic resolves the field annotations of its models when the class is built.
+runtime-evaluated-base-classes = ["pydantic.BaseModel", "pydantic_settings.BaseSettings"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 # Piper stays unloaded until the process holds it.

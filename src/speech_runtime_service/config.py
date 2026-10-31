@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from speech_runtime_provider_contract import MagpieSpeaker, QwenSpeaker
 from webauth.https_client import is_https_url
 
+from speech_runtime_service.hearing_models import HearingModel
 from speech_runtime_service.voices import (
     DEFAULT_SPEAKING_MODEL,
     VoiceId,
@@ -55,6 +56,11 @@ class Settings(BaseSettings):
     max_waiting_requests: int = Field(default=3, ge=0)
     max_body_bytes: int = Field(default=32_768, ge=1)
     max_input_characters: int = Field(default=4096, ge=1)
+    hearing_model: HearingModel | None = None
+    hearing_busy_wait_seconds: float = Field(default=30.0, ge=0, allow_inf_nan=False)
+    hearing_max_waiting_requests: int = Field(default=3, ge=0)
+    max_recording_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
+    max_recording_seconds: float = Field(default=300.0, gt=0, allow_inf_nan=False)
     config_file: Path | None = None
 
     @field_validator("config_file")
@@ -127,9 +133,10 @@ def _known_voice(name: object) -> VoiceId:
 
 
 class AppConfig(_FileModel):
-    """An app the service admits: its workload client and the voices it may name."""
+    """An app the service admits: its workload client, its voices and its hearing."""
 
     workload_client: str
+    hear: bool = False
     # TOML yields strings and lists, which strict mode refuses for an enum and a set.
     voices: Annotated[
         frozenset[Annotated[VoiceId, BeforeValidator(_known_voice)]],
