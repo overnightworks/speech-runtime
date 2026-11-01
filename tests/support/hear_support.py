@@ -11,6 +11,7 @@ from speech_runtime_client.wire import (
     TRANSCRIPTIONS_PATH,
     HearingLanguage,
 )
+from speech_runtime_service.clock import MONOTONIC_CLOCK
 from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
 from speech_runtime_service.hearing import Hearing
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from httpx2 import Response as ClientResponse
+
+    from speech_runtime_service.clock import Clock
 
 BOUNDARY = "recording-boundary"
 MULTIPART = f"multipart/form-data; boundary={BOUNDARY}"
@@ -89,9 +92,9 @@ class FakeHearing:
         self.closed += 1
 
 
-def loaded(engine: FakeHearing | None) -> Hearing:
-    """Hearing over `engine`, loaded."""
-    hearing = Hearing(engine)
+def loaded(engine: FakeHearing | None, clock: Clock = MONOTONIC_CLOCK) -> Hearing:
+    """Hearing over `engine`, loaded; its deadlines are on `clock`."""
+    hearing = Hearing(engine, clock)
     hearing.load()
     return hearing
 

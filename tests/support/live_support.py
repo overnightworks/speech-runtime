@@ -60,18 +60,6 @@ class FakeSocket:
         return [event for event in self.events if event["type"] == kind]
 
 
-class Clock:
-    """A clock the test moves."""
-
-    def __init__(self) -> None:
-        """Start at zero."""
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        """The time now."""
-        return self.now
-
-
 def audio(seconds: float, level: int = SPEECH_LEVEL) -> str:
     """The base64 PCM16 at 24 kHz of a constant level `seconds` long."""
     count = int(seconds * INPUT_RATE)
@@ -103,16 +91,14 @@ def update(language: str = "de") -> str:
 
 async def started(
     hearing: Hearing, *, final_wait_seconds: float = 30.0
-) -> tuple[LiveSession, FakeSocket, Clock]:
+) -> tuple[LiveSession, FakeSocket]:
     """A session over `hearing` that has sent `session.created`."""
     socket = FakeSocket()
-    clock = Clock()
     session = LiveSession(
         hearing,
         final_wait_seconds=final_wait_seconds,
         send=socket.send,
         close=socket.close,
-        clock=clock,
     )
     await session.start()
-    return session, socket, clock
+    return session, socket

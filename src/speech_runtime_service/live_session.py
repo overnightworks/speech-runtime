@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -91,18 +90,18 @@ class LiveSession:
         final_wait_seconds: float,
         send: Callable[[str], Awaitable[None]],
         close: Callable[[], Awaitable[None]],
-        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Hear through `hearing`; send events with `send` and end with `close`.
 
-        A final may wait `final_wait_seconds` from its turn's end; `clock` paces
-        the partials.
+        A final may wait `final_wait_seconds` from its turn's end. Deadlines and
+        the partials' pace follow the clock of the hearing's gate.
         """
         self._hearing = hearing
         self._final_wait_seconds = final_wait_seconds
         self._send = send
         self._close = close
-        self._scheduler = HearingSession(clock)
+        self._clock = hearing.gate.clock
+        self._scheduler = HearingSession(self._clock.now)
         self._resampler = Resampler()
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -150,7 +149,7 @@ class LiveSession:
             if self._ended:
                 return
             waiting = self._waiting
-            if waiting is not None and waiting.deadline <= time.monotonic():
+            if waiting is not None and waiting.deadline <= self._clock.now():
                 await self._end_locked(RefusalCode.BUSY)
                 return
             await self._apply(self._scheduler.poll())
@@ -241,7 +240,8 @@ class LiveSession:
         await self._emit(
             ItemCreated(previous_item_id=previous, item=UserMessageItem(id=item_id))
         )
-        final = _Final(item_id, turn.pcm, time.monotonic() + self._final_wait_seconds)
+        deadline = self._clock.now() + self._final_wait_seconds
+        final = _Final(item_id, turn.pcm, deadline)
         if not self._final_active:
             self._start_final(final)
         elif self._waiting is None:

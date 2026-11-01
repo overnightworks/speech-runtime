@@ -3,16 +3,14 @@
 import asyncio
 import json
 import logging
-import time
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from speech_runtime_client.wire import HearingLanguage
-from speech_runtime_service import live_session
 from speech_runtime_service.admission_gate import Lease
 from speech_runtime_service.live_session import POLL_WAIT_SECONDS, poll_forever
+from tests.support.clock_support import FakeClock
 from tests.support.hear_support import HEARD_TEXT, FakeHearing, loaded
 from tests.support.live_support import (
     WAIT_SECONDS,
@@ -67,7 +65,7 @@ def _end_is(socket: FakeSocket, code: str, failed: int) -> bool:
 
 def test_the_session_opens_with_the_default_session() -> None:
     async def scenario() -> FakeSocket:
-        _, socket, _ = await started(loaded(FakeHearing()))
+        _, socket = await started(loaded(FakeHearing(), FakeClock()))
         return socket
 
     socket = asyncio.run(scenario())
@@ -78,7 +76,7 @@ def test_the_session_opens_with_the_default_session() -> None:
 
 def test_a_question_without_a_commit_is_announced_ended_and_heard_once() -> None:
     async def scenario() -> FakeSocket:
-        session, socket, _ = await started(loaded(FakeHearing()))
+        session, socket = await started(loaded(FakeHearing(), FakeClock()))
         await _one_question(session)
         await session.settled()
         return socket
@@ -109,7 +107,7 @@ def test_a_question_without_a_commit_is_announced_ended_and_heard_once() -> None
 def test_a_session_hears_in_its_language(messages: list[str], language: str) -> None:
     async def scenario() -> FakeHearing:
         engine = FakeHearing()
-        session, _, _ = await started(loaded(engine))
+        session, _ = await started(loaded(engine, FakeClock()))
         for message in messages:
             await session.on_message(message)
         await _one_question(session)
@@ -123,7 +121,7 @@ def test_a_session_hears_in_its_language(messages: list[str], language: str) -> 
 
 def test_a_valid_update_is_answered_with_the_applied_session() -> None:
     async def scenario() -> FakeSocket:
-        session, socket, _ = await started(loaded(FakeHearing()))
+        session, socket = await started(loaded(FakeHearing(), FakeClock()))
         await session.on_message(update("en"))
         return socket
 
@@ -135,7 +133,7 @@ def test_a_valid_update_is_answered_with_the_applied_session() -> None:
 
 def test_two_questions_make_two_items_chained_by_their_predecessor() -> None:
     async def scenario() -> FakeSocket:
-        session, socket, _ = await started(loaded(FakeHearing()))
+        session, socket = await started(loaded(FakeHearing(), FakeClock()))
         for _ in range(2):
             await _one_question(session)
             await session.settled()
@@ -159,11 +157,12 @@ def test_two_questions_make_two_items_chained_by_their_predecessor() -> None:
 
 def test_deltas_carry_the_words_two_decodes_agree_on() -> None:
     async def scenario() -> FakeSocket:
-        session, socket, clock = await started(loaded(FakeHearing()))
+        clock = FakeClock()
+        session, socket = await started(loaded(FakeHearing(), clock))
         await session.on_message(append(audio(0.5)))
         await session.on_tick()
         await session.settled()
-        clock.now += 0.4
+        clock.advance(0.4)
         await session.on_message(append(audio(0.1)))
         await session.on_tick()
         await session.settled()
@@ -180,10 +179,10 @@ def test_deltas_carry_the_words_two_decodes_agree_on() -> None:
 def test_a_contended_partial_tick_is_skipped_without_an_error() -> None:
     async def scenario() -> tuple[FakeSocket, FakeHearing]:
         engine = FakeHearing()
-        hearing = loaded(engine)
+        hearing = loaded(engine, FakeClock())
         taken = hearing.gate.try_acquire()
         assert taken is not None
-        session, socket, _ = await started(hearing)
+        session, socket = await started(hearing)
         await session.on_message(append(audio(0.5)))
         await session.on_tick()
         await session.settled()
@@ -197,7 +196,7 @@ def test_a_contended_partial_tick_is_skipped_without_an_error() -> None:
 
 def test_a_commit_mid_speech_ends_the_turn_without_a_speech_stopped() -> None:
     async def scenario() -> FakeSocket:
-        session, socket, _ = await started(loaded(FakeHearing()))
+        session, socket = await started(loaded(FakeHearing(), FakeClock()))
         await _commit_a_turn(session)
         await session.settled()
         return socket
@@ -214,7 +213,7 @@ def test_a_commit_mid_speech_ends_the_turn_without_a_speech_stopped() -> None:
 def test_a_commit_with_no_audio_ends_the_session_failing_the_announced_item() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine))
+        session, socket = await started(loaded(engine, FakeClock()))
         await _commit_a_turn(session)
         await session.on_message(commit("empty"))
         engine.release.set()
@@ -254,7 +253,7 @@ def test_a_message_that_breaks_the_protocol_ends_the_session(
     message: str | None, param: str | None
 ) -> None:
     async def scenario() -> FakeSocket:
-        session, socket, _ = await started(loaded(FakeHearing()))
+        session, socket = await started(loaded(FakeHearing(), FakeClock()))
         await session.on_message(message)
         return socket
 
@@ -271,7 +270,7 @@ def test_a_message_that_breaks_the_protocol_ends_the_session(
 )
 def test_the_setup_is_one_update_before_the_first_audio(messages: list[str]) -> None:
     async def scenario() -> FakeSocket:
-        session, socket, _ = await started(loaded(FakeHearing()))
+        session, socket = await started(loaded(FakeHearing(), FakeClock()))
         for message in messages:
             await session.on_message(message)
         return socket
@@ -281,7 +280,7 @@ def test_the_setup_is_one_update_before_the_first_audio(messages: list[str]) -> 
 
 def test_a_session_that_ended_takes_nothing_more() -> None:
     async def scenario() -> list[object]:
-        session, socket, _ = await started(loaded(FakeHearing()))
+        session, socket = await started(loaded(FakeHearing(), FakeClock()))
         await session.on_message("not json")
         sent = len(socket.events)
         await session.on_message(update("en"))
@@ -294,7 +293,7 @@ def test_a_session_that_ended_takes_nothing_more() -> None:
 def test_a_decode_failure_fails_every_announced_item_then_errors_and_closes() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine))
+        session, socket = await started(loaded(engine, FakeClock()))
         await _commit_a_turn(session)
         await _commit_a_turn(session)
         engine.fail_transcription = True
@@ -315,7 +314,7 @@ def test_no_log_record_holds_the_heard_text_of_a_failed_decode(
     async def scenario() -> None:
         engine = FakeHearing()
         engine.fail_transcription = True
-        session, socket, _ = await started(loaded(engine))
+        session, socket = await started(loaded(engine, FakeClock()))
         await _commit_a_turn(session)
         await socket.until_closed()
 
@@ -328,8 +327,8 @@ def test_no_log_record_holds_the_heard_text_of_a_failed_decode(
 
 def test_a_lost_engine_ends_the_session_as_unavailable() -> None:
     async def scenario() -> FakeSocket:
-        hearing = loaded(FakeHearing())
-        session, socket, _ = await started(hearing)
+        hearing = loaded(FakeHearing(), FakeClock())
+        session, socket = await started(hearing)
         hearing.close()
         await _commit_a_turn(session)
         return socket
@@ -340,7 +339,7 @@ def test_a_lost_engine_ends_the_session_as_unavailable() -> None:
 def test_a_second_ended_turn_while_one_waits_ends_the_session_as_busy() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine))
+        session, socket = await started(loaded(engine, FakeClock()))
         await _commit_a_turn(session)
         await _commit_a_turn(session)
         await session.on_message(append(audio(0.3)))
@@ -358,7 +357,9 @@ def test_a_second_ended_turn_while_one_waits_ends_the_session_as_busy() -> None:
 def test_a_final_whose_wait_ran_out_is_never_started_on_a_free_decode() -> None:
     async def scenario() -> tuple[FakeSocket, FakeHearing]:
         engine = FakeHearing()
-        session, socket, _ = await started(loaded(engine), final_wait_seconds=0)
+        session, socket = await started(
+            loaded(engine, FakeClock()), final_wait_seconds=0
+        )
         await _commit_a_turn(session)
         await session.settled()
         return socket, engine
@@ -371,16 +372,18 @@ def test_a_final_whose_wait_ran_out_is_never_started_on_a_free_decode() -> None:
 
 def test_a_final_that_waits_out_its_time_leaves_the_running_decode_its_lease() -> None:
     async def scenario() -> tuple[FakeSocket, bool, bool]:
-        engine = FakeHearing()
-        hearing = loaded(engine)
+        clock = FakeClock()
+        hearing = loaded(FakeHearing(), clock)
         running = hearing.gate.try_acquire()
         assert running is not None
-        session, socket, _ = await started(hearing, final_wait_seconds=0.05)
+        session, socket = await started(hearing, final_wait_seconds=WAIT_SECONDS)
         await _commit_a_turn(session)
+        await clock.until_a_wait_begins()
+        clock.advance(2 * WAIT_SECONDS)
         await socket.until_closed()
         still_held = hearing.gate.try_acquire() is None
         running.close()
-        next_job = await hearing.gate.acquire(time.monotonic() + WAIT_SECONDS, 1)
+        next_job = await hearing.gate.acquire(clock.now() + WAIT_SECONDS, 1)
         return socket, still_held, next_job is not None
 
     socket, still_held, next_job_served = asyncio.run(scenario())
@@ -395,20 +398,20 @@ def test_finals_of_several_sessions_are_served_in_arrival_order_before_file_jobs
 ):
     async def scenario() -> tuple[list[int], int]:
         engine = FakeHearing()
-        hearing = loaded(engine)
+        hearing = loaded(engine, FakeClock())
         running = hearing.gate.try_acquire()
         assert running is not None
         file_job = asyncio.create_task(
-            hearing.gate.acquire(time.monotonic() + WAIT_SECONDS, 1)
+            hearing.gate.acquire(hearing.gate.clock.now() + WAIT_SECONDS, 1)
         )
         sessions = [(await started(hearing)) for _ in range(2)]
         await asyncio.sleep(0)
-        for (session, _, _), seconds in zip(sessions, (0.3, 0.4), strict=True):
+        for (session, _), seconds in zip(sessions, (0.3, 0.4), strict=True):
             await _commit_a_turn(session, seconds)
         for _ in range(SETTLE_TURNS):
             await asyncio.sleep(0)
         running.close()
-        for _, socket, _ in sessions:
+        for _, socket in sessions:
             await socket.until(lambda socket=socket: bool(socket.of_type(COMPLETED)))
         file_lease = await file_job
         assert file_lease is not None
@@ -425,15 +428,17 @@ def test_finals_of_several_sessions_are_served_in_arrival_order_before_file_jobs
 def test_a_disconnect_mid_decode_sends_nothing_and_holds_the_decode() -> None:
     async def scenario() -> tuple[int, int, bool, bool, int]:
         engine = FakeHearing(hold=True)
-        hearing = loaded(engine)
-        session, socket, _ = await started(hearing)
+        hearing = loaded(engine, FakeClock())
+        session, socket = await started(hearing)
         await _commit_a_turn(session)
         await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
         sent = len(socket.events)
         await session.on_disconnect()
         held = hearing.gate.try_acquire() is None
         engine.release.set()
-        next_job = await hearing.gate.acquire(time.monotonic() + WAIT_SECONDS, 1)
+        next_job = await hearing.gate.acquire(
+            hearing.gate.clock.now() + WAIT_SECONDS, 1
+        )
         return (
             sent,
             len(socket.events),
@@ -453,10 +458,10 @@ def test_a_disconnect_mid_decode_sends_nothing_and_holds_the_decode() -> None:
 def test_a_partial_not_yet_started_when_the_client_leaves_never_runs() -> None:
     async def scenario() -> tuple[int, bool]:
         engine = FakeHearing(hold=True)
-        hearing = loaded(engine)
+        hearing = loaded(engine, FakeClock())
         blocking = hearing.submit(Lease(lambda: None), _transcribe_silence)
         await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
-        session, _, _ = await started(hearing)
+        session, _ = await started(hearing)
         await session.on_message(append(audio(0.5)))
         await session.on_tick()
         await session.on_disconnect()
@@ -476,8 +481,8 @@ def test_a_partial_not_yet_started_when_the_client_leaves_never_runs() -> None:
 def test_a_result_that_arrives_after_the_session_ended_is_dropped() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        hearing = loaded(engine)
-        session, socket, _ = await started(hearing)
+        hearing = loaded(engine, FakeClock())
+        session, socket = await started(hearing)
         await _commit_a_turn(session)
         await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
         await session.on_message("not json")
@@ -498,7 +503,7 @@ def test_a_result_that_arrives_after_the_session_ended_is_dropped() -> None:
 
 def test_the_poll_runs_every_three_tenths_of_a_second() -> None:
     async def scenario() -> list[float]:
-        session, _, _ = await started(loaded(FakeHearing()))
+        session, _ = await started(loaded(FakeHearing(), FakeClock()))
         waits: list[float] = []
 
         async def sleep(seconds: float) -> None:
@@ -517,7 +522,7 @@ def test_the_poll_runs_every_three_tenths_of_a_second() -> None:
 def test_a_waiting_turn_is_heard_after_the_outstanding_final() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine))
+        session, socket = await started(loaded(engine, FakeClock()))
         await _commit_a_turn(session)
         await _commit_a_turn(session)
         announced = len(socket.of_type("input_audio_buffer.committed"))
@@ -534,23 +539,17 @@ def test_a_waiting_turn_is_heard_after_the_outstanding_final() -> None:
     ]
 
 
-def test_a_waiting_turn_that_outlasts_its_wait_ends_the_session_as_busy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    offset = [0.0]
-    monkeypatch.setattr(
-        live_session,
-        "time",
-        SimpleNamespace(monotonic=lambda: time.monotonic() + offset[0]),
-    )
-
+def test_a_waiting_turn_that_outlasts_its_wait_ends_the_session_as_busy() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine), final_wait_seconds=30.0)
+        clock = FakeClock()
+        session, socket = await started(
+            loaded(engine, clock), final_wait_seconds=WAIT_SECONDS
+        )
         await _commit_a_turn(session)
         assert await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
         await _commit_a_turn(session)
-        offset[0] = 2 * 30.0
+        clock.advance(2 * WAIT_SECONDS)
         await session.on_tick()
         engine.release.set()
         await session.on_disconnect()
@@ -562,7 +561,7 @@ def test_a_waiting_turn_that_outlasts_its_wait_ends_the_session_as_busy(
 def test_audio_past_the_retention_bound_ends_the_session_as_busy() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine))
+        session, socket = await started(loaded(engine, FakeClock()))
         await session.on_message(append(audio(THREE_TURNS_SECONDS)))
         engine.release.set()
         await session.on_disconnect()
@@ -574,7 +573,7 @@ def test_audio_past_the_retention_bound_ends_the_session_as_busy() -> None:
 def test_a_turn_that_fell_silent_while_one_waits_ends_the_session_as_busy() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine))
+        session, socket = await started(loaded(engine, FakeClock()))
         await _commit_a_turn(session)
         await _commit_a_turn(session)
         await _one_question(session)
@@ -588,13 +587,14 @@ def test_a_turn_that_fell_silent_while_one_waits_ends_the_session_as_busy() -> N
 def test_deltas_hold_back_words_the_decodes_disagree_on() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing("Guten Tag")
-        session, socket, clock = await started(loaded(engine))
+        clock = FakeClock()
+        session, socket = await started(loaded(engine, clock))
         await session.on_message(append(audio(0.5)))
         for text in ("Guten Tag", "Guten Morgen", "Guten Morgen Welt"):
             engine.text = text
             await session.on_tick()
             await session.settled()
-            clock.now += 0.4
+            clock.advance(0.4)
             await session.on_message(append(audio(0.1)))
         return socket
 
@@ -607,7 +607,7 @@ def test_a_partial_that_fails_ends_the_session_as_unavailable() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing()
         engine.fail_transcription = True
-        session, socket, _ = await started(loaded(engine))
+        session, socket = await started(loaded(engine, FakeClock()))
         await session.on_message(append(audio(0.5)))
         await session.on_tick()
         await socket.until_closed()
@@ -618,8 +618,8 @@ def test_a_partial_that_fails_ends_the_session_as_unavailable() -> None:
 
 def test_a_partial_after_the_engine_was_lost_ends_the_session_as_unavailable() -> None:
     async def scenario() -> FakeSocket:
-        hearing = loaded(FakeHearing())
-        session, socket, _ = await started(hearing)
+        hearing = loaded(FakeHearing(), FakeClock())
+        session, socket = await started(hearing)
         await session.on_message(append(audio(0.5)))
         hearing.close()
         await session.on_tick()
@@ -631,7 +631,7 @@ def test_a_partial_after_the_engine_was_lost_ends_the_session_as_unavailable() -
 def test_a_partial_that_returns_after_its_turn_ended_adds_no_delta() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine))
+        session, socket = await started(loaded(engine, FakeClock()))
         await session.on_message(append(audio(0.5)))
         await session.on_tick()
         await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)

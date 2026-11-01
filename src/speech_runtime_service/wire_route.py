@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import time
 from typing import TYPE_CHECKING, Final
 
 from pydantic import BaseModel, ValidationError
@@ -127,7 +126,9 @@ class _SpeechRoute:
         admitted = await self._callers.admit(request.headers)
         if isinstance(admitted, RefusalCode):
             return _refused(admitted)
-        deadline = time.monotonic() + self._settings.busy_wait_seconds
+        deadline = (
+            self._runtime.synthesis_gate.clock.now() + self._settings.busy_wait_seconds
+        )
         parsed = await self._checked(request)
         if isinstance(parsed, JSONResponse):
             return parsed
@@ -210,7 +211,10 @@ class _TranscriptionRoute:
         refused = await self._hearing_refusal(request)
         if refused is not None:
             return refused
-        deadline = time.monotonic() + self._settings.hearing_busy_wait_seconds
+        deadline = (
+            self._runtime.hearing.gate.clock.now()
+            + self._settings.hearing_busy_wait_seconds
+        )
         raw = await _read_within(request, self._settings.max_recording_bytes)
         if raw is None:
             return _refused(RefusalCode.TOO_LARGE)

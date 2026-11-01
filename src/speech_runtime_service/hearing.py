@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from speech_runtime_service.admission_gate import AdmissionGate, Lease
+from speech_runtime_service.clock import MONOTONIC_CLOCK
 from speech_runtime_service.cuda_libs import prepare_cuda_libraries
 from speech_runtime_service.hearing_models import model_directory
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from speech_runtime_client.wire import HearingLanguage
+    from speech_runtime_service.clock import Clock
     from speech_runtime_service.config import Settings
     from speech_runtime_service.hearing_models import HearingModel
 
@@ -142,11 +144,16 @@ class WhisperHearing:
 class Hearing:
     """The loaded hearing engine, the gate its decodes pass and their one worker."""
 
-    def __init__(self, engine: HearingEngine | None) -> None:
-        """Hold `engine`, or none when no hearing model is configured."""
+    def __init__(
+        self, engine: HearingEngine | None, clock: Clock = MONOTONIC_CLOCK
+    ) -> None:
+        """Hold `engine`, or none when no hearing model is configured.
+
+        The gate's deadlines, and so the live sessions', are on `clock`.
+        """
         self._engine = engine
         self._ready: HearingEngine | None = None
-        self.gate = AdmissionGate()
+        self.gate = AdmissionGate(clock)
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hearing")
         self._sessions = 0
 
