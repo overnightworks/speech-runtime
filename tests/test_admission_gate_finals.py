@@ -82,6 +82,24 @@ def test_a_final_that_expires_in_the_queue_leaves_the_running_lease_alone() -> N
     assert served_after
 
 
+def test_a_final_handed_the_gate_after_its_deadline_is_not_started() -> None:
+    async def scenario() -> tuple[object, bool]:
+        gate = AdmissionGate()
+        running = gate.try_acquire()
+        assert running is not None
+        waiting = asyncio.create_task(gate.acquire_final(_in(SHORT_SECONDS)))
+        await _settle()
+        running.close()
+        asyncio.get_running_loop().call_soon(time.sleep, 2 * SHORT_SECONDS)
+        lease = await waiting
+        return lease, gate.try_acquire() is not None
+
+    lease, gate_is_free = asyncio.run(scenario())
+
+    assert lease is None
+    assert gate_is_free
+
+
 def test_a_cancelled_final_leaves_the_gate_to_the_next_final() -> None:
     async def scenario() -> bool:
         gate = AdmissionGate()

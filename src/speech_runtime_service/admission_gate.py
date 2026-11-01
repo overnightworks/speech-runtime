@@ -72,11 +72,15 @@ class AdmissionGate:
 
         Finals are served in arrival order, ahead of every `acquire` waiter, and
         are never refused for want of a place. A final whose deadline has passed
-        is not started, even on a free gate.
+        is not started, even on a free gate or when the gate is handed over late.
         """
         if deadline <= time.monotonic():
             return None
-        return await self._wait(self._finals, deadline, max_waiters=None)
+        lease = await self._wait(self._finals, deadline, max_waiters=None)
+        if lease is not None and deadline <= time.monotonic():
+            lease.close()
+            return None
+        return lease
 
     async def _wait(
         self, queue: deque[_Waiter], deadline: float, max_waiters: int | None
