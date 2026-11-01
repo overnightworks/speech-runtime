@@ -145,9 +145,13 @@ class LiveSession:
                 await self._on_commit(event)
 
     async def on_tick(self) -> None:
-        """End a turn that fell silent, and decode a partial when one is due."""
+        """Expire a waiting turn, end a silent turn, decode a partial when due."""
         async with self._lock:
             if self._ended:
+                return
+            waiting = self._waiting
+            if waiting is not None and waiting.deadline <= time.monotonic():
+                await self._end_locked(RefusalCode.BUSY)
                 return
             await self._apply(self._scheduler.poll())
             if not self._ended:

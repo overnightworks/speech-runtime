@@ -527,6 +527,21 @@ def test_a_waiting_turn_is_heard_after_the_outstanding_final() -> None:
     ]
 
 
+def test_a_waiting_turn_that_outlasts_its_wait_ends_the_session_as_busy() -> None:
+    async def scenario() -> FakeSocket:
+        engine = FakeHearing(hold=True)
+        session, socket, _ = await started(loaded(engine), final_wait_seconds=0.05)
+        await _commit_a_turn(session)
+        await _commit_a_turn(session)
+        await asyncio.sleep(0.1)
+        await session.on_tick()
+        engine.release.set()
+        await session.on_disconnect()
+        return socket
+
+    assert _end_is(asyncio.run(scenario()), "busy", failed=2)
+
+
 def test_audio_past_the_retention_bound_ends_the_session_as_busy() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
