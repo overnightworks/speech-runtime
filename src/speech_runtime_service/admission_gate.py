@@ -38,13 +38,17 @@ class _Waiter:
 
 
 class AdmissionGate:
-    """Serves waiters first come first served; a waiter holds no thread."""
+    """Serves waiters first come first served; a waiter holds no thread.
+
+    A live final queues apart and is served before every waiting job.
+    """
 
     def __init__(self) -> None:
         """Start free."""
         self._guard = threading.Lock()
         self._held = False
         self._waiters: deque[_Waiter] = deque()
+        self._finals: deque[_Waiter] = deque()
 
     def try_acquire(self) -> Lease | None:
         """Take the gate at once, or answer `None` while it is held."""
@@ -61,15 +65,31 @@ class AdmissionGate:
         `max_waiters` already waiting answers `None` at once. A cancellation or
         a timeout leaves the gate to the next waiter.
         """
+        return await self._wait(self._waiters, deadline, max_waiters)
+
+    async def acquire_final(self, deadline: float) -> Lease | None:
+        """Take the gate for a live final, waiting until `deadline` (monotonic).
+
+        Finals are served in arrival order, ahead of every `acquire` waiter, and
+        are never refused for want of a place. A final whose deadline has passed
+        is not started, even on a free gate.
+        """
+        if deadline <= time.monotonic():
+            return None
+        return await self._wait(self._finals, deadline, max_waiters=None)
+
+    async def _wait(
+        self, queue: deque[_Waiter], deadline: float, max_waiters: int | None
+    ) -> Lease | None:
         loop = asyncio.get_running_loop()
         waiter = _Waiter(loop, loop.create_future())
         with self._guard:
             if not self._held:
                 self._held = True
                 return Lease(self._release)
-            if len(self._waiters) >= max_waiters:
+            if max_waiters is not None and len(queue) >= max_waiters:
                 return None
-            self._waiters.append(waiter)
+            queue.append(waiter)
         try:
             async with asyncio.timeout(deadline - time.monotonic()):
                 return await waiter.future
@@ -82,8 +102,9 @@ class AdmissionGate:
 
     def _abandon(self, waiter: _Waiter) -> None:
         with self._guard:
-            if waiter in self._waiters:
-                self._waiters.remove(waiter)
+            for queue in (self._finals, self._waiters):
+                if waiter in queue:
+                    queue.remove(waiter)
         if waiter.future.done() and not waiter.future.cancelled():
             waiter.future.result().close()
         else:
@@ -92,10 +113,11 @@ class AdmissionGate:
     def _release(self) -> None:
         while True:
             with self._guard:
-                if not self._waiters:
+                queue = self._finals or self._waiters
+                if not queue:
                     self._held = False
                     return
-                waiter = self._waiters.popleft()
+                waiter = queue.popleft()
             try:
                 waiter.loop.call_soon_threadsafe(self._grant, waiter)
             except RuntimeError:
