@@ -52,8 +52,9 @@ def _denied(
     client: TestClient, url: str = URL, headers: dict[str, str] | None = None
 ) -> WebSocketDenialResponse:
     sent = valid_headers() if headers is None else headers
+    connection = client.websocket_connect(url, headers=sent)
     with pytest.raises(WebSocketDenialResponse) as denial:
-        client.websocket_connect(url, headers=sent).__enter__()
+        connection.__enter__()
     return denial.value
 
 
