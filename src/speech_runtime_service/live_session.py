@@ -177,7 +177,8 @@ class LiveSession:
             await self._end_locked(RefusalCode.UNAVAILABLE)
             return
         self._scheduler.partial_started()
-        self._spawn(self._run_partial(future, self._turn_number))
+        task = self._spawn(self._run_partial(future, self._turn_number))
+        task.add_done_callback(lambda _done: future.cancel())
 
     async def _on_update(self, event: SessionUpdate) -> None:
         if self._configured or self._audio_seen:
@@ -339,10 +340,11 @@ class LiveSession:
             if task is not asyncio.current_task():
                 task.cancel()
 
-    def _spawn(self, work: Coroutine[object, object, None]) -> None:
+    def _spawn(self, work: Coroutine[object, object, None]) -> asyncio.Task[None]:
         task = asyncio.create_task(work)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        return task
 
     async def _emit(self, event: BaseModel) -> None:
         await self._send(event.model_dump_json())

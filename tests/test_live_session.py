@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from speech_runtime_client.wire import HearingLanguage
+from speech_runtime_service.admission_gate import Lease
 from speech_runtime_service.live_session import POLL_WAIT_SECONDS, poll_forever
 from tests.support.hear_support import HEARD_TEXT, FakeHearing, loaded
 from tests.support.live_support import (
@@ -21,6 +23,7 @@ from tests.support.live_support import (
 )
 
 if TYPE_CHECKING:
+    from speech_runtime_service.hearing import HearingEngine
     from speech_runtime_service.live_session import LiveSession
 
 COMPLETED = "conversation.item.input_audio_transcription.completed"
@@ -28,7 +31,12 @@ FAILED = "conversation.item.input_audio_transcription.failed"
 POLLS = 3
 THREE_TURNS_SECONDS = 4 * 30 + 1
 SETTLE_TURNS = 3
+BLOCKER_AND_MARKER = 2
 DELTA = "conversation.item.input_audio_transcription.delta"
+
+
+def _transcribe_silence(engine: HearingEngine) -> str:
+    return engine.transcribe(b"\0\0", HearingLanguage.DE)
 
 
 async def _one_question(session: LiveSession) -> None:
@@ -438,6 +446,29 @@ def test_a_disconnect_mid_decode_sends_nothing_and_holds_the_decode() -> None:
     assert held
     assert next_job_served
     assert most_concurrent == 1
+
+
+def test_a_partial_not_yet_started_when_the_client_leaves_never_runs() -> None:
+    async def scenario() -> tuple[int, bool]:
+        engine = FakeHearing(hold=True)
+        hearing = loaded(engine)
+        blocking = hearing.submit(Lease(lambda: None), _transcribe_silence)
+        await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
+        session, _, _ = await started(hearing)
+        await session.on_message(append(audio(0.5)))
+        await session.on_tick()
+        await session.on_disconnect()
+        engine.release.set()
+        await asyncio.wrap_future(blocking)
+        await asyncio.wrap_future(
+            hearing.submit(Lease(lambda: None), _transcribe_silence)
+        )
+        return len(engine.heard), hearing.gate.try_acquire() is not None
+
+    heard, gate_is_free = asyncio.run(scenario())
+
+    assert heard == BLOCKER_AND_MARKER
+    assert gate_is_free
 
 
 def test_a_result_that_arrives_after_the_session_ended_is_dropped() -> None:
