@@ -320,14 +320,15 @@ def parse_client_event(text: str) -> ClientEvent:
     try:
         return _CLIENT_EVENT.validate_json(text)
     except ValidationError as error:
-        location = error.errors(
+        first = error.errors(
             include_url=False, include_context=False, include_input=False
-        )[0]["loc"]
-        # A union error leads with the event's type; an unknown type has no location.
-        parts = location[1:] if location else ("type",)
-        raise ClientEventError(
-            ".".join(map(str, parts)) or None, _event_id(text)
-        ) from None
+        )[0]
+        # A field error leads with the event's type, which the param leaves out.
+        if first["type"] == "union_tag_invalid":
+            param = "type"
+        else:
+            param = ".".join(map(str, first["loc"][1:])) or None
+        raise ClientEventError(param, _event_id(text)) from None
 
 
 def _event_id(text: str) -> str | None:
@@ -342,6 +343,11 @@ def _event_id(text: str) -> str | None:
 def new_event_id() -> str:
     """A fresh id for a server event."""
     return f"event_{uuid4().hex}"
+
+
+def new_item_id() -> str:
+    """A fresh id for a conversation item."""
+    return f"item_{uuid4().hex}"
 
 
 class _ServerEvent(BaseModel):
