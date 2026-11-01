@@ -75,7 +75,7 @@ class Clock:
 def audio(seconds: float, level: int = SPEECH_LEVEL) -> str:
     """The base64 PCM16 at 24 kHz of a constant level `seconds` long."""
     count = int(seconds * INPUT_RATE)
-    return base64.b64encode(struct.pack(f"<{count}h", *[level] * count)).decode()
+    return base64.b64encode(struct.pack("<h", level) * count).decode()
 
 
 def append(data: str, event_id: str | None = None) -> str:

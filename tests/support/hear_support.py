@@ -50,7 +50,7 @@ class FakeHearing:
         hold: bool = False,
     ) -> None:
         """Answer `text`; fail the load with `load_error`; hold decodes if `hold`."""
-        self._text = text
+        self.text = text
         self._load_error = load_error
         self.closed = 0
         self.heard: list[tuple[int, HearingLanguage]] = []
@@ -80,8 +80,8 @@ class FakeHearing:
                 message = "the decode was never released"
                 raise TimeoutError(message)
             if self.fail_transcription:
-                raise RuntimeError(self._text)
-            return self._text
+                raise RuntimeError(self.text)
+            return self.text
         finally:
             with self._guard:
                 self._active -= 1

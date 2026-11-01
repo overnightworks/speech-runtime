@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 COMPLETED = "conversation.item.input_audio_transcription.completed"
 FAILED = "conversation.item.input_audio_transcription.failed"
 POLLS = 3
+THREE_TURNS_SECONDS = 4 * 30 + 1
 SETTLE_TURNS = 3
 DELTA = "conversation.item.input_audio_transcription.delta"
 
@@ -464,3 +465,110 @@ def test_the_poll_runs_every_three_tenths_of_a_second() -> None:
         return waits
 
     assert asyncio.run(scenario()) == [POLL_WAIT_SECONDS] * POLLS
+
+
+def test_a_waiting_turn_is_heard_after_the_outstanding_final() -> None:
+    async def scenario() -> FakeSocket:
+        engine = FakeHearing(hold=True)
+        session, socket, _ = await started(loaded(engine))
+        await _commit_a_turn(session)
+        await _commit_a_turn(session)
+        announced = len(socket.of_type("input_audio_buffer.committed"))
+        engine.release.set()
+        await socket.until(lambda: len(socket.of_type(COMPLETED)) == announced)
+        await session.settled()
+        return socket
+
+    socket = asyncio.run(scenario())
+
+    committed = socket.of_type("input_audio_buffer.committed")
+    assert [done["item_id"] for done in socket.of_type(COMPLETED)] == [
+        turn["item_id"] for turn in committed
+    ]
+
+
+def test_audio_past_the_retention_bound_ends_the_session_as_busy() -> None:
+    async def scenario() -> FakeSocket:
+        engine = FakeHearing(hold=True)
+        session, socket, _ = await started(loaded(engine))
+        await session.on_message(append(audio(THREE_TURNS_SECONDS)))
+        engine.release.set()
+        await session.on_disconnect()
+        return socket
+
+    assert _end_is(asyncio.run(scenario()), "busy", failed=3)
+
+
+def test_a_turn_that_fell_silent_while_one_waits_ends_the_session_as_busy() -> None:
+    async def scenario() -> FakeSocket:
+        engine = FakeHearing(hold=True)
+        session, socket, _ = await started(loaded(engine))
+        await _commit_a_turn(session)
+        await _commit_a_turn(session)
+        await _one_question(session)
+        engine.release.set()
+        await session.on_disconnect()
+        return socket
+
+    assert _end_is(asyncio.run(scenario()), "busy", failed=3)
+
+
+def test_deltas_hold_back_words_the_decodes_disagree_on() -> None:
+    async def scenario() -> FakeSocket:
+        engine = FakeHearing("Guten Tag")
+        session, socket, clock = await started(loaded(engine))
+        await session.on_message(append(audio(0.5)))
+        for text in ("Guten Tag", "Guten Morgen", "Guten Morgen Welt"):
+            engine.text = text
+            await session.on_tick()
+            await session.settled()
+            clock.now += 0.4
+            await session.on_message(append(audio(0.1)))
+        return socket
+
+    socket = asyncio.run(scenario())
+
+    assert [event["delta"] for event in socket.of_type(DELTA)] == ["Guten", " Morgen"]
+
+
+def test_a_partial_that_fails_ends_the_session_as_unavailable() -> None:
+    async def scenario() -> FakeSocket:
+        engine = FakeHearing()
+        engine.fail_transcription = True
+        session, socket, _ = await started(loaded(engine))
+        await session.on_message(append(audio(0.5)))
+        await session.on_tick()
+        await socket.until_closed()
+        return socket
+
+    assert _end_is(asyncio.run(scenario()), "unavailable", failed=1)
+
+
+def test_a_partial_after_the_engine_was_lost_ends_the_session_as_unavailable() -> None:
+    async def scenario() -> FakeSocket:
+        hearing = loaded(FakeHearing())
+        session, socket, _ = await started(hearing)
+        await session.on_message(append(audio(0.5)))
+        hearing.close()
+        await session.on_tick()
+        return socket
+
+    assert _end_is(asyncio.run(scenario()), "unavailable", failed=1)
+
+
+def test_a_partial_that_returns_after_its_turn_ended_adds_no_delta() -> None:
+    async def scenario() -> FakeSocket:
+        engine = FakeHearing(hold=True)
+        session, socket, _ = await started(loaded(engine))
+        await session.on_message(append(audio(0.5)))
+        await session.on_tick()
+        await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
+        await session.on_message(commit())
+        engine.release.set()
+        await socket.until(lambda: bool(socket.of_type(COMPLETED)))
+        await session.settled()
+        return socket
+
+    socket = asyncio.run(scenario())
+
+    assert socket.of_type(DELTA) == []

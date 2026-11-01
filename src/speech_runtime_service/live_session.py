@@ -133,13 +133,12 @@ class LiveSession:
                     RefusalCode.INVALID_REQUEST, error.param, error.event_id
                 )
                 return
-            match event:
-                case SessionUpdate():
-                    await self._on_update(event)
-                case AudioAppend():
-                    await self._on_append(event)
-                case AudioCommit():
-                    await self._on_commit(event)
+            if isinstance(event, SessionUpdate):
+                await self._on_update(event)
+            elif isinstance(event, AudioAppend):
+                await self._on_append(event)
+            else:
+                await self._on_commit(event)
 
     async def on_tick(self) -> None:
         """End a turn that fell silent, and decode a partial when one is due."""
@@ -259,8 +258,6 @@ class LiveSession:
             await self._end(RefusalCode.UNAVAILABLE)
             return
         async with self._lock:
-            if self._ended:
-                return
             await self._complete(final, text)
 
     async def _complete(self, final: _Final, text: str) -> None:
@@ -324,8 +321,6 @@ class LiveSession:
         event_id: str | None = None,
     ) -> None:
         """Fail every announced unfinished item, then send `error`, then close."""
-        if self._ended:
-            return
         self._ended = True
         self._cancel_decodes()
         failure = item_failure(code)
