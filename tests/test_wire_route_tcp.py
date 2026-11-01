@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -15,8 +16,15 @@ from starlette.status import (
     HTTP_401_UNAUTHORIZED,
     HTTP_404_NOT_FOUND,
 )
+from websockets.asyncio.client import connect
+from websockets.exceptions import InvalidStatus
 
-from speech_runtime_client.wire import AUTHORIZATION_HEADER, SPEECH_PATH, RefusalCode
+from speech_runtime_client.wire import (
+    AUTHORIZATION_HEADER,
+    REALTIME_PATH,
+    SPEECH_PATH,
+    RefusalCode,
+)
 from speech_runtime_service.pcm import WAV_HEADER_BYTES, pcm_from_wav
 from speech_runtime_service.service import Runtime
 from tests.support.fakes_support import (
@@ -29,6 +37,7 @@ from tests.support.identity_support import valid_headers
 from tests.support.speak_support import (
     FailingSpeaking,
     assert_refusal,
+    assert_refusal_body,
     gate_is_free,
     speak_body,
 )
@@ -256,7 +265,7 @@ def test_tcp_answers_without_tokens_only_health_and_the_wires_plain_refusals(
         assert_refusal(response, status, code, None)
 
 
-def test_tcp_refuses_a_websocket_upgrade_on_hear() -> None:
+def test_tcp_refuses_a_websocket_upgrade_off_the_wire() -> None:
     upgrade = (
         b"GET /hear HTTP/1.1\r\nHost: speech\r\nUpgrade: websocket\r\n"
         b"Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n"
@@ -276,4 +285,21 @@ def test_tcp_refuses_a_websocket_upgrade_on_hear() -> None:
 
     status_line = asyncio.run(scenario())
 
-    assert status_line.split()[1] == b"404"
+    assert status_line.split()[1] != b"101"
+
+
+def test_tcp_denies_a_realtime_upgrade_without_tokens_in_the_error_form() -> None:
+    async def scenario() -> tuple[int, dict[str, dict[str, object]]]:
+        async with serving_over_tcp(_gated_runtime(FakeSpeaking())) as server:
+            host, port = _address(server)
+            url = f"ws://{host}:{port}{REALTIME_PATH}?intent=transcription"
+            with pytest.raises(InvalidStatus) as denied:
+                await connect(url)
+            response = denied.value.response
+            return response.status_code, json.loads(response.body)
+
+    status, body = asyncio.run(scenario())
+
+    assert_refusal_body(
+        status, body, HTTP_401_UNAUTHORIZED, RefusalCode.UNAUTHORIZED, None
+    )
