@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 from typing import TYPE_CHECKING
 
@@ -10,6 +11,7 @@ from speech_runtime_client.wire import (
     TRANSCRIPTIONS_PATH,
     HearingLanguage,
 )
+from speech_runtime_service.clock import MONOTONIC_CLOCK
 from speech_runtime_service.config import Settings
 from speech_runtime_service.control import create_control_app
 from speech_runtime_service.hearing import Hearing
@@ -26,6 +28,8 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from httpx2 import Response as ClientResponse
+
+    from speech_runtime_service.clock import Clock
 
 BOUNDARY = "recording-boundary"
 MULTIPART = f"multipart/form-data; boundary={BOUNDARY}"
@@ -47,7 +51,7 @@ class FakeHearing:
         hold: bool = False,
     ) -> None:
         """Answer `text`; fail the load with `load_error`; hold decodes if `hold`."""
-        self._text = text
+        self.text = text
         self._load_error = load_error
         self.closed = 0
         self.heard: list[tuple[int, HearingLanguage]] = []
@@ -77,8 +81,8 @@ class FakeHearing:
                 message = "the decode was never released"
                 raise TimeoutError(message)
             if self.fail_transcription:
-                raise RuntimeError(self._text)
-            return self._text
+                raise RuntimeError(self.text)
+            return self.text
         finally:
             with self._guard:
                 self._active -= 1
@@ -88,9 +92,9 @@ class FakeHearing:
         self.closed += 1
 
 
-def loaded(engine: FakeHearing | None) -> Hearing:
-    """Hearing over `engine`, loaded."""
-    hearing = Hearing(engine)
+def loaded(engine: FakeHearing | None, clock: Clock = MONOTONIC_CLOCK) -> Hearing:
+    """Hearing over `engine`, loaded; its deadlines are on `clock`."""
+    hearing = Hearing(engine, clock)
     hearing.load()
     return hearing
 
@@ -163,6 +167,13 @@ def hearing_gate_is_free(runtime: Runtime) -> bool:
         return False
     lease.close()
     return True
+
+
+async def hearing_gate_is_taken(runtime: Runtime) -> None:
+    """Return once a request holds the hearing gate; its decode is then submitted."""
+    async with asyncio.timeout(WAIT_SECONDS):
+        while hearing_gate_is_free(runtime):  # noqa: ASYNC110 - the gate has no event to await
+            await asyncio.sleep(0)
 
 
 def write_snapshot(

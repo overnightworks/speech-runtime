@@ -21,6 +21,7 @@ dependencies = [
     "uvicorn==0.54.0",
     "overnightworks-speech-runtime-client",
     "overnightworks-speech-runtime-provider-contract",
+    "websockets==17.4",
 ]
 
 [project.scripts]

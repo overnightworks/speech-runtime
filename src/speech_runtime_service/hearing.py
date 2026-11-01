@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import gc
 import logging
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
-from speech_runtime_service.admission_gate import AdmissionGate
+from speech_runtime_service.admission_gate import AdmissionGate, Lease
 from speech_runtime_service.cuda_libs import prepare_cuda_libraries
 from speech_runtime_service.hearing_models import model_directory
 
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from speech_runtime_client.wire import HearingLanguage
+    from speech_runtime_service.clock import Clock
     from speech_runtime_service.config import Settings
     from speech_runtime_service.hearing_models import HearingModel
 
@@ -139,13 +141,18 @@ class WhisperHearing:
 
 
 class Hearing:
-    """The hearing engine once it loaded, and the gate its decodes pass."""
+    """The loaded hearing engine, the gate its decodes pass and their one worker."""
 
-    def __init__(self, engine: HearingEngine | None) -> None:
-        """Hold `engine`, or none when no hearing model is configured."""
+    def __init__(self, engine: HearingEngine | None, clock: Clock) -> None:
+        """Hold `engine`, or none when no hearing model is configured.
+
+        The gate's deadlines, and so the live sessions', are on `clock`.
+        """
         self._engine = engine
         self._ready: HearingEngine | None = None
-        self.gate = AdmissionGate()
+        self.gate = AdmissionGate(clock)
+        self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hearing")
+        self._sessions = 0
 
     def load(self) -> None:
         """Load the engine.
@@ -177,9 +184,53 @@ class Hearing:
         """The loaded engine, or `None` while hearing is unavailable."""
         return self._ready
 
+    def open_session(self, limit: int) -> Lease | None:
+        """A place for one live session, or `None` while `limit` sessions are open.
+
+        Called on the event loop only; closing the lease frees the place.
+        """
+        if self._sessions >= limit:
+            return None
+        self._sessions += 1
+        return Lease(self._end_session)
+
+    def _end_session(self) -> None:
+        self._sessions -= 1
+
+    def submit[Result](
+        self, lease: Lease, job: Callable[[HearingEngine], Result]
+    ) -> Future[Result]:
+        """Run `job` on the engine in the one worker, owning `lease` from here on.
+
+        The worker closes the lease when the job returns; a future cancelled before
+        it started closes it in its done-callback; a submission that cannot be made
+        closes it here. Raises `RuntimeError` for the last two causes: no engine, or
+        hearing already shut down.
+        """
+        engine = self._ready
+
+        def run() -> Result:
+            try:
+                return job(engine)
+            finally:
+                lease.close()
+
+        if engine is None:
+            lease.close()
+            message = "hearing is unavailable"
+            raise RuntimeError(message)
+        try:
+            future = self._worker.submit(run)
+        except RuntimeError:
+            lease.close()
+            raise
+        future.add_done_callback(lambda _done: lease.close())
+        return future
+
     def close(self) -> None:
-        """Stop offering the engine and free it."""
+        """Take no new decode, wait for the running one, then free the engine."""
         self._ready = None
+        self._worker.shutdown(wait=True, cancel_futures=True)
         if self._engine is not None:
             self._engine.close()
 
@@ -191,9 +242,10 @@ class Hearing:
         }
 
 
-def hearing_from_settings(settings: Settings) -> Hearing:
+def hearing_from_settings(settings: Settings, clock: Clock) -> Hearing:
     """Hearing for the configured model, or none; a missing model raises at once."""
     if settings.hearing_model is None:
-        return Hearing(None)
+        return Hearing(None, clock)
     directory = model_directory(settings.hearing_model, settings.huggingface_cache)
-    return Hearing(WhisperHearing(settings.hearing_model, directory, settings.device))
+    whisper = WhisperHearing(settings.hearing_model, directory, settings.device)
+    return Hearing(whisper, clock)

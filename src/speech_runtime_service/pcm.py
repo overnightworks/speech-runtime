@@ -1,9 +1,10 @@
-"""16-bit PCM helpers for the wire: a streaming WAV header and energy."""
+"""16-bit PCM helpers for the wire: a streaming WAV header, energy and resampling."""
 
 from __future__ import annotations
 
 import math
 import struct
+from array import array
 from typing import Final
 
 BITS_PER_SAMPLE: Final = 16
@@ -97,3 +98,54 @@ def rms(pcm: bytes) -> float:
 def is_silence(pcm: bytes, threshold: float = SILENCE_RMS) -> bool:
     """True when the PCM is quieter than the threshold."""
     return rms(pcm) < threshold
+
+
+LIVE_INPUT_RATE: Final = 24_000
+LIVE_OUTPUT_RATE: Final = 16_000
+
+
+class Resampler:
+    """24 kHz to 16 kHz mono 16-bit PCM by linear interpolation.
+
+    It keeps the samples it still needs, so any split of the input into frames
+    gives the same output as the whole.
+    """
+
+    # Output sample k lies at input position k * 3/2.
+    _STEP_NUMERATOR: Final = LIVE_INPUT_RATE
+    _STEP_DENOMINATOR: Final = LIVE_OUTPUT_RATE
+
+    def __init__(self) -> None:
+        """Start before the first sample."""
+        self._pending = array("h")
+        self._pending_start = 0
+        self._next_output = 0
+
+    def feed(self, pcm: bytes) -> bytes:
+        """The output samples that the input so far fully determines."""
+        incoming = array("h")
+        incoming.frombytes(pcm)
+        self._pending.extend(incoming)
+        available_end = self._pending_start + len(self._pending)
+        out = array("h")
+        while True:
+            scaled = self._next_output * self._STEP_NUMERATOR
+            index, remainder = divmod(scaled, self._STEP_DENOMINATOR)
+            last_needed = index + (1 if remainder else 0)
+            if last_needed >= available_end:
+                break
+            low = self._pending[index - self._pending_start]
+            if remainder:
+                high = self._pending[index + 1 - self._pending_start]
+                out.append(
+                    (low * (self._STEP_DENOMINATOR - remainder) + high * remainder)
+                    // self._STEP_DENOMINATOR
+                )
+            else:
+                out.append(low)
+            self._next_output += 1
+        keep_from = (self._next_output * self._STEP_NUMERATOR) // self._STEP_DENOMINATOR
+        drop = keep_from - self._pending_start
+        del self._pending[:drop]
+        self._pending_start = keep_from
+        return out.tobytes()

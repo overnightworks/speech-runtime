@@ -26,9 +26,12 @@ flowchart LR
 
 - `src/speech_runtime_service`: the one process, its TCP listener and the
   routes. `callers.py` decides who may speak and who may hear; `wire_route.py`
-  serves the wire; `hearing.py` holds the hearing engine behind a port and its
-  gate, `hearing_models.py` the pinned models, `recording.py` the incremental
-  decode of an uploaded recording.
+  serves the wire; `hearing.py` holds the hearing engine behind a port, its
+  gate and its one submission worker; `live_session.py` is a live session's
+  state machine; `hearing_session.py` schedules its turns and partials; `pcm.py`
+  holds the resampler; `hearing_models.py` the pinned models; `recording.py` the
+  incremental decode of an uploaded recording; `clock.py` the monotonic clock
+  every gate deadline is read and waited on.
 - `packages/client`: the wire types an app and the service share.
 - `providers/*`: the voices that run in their own processes and environments.
 
@@ -51,6 +54,22 @@ flowchart LR
   busy decode a speak request. A gate lease is given back only when the native
   call has returned: CTranslate2 cannot be interrupted, so a caller that left
   does not free the decode.
+- **One submission owner.** `Hearing` owns a one-worker executor for file and
+  live decodes. A decode is submitted with its lease: the worker closes the lease
+  when the native call returns, the future's done-callback when it was cancelled
+  before it started, and the submitter when the submission fails. At shutdown
+  `Hearing` takes no new submission and frees the engine after the running decode
+  returns.
+- **The live session.** `/v1/realtime` is one state machine per socket. Receiving
+  never waits for a decode: audio is resampled from 24 to 16 kHz and scheduled
+  into turns (C2: silence after speech, or the 30 s cap), and decodes run in the
+  worker. One lock orders messages, polls and results, and the session alone
+  decides each item's terminal event, once; a result that arrives after its item's
+  terminal is dropped. A session holds one outstanding final, one waiting ended
+  turn and the open turn. Finals queue in the gate ahead of recordings with a
+  deadline counted from the turn's end, and an expired final is never started.
+  A session end sends a `failed` per announced unfinished item, then `error`, then
+  closes; a disconnect sends nothing.
 
 ## Crosscutting Concepts
 

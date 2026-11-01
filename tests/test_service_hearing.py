@@ -8,6 +8,7 @@ from starlette.status import HTTP_200_OK, HTTP_503_SERVICE_UNAVAILABLE
 
 from speech_runtime_client.wire import RefusalCode
 from speech_runtime_service import hearing_models
+from speech_runtime_service.clock import MONOTONIC_CLOCK
 from speech_runtime_service.config import Settings
 from speech_runtime_service.hearing import Hearing, ResourceUnavailableError
 from speech_runtime_service.hearing_models import (
@@ -40,7 +41,7 @@ def _starting(hearing: FakeHearing | None) -> Runtime:
             engine_factory=lambda _voice: FakeSpeaking(),
             artifact_checker=lambda _voice: True,
         ),
-        hearing=Hearing(hearing),
+        hearing=Hearing(hearing, MONOTONIC_CLOCK),
     )
 
 

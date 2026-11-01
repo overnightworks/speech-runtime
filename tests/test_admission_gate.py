@@ -21,8 +21,10 @@ from starlette.status import (
 
 from speech_runtime_client.wire import RETRY_AFTER_HEADER, RefusalCode
 from speech_runtime_service.admission_gate import AdmissionGate, Lease
+from speech_runtime_service.clock import MONOTONIC_CLOCK
 from speech_runtime_service.pcm import pcm_from_wav
 from speech_runtime_service.voices import VoiceId
+from tests.support.clock_support import FakeClock
 from tests.support.fakes_support import (
     SPEAK_SAMPLE_RATE,
     FakeSpeaking,
@@ -71,7 +73,7 @@ async def _settle() -> None:
 
 
 def test_a_free_gate_is_taken_even_past_the_deadline() -> None:
-    gate = AdmissionGate()
+    gate = AdmissionGate(MONOTONIC_CLOCK)
 
     lease = asyncio.run(gate.acquire(_in(-1), MANY_WAITERS))
 
@@ -79,7 +81,7 @@ def test_a_free_gate_is_taken_even_past_the_deadline() -> None:
 
 
 def test_try_acquire_refuses_while_the_gate_is_held_and_serves_after_release() -> None:
-    gate = AdmissionGate()
+    gate = AdmissionGate(MONOTONIC_CLOCK)
     held = gate.try_acquire()
     assert held is not None
 
@@ -91,7 +93,7 @@ def test_try_acquire_refuses_while_the_gate_is_held_and_serves_after_release() -
 
 def test_a_waiter_that_reaches_its_deadline_gets_none() -> None:
     async def scenario() -> tuple[object, bool]:
-        gate = AdmissionGate()
+        gate = AdmissionGate(MONOTONIC_CLOCK)
         held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
         timed_out = await gate.acquire(_in(SHORT_SECONDS), MANY_WAITERS)
@@ -104,9 +106,28 @@ def test_a_waiter_that_reaches_its_deadline_gets_none() -> None:
     assert free_again
 
 
+def test_a_waiter_whose_deadline_passed_before_the_hand_off_gets_none() -> None:
+    async def scenario() -> tuple[object, bool]:
+        clock = FakeClock()
+        gate = AdmissionGate(clock)
+        running = gate.try_acquire()
+        assert running is not None
+        waiting = asyncio.create_task(gate.acquire(clock.now() + WAIT_SECONDS, 1))
+        await clock.until_a_wait_begins()
+        clock.advance(2 * WAIT_SECONDS)
+        running.close()
+        timed_out = await waiting
+        return timed_out, gate.try_acquire() is not None
+
+    timed_out, free_again = asyncio.run(scenario())
+
+    assert timed_out is None
+    assert free_again
+
+
 def test_waiters_are_served_in_the_order_they_came() -> None:
     async def scenario() -> list[str]:
-        gate = AdmissionGate()
+        gate = AdmissionGate(MONOTONIC_CLOCK)
         first = await gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS)
         assert first is not None
         served: list[str] = []
@@ -132,7 +153,7 @@ def test_waiters_are_served_in_the_order_they_came() -> None:
 
 def test_a_release_from_another_thread_serves_the_waiter() -> None:
     async def scenario() -> bool:
-        gate = AdmissionGate()
+        gate = AdmissionGate(MONOTONIC_CLOCK)
         held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
         waiting = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS))
@@ -165,7 +186,7 @@ class _InterleavingGuard:
 
 class _InterleavedGate(AdmissionGate):
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(MONOTONIC_CLOCK)
         self.interleaving = _InterleavingGuard()
         self._guard = self.interleaving
 
@@ -190,7 +211,7 @@ def test_a_release_right_after_the_gate_is_found_held_still_serves_the_waiter() 
 
 def test_a_cancelled_waiter_leaves_the_gate_to_the_next() -> None:
     async def scenario() -> bool:
-        gate = AdmissionGate()
+        gate = AdmissionGate(MONOTONIC_CLOCK)
         held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
         cancelled = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS))
@@ -210,7 +231,7 @@ def test_a_cancelled_waiter_leaves_the_gate_to_the_next() -> None:
 
 def test_a_waiter_cancelled_after_the_hand_off_is_scheduled_frees_the_gate() -> None:
     async def scenario() -> bool:
-        gate = AdmissionGate()
+        gate = AdmissionGate(MONOTONIC_CLOCK)
         held = await gate.acquire(_in(0), MANY_WAITERS)
         assert held is not None
         waiting = asyncio.create_task(gate.acquire(_in(WAIT_SECONDS), MANY_WAITERS))
@@ -225,7 +246,7 @@ def test_a_waiter_cancelled_after_the_hand_off_is_scheduled_frees_the_gate() -> 
 
 
 def test_a_lease_gives_the_gate_back_once() -> None:
-    gate = AdmissionGate()
+    gate = AdmissionGate(MONOTONIC_CLOCK)
     lease = gate.try_acquire()
     assert lease is not None
     lease.close()

@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     hearing_model: HearingModel | None = None
     hearing_busy_wait_seconds: float = Field(default=30.0, ge=0, allow_inf_nan=False)
     hearing_max_waiting_requests: int = Field(default=3, ge=0)
+    max_hearing_sessions: int = Field(default=1, ge=1)
+    hearing_final_wait_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     max_recording_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
     max_recording_seconds: float = Field(default=300.0, gt=0, allow_inf_nan=False)
     config_file: Path | None = None
