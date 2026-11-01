@@ -121,7 +121,9 @@ class LiveSession:
 
     async def start(self) -> None:
         """Send `session.created`, the first event of every session."""
-        await self._emit(SessionCreated(session=TranscriptionSession()))
+        await self._emit(
+            SessionCreated(session=TranscriptionSession(type="transcription"))
+        )
 
     async def on_message(self, text: str | None) -> None:
         """Take one client message; `None` is a binary frame, which is refused."""

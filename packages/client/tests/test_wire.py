@@ -113,7 +113,9 @@ def test_a_session_update_without_parts_takes_the_default_session() -> None:
     event = parse_client_event(_session_update({"type": "transcription"}))
 
     assert event == SessionUpdate(
-        type="session.update", event_id="e1", session=TranscriptionSession()
+        type="session.update",
+        event_id="e1",
+        session=TranscriptionSession(type="transcription"),
     )
 
 
@@ -147,6 +149,9 @@ def test_a_session_update_names_the_language_it_applies() -> None:
             "audio.input.turn_detection.type",
         ),
         ({"noise_reduction": None}, "audio.input.noise_reduction"),
+        ({"format": {"type": "audio/pcm"}}, "audio.input.format.rate"),
+        ({"format": {"rate": 24000}}, "audio.input.format.type"),
+        ({"turn_detection": {}}, "audio.input.turn_detection.type"),
     ],
     ids=[
         "other-rate",
@@ -158,6 +163,9 @@ def test_a_session_update_names_the_language_it_applies() -> None:
         "null-turn-detection",
         "semantic-vad",
         "noise-reduction",
+        "format-without-rate",
+        "format-without-type",
+        "empty-turn-detection",
     ],
 )
 def test_a_session_update_with_a_value_the_service_does_not_apply_is_refused(
@@ -170,6 +178,13 @@ def test_a_session_update_with_a_value_the_service_does_not_apply_is_refused(
 
     assert refused.value.param == f"session.{param}"
     assert refused.value.event_id == "e1"
+
+
+def test_a_session_update_whose_session_names_no_type_is_refused() -> None:
+    with pytest.raises(ClientEventError) as refused:
+        parse_client_event(_session_update({}))
+
+    assert refused.value.param == "session.type"
 
 
 @pytest.mark.parametrize(
@@ -205,7 +220,9 @@ def test_an_append_and_a_commit_are_parsed_with_their_event_ids() -> None:
 
 def test_the_default_session_is_german_pcm_at_24_khz_with_server_detection() -> None:
     created = json.loads(
-        SessionCreated(session=TranscriptionSession()).model_dump_json()
+        SessionCreated(
+            session=TranscriptionSession(type="transcription")
+        ).model_dump_json()
     )
 
     assert created["session"] == {

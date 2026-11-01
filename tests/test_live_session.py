@@ -230,7 +230,15 @@ def test_a_commit_with_no_audio_ends_the_session_failing_the_announced_item() ->
         ("not json", None),
         (None, None),
     ],
-    ids=["bad-base64", "non-ascii-base64", "odd-byte-count", "clear", "unknown", "malformed", "binary"],
+    ids=[
+        "bad-base64",
+        "non-ascii-base64",
+        "odd-byte-count",
+        "clear",
+        "unknown",
+        "malformed",
+        "binary",
+    ],
 )
 def test_a_message_that_breaks_the_protocol_ends_the_session(
     message: str | None, param: str | None

@@ -239,8 +239,8 @@ class _SessionPart(BaseModel):
 class PcmFormat(_SessionPart):
     """PCM16 little-endian mono at 24 kHz, the one input format."""
 
-    type: Literal["audio/pcm"] = "audio/pcm"
-    rate: Literal[24000] = 24000
+    type: Literal["audio/pcm"]
+    rate: Literal[24000]
 
 
 class TranscriptionSetting(_SessionPart):
@@ -253,15 +253,15 @@ class TranscriptionSetting(_SessionPart):
 class ServerVad(_SessionPart):
     """Server turn detection; C2's timing is fixed by the service."""
 
-    type: Literal["server_vad"] = "server_vad"
+    type: Literal["server_vad"]
 
 
 class SessionInput(_SessionPart):
     """The input side of a session."""
 
-    format: PcmFormat = PcmFormat()
+    format: PcmFormat = PcmFormat(type="audio/pcm", rate=24000)
     transcription: TranscriptionSetting = TranscriptionSetting()
-    turn_detection: ServerVad = ServerVad()
+    turn_detection: ServerVad = ServerVad(type="server_vad")
 
 
 class SessionAudio(_SessionPart):
@@ -271,9 +271,12 @@ class SessionAudio(_SessionPart):
 
 
 class TranscriptionSession(_SessionPart):
-    """A transcription session; each part absent from a request takes its default."""
+    """A transcription session; an object absent from a request takes its default.
 
-    type: Literal["transcription"] = "transcription"
+    An object a request supplies names its `type` and, for the format, its `rate`.
+    """
+
+    type: Literal["transcription"]
     audio: SessionAudio = SessionAudio()
 
 
