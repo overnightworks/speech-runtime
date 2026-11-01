@@ -43,7 +43,9 @@ WORKLOAD_TOKEN_HEADER: Final = "Speech-Workload-Token"  # noqa: S105 - a header 
 AUTHORIZATION_HEADER: Final = "Authorization"
 AUTHENTICATE_HEADER: Final = "WWW-Authenticate"
 
-RequestField = Literal["file", "model", "input", "voice", "language", "response_format"]
+RequestField = Literal[
+    "file", "model", "input", "voice", "language", "response_format", "intent"
+]
 _INPUT_WITHOUT_CONTENT: Final = "input must hold a letter or a digit"
 
 

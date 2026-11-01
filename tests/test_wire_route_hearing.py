@@ -165,9 +165,20 @@ def test_a_recording_longer_than_the_length_cap_is_too_large_and_never_heard() -
     assert engine.heard == []
 
 
-def test_an_app_without_the_hear_permission_is_refused_as_not_enabled() -> None:
-    runtime = hear_runtime(FakeHearing())
-    client = TestClient(create_control_app(Settings(), runtime, valid_callers()))
+@pytest.mark.parametrize(
+    ("engine", "settings"),
+    [
+        pytest.param(FakeHearing(), {}, id="plain"),
+        pytest.param(None, {}, id="and-hearing-unavailable"),
+        pytest.param(FakeHearing(), {"max_recording_bytes": 1}, id="and-too-large"),
+    ],
+)
+def test_an_app_without_the_hear_permission_is_refused_as_not_enabled_first(
+    engine: FakeHearing | None, settings: dict[str, int]
+) -> None:
+    runtime = hear_runtime(engine)
+    callers = valid_callers()
+    client = TestClient(create_control_app(Settings(**settings), runtime, callers))
 
     response = post_recording(client, _valid())
 

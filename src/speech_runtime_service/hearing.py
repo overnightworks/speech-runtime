@@ -8,7 +8,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
-from speech_runtime_service.admission_gate import AdmissionGate
+from speech_runtime_service.admission_gate import AdmissionGate, Lease
 from speech_runtime_service.cuda_libs import prepare_cuda_libraries
 from speech_runtime_service.hearing_models import model_directory
 
@@ -17,7 +17,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from speech_runtime_client.wire import HearingLanguage
-    from speech_runtime_service.admission_gate import Lease
     from speech_runtime_service.config import Settings
     from speech_runtime_service.hearing_models import HearingModel
 
@@ -149,6 +148,7 @@ class Hearing:
         self._ready: HearingEngine | None = None
         self.gate = AdmissionGate()
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hearing")
+        self._sessions = 0
 
     def load(self) -> None:
         """Load the engine.
@@ -179,6 +179,19 @@ class Hearing:
     def capture(self) -> HearingEngine | None:
         """The loaded engine, or `None` while hearing is unavailable."""
         return self._ready
+
+    def open_session(self, limit: int) -> Lease | None:
+        """A place for one live session, or `None` while `limit` sessions are open.
+
+        Called on the event loop only; closing the lease frees the place.
+        """
+        if self._sessions >= limit:
+            return None
+        self._sessions += 1
+        return Lease(self._end_session)
+
+    def _end_session(self) -> None:
+        self._sessions -= 1
 
     def submit[Result](
         self, lease: Lease, job: Callable[[HearingEngine], Result]

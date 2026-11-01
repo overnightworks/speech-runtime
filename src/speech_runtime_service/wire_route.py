@@ -19,6 +19,9 @@ from starlette.responses import JSONResponse
 from speech_runtime_client.wire import (
     API_VERSION,
     AUTHENTICATE_HEADER,
+    REALTIME_INTENT,
+    REALTIME_INTENT_PARAM,
+    REALTIME_PATH,
     RETRY_AFTER_HEADER,
     SPEECH_PATH,
     TRANSCRIPTIONS_PATH,
@@ -31,6 +34,7 @@ from speech_runtime_client.wire import (
     refusal,
 )
 from speech_runtime_service.failures import log_failure
+from speech_runtime_service.live_session import LiveSession, poll_forever
 from speech_runtime_service.recording import (
     RecordingTooLongError,
     UndecodableRecordingError,
@@ -47,6 +51,7 @@ if TYPE_CHECKING:
     from starlette.datastructures import FormData
     from starlette.responses import Response
     from starlette.types import Message, Receive, Scope, Send
+    from starlette.websockets import WebSocket
 
     from speech_runtime_service.admission_gate import Lease
     from speech_runtime_service.callers import SpeechCallers
@@ -275,6 +280,59 @@ def _fields(form: FormData) -> TranscriptionRequest | JSONResponse:
         )
 
 
+class _RealtimeRoute:
+    def __init__(
+        self, runtime: Runtime, settings: Settings, callers: SpeechCallers
+    ) -> None:
+        self._runtime = runtime
+        self._settings = settings
+        self._callers = callers
+
+    async def serve(self, websocket: WebSocket) -> None:
+        place = await self._place(websocket)
+        if isinstance(place, JSONResponse):
+            await websocket.send_denial_response(place)
+            return
+        await websocket.accept()
+        session = LiveSession(
+            self._runtime.hearing,
+            final_wait_seconds=self._settings.hearing_final_wait_seconds,
+            send=websocket.send_text,
+            close=websocket.close,
+        )
+        poller = asyncio.create_task(poll_forever(session))
+        try:
+            await session.start()
+            while True:
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+                await session.on_message(message.get("text"))
+        finally:
+            poller.cancel()
+            await asyncio.gather(poller, return_exceptions=True)
+            await session.on_disconnect()
+            place.close()
+
+    async def _place(self, websocket: WebSocket) -> JSONResponse | Lease:
+        """The refusal of the upgrade, or the lease on the session's place."""
+        admitted = await self._callers.admit(websocket.headers)
+        if isinstance(admitted, RefusalCode):
+            return _refused(admitted)
+        if not self._callers.may_hear(admitted.app):
+            return _refused(RefusalCode.NOT_ENABLED)
+        if websocket.query_params.get(REALTIME_INTENT_PARAM) != REALTIME_INTENT:
+            return _refused(RefusalCode.INVALID_REQUEST, REALTIME_INTENT_PARAM)
+        hearing = self._runtime.hearing
+        if hearing.capture() is None:
+            return _refused(RefusalCode.UNAVAILABLE)
+        place = hearing.open_session(self._settings.max_hearing_sessions)
+        if place is None:
+            wait = max(1, math.ceil(self._settings.hearing_busy_wait_seconds))
+            return _refused(RefusalCode.BUSY, headers={RETRY_AFTER_HEADER: str(wait)})
+        return place
+
+
 class _NotARoute:
     """An ASGI app, so the route it serves answers every HTTP method."""
 
@@ -286,10 +344,19 @@ class _NotARoute:
         await response(scope, receive, send)
 
 
+async def _deny_upgrade(websocket: WebSocket) -> None:
+    """Refuse an upgrade at a path that is no WebSocket route of this service."""
+    if websocket.path_params["version"] == API_VERSION:
+        denial = _refused(RefusalCode.NOT_FOUND)
+    else:
+        denial = _refused(RefusalCode.UNSUPPORTED_VERSION)
+    await websocket.send_denial_response(denial)
+
+
 def mount_wire_routes(
     app: FastAPI, runtime: Runtime, settings: Settings, callers: SpeechCallers
 ) -> None:
-    """Mount the speech and transcription routes, then the catch-alls for the rest."""
+    """Mount the speech, transcription and Realtime routes, then the catch-alls."""
     speech = _SpeechRoute(runtime, settings, callers)
     app.add_route(SPEECH_PATH, speech.speak, methods=["POST"], include_in_schema=False)
     hearing = _TranscriptionRoute(runtime, settings, callers)
@@ -299,5 +366,8 @@ def mount_wire_routes(
         methods=["POST"],
         include_in_schema=False,
     )
+    realtime = _RealtimeRoute(runtime, settings, callers)
+    app.router.add_websocket_route(REALTIME_PATH, realtime.serve)
+    app.router.add_websocket_route(f"{_VERSION_PREFIX}/{{rest:path}}", _deny_upgrade)
     for path in (_VERSION_PREFIX, f"{_VERSION_PREFIX}/{{rest:path}}"):
         app.add_route(path, _NotARoute(), include_in_schema=False)
