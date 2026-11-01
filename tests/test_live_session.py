@@ -474,11 +474,16 @@ def test_a_partial_not_yet_started_when_the_client_leaves_never_runs() -> None:
 def test_a_result_that_arrives_after_the_session_ended_is_dropped() -> None:
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine))
+        hearing = loaded(engine)
+        session, socket, _ = await started(hearing)
         await _commit_a_turn(session)
+        await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
         await session.on_message("not json")
         sent = len(socket.events)
         engine.release.set()
+        await asyncio.wrap_future(
+            hearing.submit(Lease(lambda: None), _transcribe_silence)
+        )
         await session.on_disconnect()
         assert len(socket.events) == sent
         return socket
