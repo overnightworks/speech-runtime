@@ -96,9 +96,10 @@ Weights stay in:
 - `GET /health` → `{"speaking": {"model", "ready", "streams", "sample_rate"}, "hearing": {"model", "ready"}, "card_memory_mb"}`. Answers while the model is still loading, with `ready` false. `speaking.streams` is whether the voice yields PCM while it is still synthesising: `false` for Piper (one completed chunk per sentence, so the whole waveform exists before the first byte leaves), `true` for a model that yields as it goes. `speaking.sample_rate` is the WAV rate.
 - `POST /v1/audio/speech` → chunked `audio/wav`, German, with the AI mark. It needs a workload token and the person's token. The request, the tokens, the refusals and the settings that shape them are in [`docs/wire.md`](docs/wire.md).
 - `POST /v1/audio/transcriptions` → `{"text"}`, for an app whose table says `hear = true`, in German or English (`language`, `de` when absent). The request, the limits and the refusals are in [`docs/wire.md`](docs/wire.md).
-- `/health`, `/v1/audio/speech` and `/v1/audio/transcriptions` answer on `SPEECH_HOST:SPEECH_PORT` and
+- `WS /v1/realtime?intent=transcription` → OpenAI's Realtime transcription events, for an app whose table says `hear = true`: PCM16 at 24 kHz in, provisional deltas and one terminal event per item out. The events, their order and the refusals are in [`docs/wire.md`](docs/wire.md).
+- `/health`, `/v1/audio/speech`, `/v1/audio/transcriptions` and `/v1/realtime` answer on `SPEECH_HOST:SPEECH_PORT` and
   nothing else is mounted (no `/docs`, no `/openapi.json`, no voice
-  administration, no live hearing). `python -m speech_runtime_service --help` (or the
+  administration). `python -m speech_runtime_service --help` (or the
   `speech-runtime-service` command) prints usage; any other argument is a usage
   error.
 
@@ -124,6 +125,8 @@ All `SPEECH_*`:
 | `SPEECH_MAX_INPUT_CHARACTERS` | `4096` | The longest `input` a speech request may carry; a whole number of at least 1 |
 | `SPEECH_HEARING_MODEL` | none | The hearing model the process loads at start, on `SPEECH_DEVICE`: `large-v3` or `small`. None: hearing answers 503 `unavailable`. A model that was not fetched stops the start naming this setting (fetch it with `speech-runtime-fetch-hearing-model <model>`); a card that is missing, taken or too small leaves hearing unavailable in `/health` while speaking stays up |
 | `SPEECH_HEARING_BUSY_WAIT_SECONDS` | `30.0` | How long a recording waits for the one decode before it answers 429 `busy`; at least 0, where 0 refuses at once |
+| `SPEECH_MAX_HEARING_SESSIONS` | `1` | How many live hearing sessions run at once; one more is refused at the upgrade with 429 `busy`. A whole number of at least 1 |
+| `SPEECH_HEARING_FINAL_WAIT_SECONDS` | `60.0` | How long a live turn's final may wait for the one decode, counted from the turn's end; past it the session ends with `busy`. Above 0 |
 | `SPEECH_HEARING_MAX_WAITING_REQUESTS` | `3` | How many recordings may wait for the one decode; a request beyond them answers 429 `busy` at once. A whole number of at least 0, where 0 allows no waiting |
 | `SPEECH_MAX_RECORDING_BYTES` | `26214400` | The largest transcription request body; a larger one answers 413 `too_large` before it is parsed. A whole number of at least 1 |
 | `SPEECH_MAX_RECORDING_SECONDS` | `300` | The longest recording; a longer one answers 413 `too_large` and is not transcribed. Above 0 |
