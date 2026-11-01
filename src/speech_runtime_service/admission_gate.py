@@ -67,7 +67,8 @@ class AdmissionGate:
 
         A free gate is taken even past the deadline. A held gate with
         `max_waiters` already waiting answers `None` at once. A cancellation or
-        a timeout leaves the gate to the next waiter.
+        a timeout leaves the gate to the next waiter; a gate handed over after
+        the deadline passed is given back, never kept.
         """
         return await self._wait(self._waiters, deadline, max_waiters)
 
@@ -108,10 +109,10 @@ class AdmissionGate:
             raise
         finally:
             timer.cancel()
-        if waiter.future.done():
-            return waiter.future.result()
-        self._abandon(waiter)
-        return None
+        if timer.done():
+            self._abandon(waiter)
+            return None
+        return waiter.future.result()
 
     def _abandon(self, waiter: _Waiter) -> None:
         with self._guard:

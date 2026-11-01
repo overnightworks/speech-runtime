@@ -23,6 +23,7 @@ from speech_runtime_client.wire import RETRY_AFTER_HEADER, RefusalCode
 from speech_runtime_service.admission_gate import AdmissionGate, Lease
 from speech_runtime_service.pcm import pcm_from_wav
 from speech_runtime_service.voices import VoiceId
+from tests.support.clock_support import FakeClock
 from tests.support.fakes_support import (
     SPEAK_SAMPLE_RATE,
     FakeSpeaking,
@@ -96,6 +97,26 @@ def test_a_waiter_that_reaches_its_deadline_gets_none() -> None:
         assert held is not None
         timed_out = await gate.acquire(_in(SHORT_SECONDS), MANY_WAITERS)
         held.close()
+        return timed_out, gate.try_acquire() is not None
+
+    timed_out, free_again = asyncio.run(scenario())
+
+    assert timed_out is None
+    assert free_again
+
+
+def test_a_waiter_whose_deadline_passed_before_the_hand_off_gets_none() -> None:
+    async def scenario() -> tuple[object, bool]:
+        clock = FakeClock()
+        gate = AdmissionGate(clock)
+        running = gate.try_acquire()
+        assert running is not None
+        waiting = asyncio.create_task(gate.acquire(clock.now() + WAIT_SECONDS, 1))
+        await clock.until_a_wait_begins()
+        clock.advance(2 * WAIT_SECONDS)
+        running.close()
+        timed_out = await waiting
+        await _settle()
         return timed_out, gate.try_acquire() is not None
 
     timed_out, free_again = asyncio.run(scenario())
