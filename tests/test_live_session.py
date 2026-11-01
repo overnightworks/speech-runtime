@@ -4,11 +4,13 @@ import asyncio
 import json
 import logging
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from speech_runtime_client.wire import HearingLanguage
+from speech_runtime_service import live_session
 from speech_runtime_service.admission_gate import Lease
 from speech_runtime_service.live_session import POLL_WAIT_SECONDS, poll_forever
 from tests.support.hear_support import HEARD_TEXT, FakeHearing, loaded
@@ -532,13 +534,23 @@ def test_a_waiting_turn_is_heard_after_the_outstanding_final() -> None:
     ]
 
 
-def test_a_waiting_turn_that_outlasts_its_wait_ends_the_session_as_busy() -> None:
+def test_a_waiting_turn_that_outlasts_its_wait_ends_the_session_as_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    offset = [0.0]
+    monkeypatch.setattr(
+        live_session,
+        "time",
+        SimpleNamespace(monotonic=lambda: time.monotonic() + offset[0]),
+    )
+
     async def scenario() -> FakeSocket:
         engine = FakeHearing(hold=True)
-        session, socket, _ = await started(loaded(engine), final_wait_seconds=0.05)
+        session, socket, _ = await started(loaded(engine), final_wait_seconds=30.0)
         await _commit_a_turn(session)
+        assert await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
         await _commit_a_turn(session)
-        await asyncio.sleep(0.1)
+        offset[0] = 2 * 30.0
         await session.on_tick()
         engine.release.set()
         await session.on_disconnect()

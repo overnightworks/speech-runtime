@@ -2,8 +2,14 @@
 
 import asyncio
 import time
+from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
+from speech_runtime_service import admission_gate
 from speech_runtime_service.admission_gate import AdmissionGate
+
+if TYPE_CHECKING:
+    import pytest
 
 MANY_WAITERS = 100
 WAIT_SECONDS = 5.0
@@ -82,15 +88,24 @@ def test_a_final_that_expires_in_the_queue_leaves_the_running_lease_alone() -> N
     assert served_after
 
 
-def test_a_final_handed_the_gate_after_its_deadline_is_not_started() -> None:
+def test_a_final_handed_the_gate_after_its_deadline_is_not_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    offset = [0.0]
+    monkeypatch.setattr(
+        admission_gate,
+        "time",
+        SimpleNamespace(monotonic=lambda: time.monotonic() + offset[0]),
+    )
+
     async def scenario() -> tuple[object, bool]:
         gate = AdmissionGate()
         running = gate.try_acquire()
         assert running is not None
-        waiting = asyncio.create_task(gate.acquire_final(_in(SHORT_SECONDS)))
+        waiting = asyncio.create_task(gate.acquire_final(_in(WAIT_SECONDS)))
         await _settle()
         running.close()
-        asyncio.get_running_loop().call_soon(time.sleep, 2 * SHORT_SECONDS)
+        offset[0] = 2 * WAIT_SECONDS
         lease = await waiting
         return lease, gate.try_acquire() is not None
 
