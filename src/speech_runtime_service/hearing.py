@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from speech_runtime_service.admission_gate import AdmissionGate, Lease
-from speech_runtime_service.clock import MONOTONIC_CLOCK
 from speech_runtime_service.cuda_libs import prepare_cuda_libraries
 from speech_runtime_service.hearing_models import model_directory
 
@@ -144,9 +143,7 @@ class WhisperHearing:
 class Hearing:
     """The loaded hearing engine, the gate its decodes pass and their one worker."""
 
-    def __init__(
-        self, engine: HearingEngine | None, clock: Clock = MONOTONIC_CLOCK
-    ) -> None:
+    def __init__(self, engine: HearingEngine | None, clock: Clock) -> None:
         """Hold `engine`, or none when no hearing model is configured.
 
         The gate's deadlines, and so the live sessions', are on `clock`.
@@ -245,9 +242,10 @@ class Hearing:
         }
 
 
-def hearing_from_settings(settings: Settings) -> Hearing:
+def hearing_from_settings(settings: Settings, clock: Clock) -> Hearing:
     """Hearing for the configured model, or none; a missing model raises at once."""
     if settings.hearing_model is None:
-        return Hearing(None)
+        return Hearing(None, clock)
     directory = model_directory(settings.hearing_model, settings.huggingface_cache)
-    return Hearing(WhisperHearing(settings.hearing_model, directory, settings.device))
+    whisper = WhisperHearing(settings.hearing_model, directory, settings.device)
+    return Hearing(whisper, clock)

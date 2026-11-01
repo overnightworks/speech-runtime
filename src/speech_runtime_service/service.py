@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from speech_runtime_service.admission_gate import AdmissionGate
 from speech_runtime_service.card import card_memory_mb
+from speech_runtime_service.clock import MONOTONIC_CLOCK
 from speech_runtime_service.failures import PayloadFreeFailure, SpeakingFailedError
 from speech_runtime_service.hearing import Hearing, hearing_from_settings
 from speech_runtime_service.pcm import wav_header
@@ -65,7 +66,7 @@ class Runtime:
     ) -> None:
         """Hold the speaking engine and hearing. Neither is loaded until `load`."""
         self.speaking = speaking
-        self.hearing = hearing or Hearing(None)
+        self.hearing = hearing or Hearing(None, MONOTONIC_CLOCK)
         self.loading = False
         self._memory_probe = memory_probe or card_memory_mb
         self._dependencies = dependencies or RuntimeDependencies()
@@ -75,7 +76,7 @@ class Runtime:
         self._pending_engine: SpeakingEngine | None = None
         self._closing_engine: SpeakingEngine | None = None
         self._stopping = False
-        self.synthesis_gate = AdmissionGate()
+        self.synthesis_gate = AdmissionGate(MONOTONIC_CLOCK)
         self._fatal_callback: Callable[[], None] = lambda: None
 
     @classmethod
@@ -83,7 +84,7 @@ class Runtime:
         """Build the production engines the environment configures."""
         return cls(
             None,
-            hearing=hearing_from_settings(settings),
+            hearing=hearing_from_settings(settings, MONOTONIC_CLOCK),
             dependencies=RuntimeDependencies(
                 voice=voice_for_model(settings.speaking_model),
                 engine_factory=lambda voice: speaking_for_voice(settings, voice),

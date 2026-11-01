@@ -19,7 +19,7 @@ class Clock(Protocol):
         ...
 
 
-class MonotonicClock:
+class LoopClock:
     """The process's monotonic time, waited on through the event loop."""
 
     def now(self) -> float:
@@ -31,4 +31,4 @@ class MonotonicClock:
         await asyncio.sleep(max(0.0, deadline - time.monotonic()))
 
 
-MONOTONIC_CLOCK: Final = MonotonicClock()
+MONOTONIC_CLOCK: Final = LoopClock()

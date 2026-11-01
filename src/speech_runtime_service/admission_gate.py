@@ -8,8 +8,6 @@ from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from speech_runtime_service.clock import MONOTONIC_CLOCK
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -46,7 +44,7 @@ class AdmissionGate:
     A live final queues apart and is served before every waiting job.
     """
 
-    def __init__(self, clock: Clock = MONOTONIC_CLOCK) -> None:
+    def __init__(self, clock: Clock) -> None:
         """Start free; every deadline is on `clock`."""
         self.clock = clock
         self._guard = threading.Lock()
