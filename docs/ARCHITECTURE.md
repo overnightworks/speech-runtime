@@ -27,9 +27,11 @@ flowchart LR
 - `src/speech_runtime_service`: the one process, its TCP listener and the
   routes. `callers.py` decides who may speak and who may hear; `wire_route.py`
   serves the wire; `hearing.py` holds the hearing engine behind a port, its
-  gate and its one submission worker; `live_session.py` is a live session's state
-  machine over `hearing_session.py`'s turn schedule and `pcm.py`'s resampler, `hearing_models.py` the pinned models, `recording.py` the incremental
-  decode of an uploaded recording.
+  gate and its one submission worker; `live_session.py` is a live session's
+  state machine; `hearing_session.py` schedules its turns and partials; `pcm.py`
+  holds the resampler; `hearing_models.py` the pinned models; `recording.py` the
+  incremental decode of an uploaded recording; `clock.py` the monotonic clock
+  every gate deadline is read and waited on.
 - `packages/client`: the wire types an app and the service share.
 - `providers/*`: the voices that run in their own processes and environments.
 
