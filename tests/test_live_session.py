@@ -223,13 +223,14 @@ def test_a_commit_with_no_audio_ends_the_session_failing_the_announced_item() ->
     ("message", "param"),
     [
         (append("!!!"), "audio"),
+        (append("ä"), "audio"),
         (append("AAAA"), "audio"),
         (json.dumps({"type": "input_audio_buffer.clear"}), "type"),
         (json.dumps({"type": "response.create"}), "type"),
         ("not json", None),
         (None, None),
     ],
-    ids=["bad-base64", "odd-byte-count", "clear", "unknown", "malformed", "binary"],
+    ids=["bad-base64", "non-ascii-base64", "odd-byte-count", "clear", "unknown", "malformed", "binary"],
 )
 def test_a_message_that_breaks_the_protocol_ends_the_session(
     message: str | None, param: str | None

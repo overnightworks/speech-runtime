@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import logging
 import time
 from dataclasses import dataclass
@@ -71,10 +70,10 @@ class _Final:
 
 
 def _samples_of(encoded: str) -> bytes | None:
-    """The PCM16 in `encoded`, or `None` for invalid base64 or an odd byte count."""
+    """The PCM16 in `encoded`, or `None` for invalid base64 (binascii.Error is a ValueError, as is non-ASCII text) or an odd byte count."""
     try:
         raw = base64.b64decode(encoded, validate=True)
-    except binascii.Error:
+    except ValueError:
         return None
     return None if len(raw) % BYTES_PER_SAMPLE else raw
 
