@@ -113,9 +113,11 @@ def test_the_engine_is_freed_only_after_the_running_decode_returns() -> None:
     assert engine.entered.wait(WAIT_SECONDS)
     closing = threading.Thread(target=hearing.close)
 
+    late_lease = _CountedLease().lease
+
     closing.start()
     with pytest.raises(RuntimeError):
-        hearing.submit(_CountedLease().lease, _transcribe)
+        hearing.submit(late_lease, _transcribe)
     freed_while_running = engine.closed
     engine.release.set()
     closing.join(WAIT_SECONDS)
