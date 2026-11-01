@@ -116,7 +116,6 @@ def test_a_waiter_whose_deadline_passed_before_the_hand_off_gets_none() -> None:
         clock.advance(2 * WAIT_SECONDS)
         running.close()
         timed_out = await waiting
-        await _settle()
         return timed_out, gate.try_acquire() is not None
 
     timed_out, free_again = asyncio.run(scenario())
