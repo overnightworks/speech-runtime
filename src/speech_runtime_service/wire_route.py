@@ -41,7 +41,7 @@ from speech_runtime_service.voices import VoiceId
 from speech_runtime_service.wav_response import ClosingWavResponse
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
+    from collections.abc import Awaitable, Callable
 
     from fastapi import FastAPI
     from starlette.datastructures import FormData
@@ -183,17 +183,14 @@ def _replayed(request: Request, body: bytes) -> Request:
 
 
 def _heard(
-    engine: HearingEngine,
-    lease: Lease,
-    recording: bytes,
-    language: HearingLanguage,
-    max_seconds: float,
-) -> str:
-    """Decode and transcribe in a worker thread; the lease is held until it returns."""
-    try:
+    recording: bytes, language: HearingLanguage, max_seconds: float
+) -> Callable[[HearingEngine], str]:
+    """The job that decodes `recording` and transcribes it."""
+
+    def job(engine: HearingEngine) -> str:
         return engine.transcribe(decode_recording(recording, max_seconds), language)
-    finally:
-        lease.close()
+
+    return job
 
 
 class _TranscriptionRoute:
@@ -205,9 +202,9 @@ class _TranscriptionRoute:
         self._callers = callers
 
     async def transcribe(self, request: Request) -> Response:
-        engine = await self._hearing_engine(request)
-        if isinstance(engine, JSONResponse):
-            return engine
+        refused = await self._hearing_refusal(request)
+        if refused is not None:
+            return refused
         deadline = time.monotonic() + self._settings.hearing_busy_wait_seconds
         raw = await _read_within(request, self._settings.max_recording_bytes)
         if raw is None:
@@ -221,16 +218,17 @@ class _TranscriptionRoute:
         )
         if lease is None:
             return self._busy()
-        return await self._answer(engine, lease, recording, fields.language)
+        return await self._answer(lease, recording, fields.language)
 
-    async def _hearing_engine(self, request: Request) -> HearingEngine | JSONResponse:
+    async def _hearing_refusal(self, request: Request) -> JSONResponse | None:
         admitted = await self._callers.admit(request.headers)
         if isinstance(admitted, RefusalCode):
             return _refused(admitted)
         if not self._callers.may_hear(admitted.app):
             return _refused(RefusalCode.NOT_ENABLED)
-        engine = self._runtime.hearing.capture()
-        return engine or _refused(RefusalCode.UNAVAILABLE)
+        if self._runtime.hearing.capture() is None:
+            return _refused(RefusalCode.UNAVAILABLE)
+        return None
 
     async def _parsed(
         self, request: Request
@@ -248,21 +246,11 @@ class _TranscriptionRoute:
             return _refused(RefusalCode.INVALID_REQUEST, "file")
 
     async def _answer(
-        self,
-        engine: HearingEngine,
-        lease: Lease,
-        recording: bytes,
-        language: HearingLanguage,
+        self, lease: Lease, recording: bytes, language: HearingLanguage
     ) -> Response:
         try:
-            text = await asyncio.to_thread(
-                _heard,
-                engine,
-                lease,
-                recording,
-                language,
-                self._settings.max_recording_seconds,
-            )
+            job = _heard(recording, language, self._settings.max_recording_seconds)
+            text = await asyncio.wrap_future(self._runtime.hearing.submit(lease, job))
         except RecordingTooLongError:
             return _refused(RefusalCode.TOO_LARGE, "file")
         except UndecodableRecordingError:
