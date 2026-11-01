@@ -14,8 +14,8 @@ from tests.support.hear_support import (
     hear_app,
     hear_call,
     hear_runtime,
-    hearing_acquisition_began,
     hearing_gate_is_free,
+    hearing_gate_is_taken,
     loaded,
 )
 
@@ -130,9 +130,8 @@ def test_a_file_request_cancelled_before_its_decode_starts_frees_the_gate() -> N
         runtime = hear_runtime(engine)
         blocking = runtime.hearing.submit(_CountedLease().lease, _transcribe)
         await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
-        began = hearing_acquisition_began(runtime)
         call = hear_call(hear_app(runtime))
-        await asyncio.wait_for(began.wait(), WAIT_SECONDS)
+        await hearing_gate_is_taken(runtime)
         call.task.cancel()
         await asyncio.gather(call.task, return_exceptions=True)
         engine.release.set()

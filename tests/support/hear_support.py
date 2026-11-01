@@ -28,8 +28,6 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
     from httpx2 import Response as ClientResponse
 
-    from speech_runtime_service.admission_gate import Lease
-
 BOUNDARY = "recording-boundary"
 MULTIPART = f"multipart/form-data; boundary={BOUNDARY}"
 RECORDING_RATE = 22_050
@@ -168,23 +166,11 @@ def hearing_gate_is_free(runtime: Runtime) -> bool:
     return True
 
 
-def hearing_acquisition_began(runtime: Runtime) -> asyncio.Event:
-    """An event set when a request calls the hearing gate's `acquire`.
-
-    A free gate answers without suspending, and the route submits its decode
-    before it next suspends, so a test that resumes on this event finds the
-    decode submitted.
-    """
-    began = asyncio.Event()
-    gate = runtime.hearing.gate
-    acquire = gate.acquire
-
-    async def noting(deadline: float, max_waiters: int) -> Lease | None:
-        began.set()
-        return await acquire(deadline, max_waiters)
-
-    gate.acquire = noting
-    return began
+async def hearing_gate_is_taken(runtime: Runtime) -> None:
+    """Return once a request holds the hearing gate; its decode is then submitted."""
+    async with asyncio.timeout(WAIT_SECONDS):
+        while hearing_gate_is_free(runtime):  # noqa: ASYNC110 - the gate has no event to await
+            await asyncio.sleep(0)
 
 
 def write_snapshot(
