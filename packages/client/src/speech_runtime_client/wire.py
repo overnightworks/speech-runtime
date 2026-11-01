@@ -1,26 +1,39 @@
 """The wire between an app and the speech service.
 
-This module is the one owner of what travels on `POST /v1/audio/speech` and
-`POST /v1/audio/transcriptions`: the paths, the requests, the transcription
-answer, and the closed list of refusals with their statuses, messages and the
-body they are answered in (OpenAI's error form). The service and its callers
-import these types and copy none of them.
+This module is the one owner of what travels on `POST /v1/audio/speech`,
+`POST /v1/audio/transcriptions` and the Realtime transcription WebSocket: the
+paths, the requests, the transcription answer, the Realtime events, and the
+closed list of refusals with their statuses, messages and the body they are
+answered in (OpenAI's error form). The service and its callers import these
+types and copy none of them.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from enum import StrEnum
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Annotated, Final, Literal
+from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 SPEECH_PATH: Final = "/v1/audio/speech"
 TRANSCRIPTIONS_PATH: Final = "/v1/audio/transcriptions"
+REALTIME_PATH: Final = "/v1/realtime"
+REALTIME_INTENT_PARAM: Final = "intent"
+REALTIME_INTENT: Final = "transcription"
 API_VERSION: Final = 1
 MODEL: Final = "speech-runtime"
 RESPONSE_FORMAT: Final = "wav"
@@ -211,3 +224,280 @@ def busy_wait(status: int, headers: Mapping[str, str]) -> BusyWait | None:
         )
         raise RetryAfterError(message)
     return BusyWait(retry_after_seconds=int(value))
+
+
+# The Realtime transcription session, as OpenAI types it, narrowed to what this
+# service applies. A field it does not apply is refused, never ignored.
+
+
+class _SessionPart(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+
+class PcmFormat(_SessionPart):
+    """PCM16 little-endian mono at 24 kHz, the one input format."""
+
+    type: Literal["audio/pcm"] = "audio/pcm"
+    rate: Literal[24000] = 24000
+
+
+class TranscriptionSetting(_SessionPart):
+    """The model and the language a session hears."""
+
+    model: Literal["speech-runtime"] = MODEL
+    language: HearingLanguage = HearingLanguage.DE
+
+
+class ServerVad(_SessionPart):
+    """Server turn detection; C2's timing is fixed by the service."""
+
+    type: Literal["server_vad"] = "server_vad"
+
+
+class SessionInput(_SessionPart):
+    """The input side of a session."""
+
+    format: PcmFormat = PcmFormat()
+    transcription: TranscriptionSetting = TranscriptionSetting()
+    turn_detection: ServerVad = ServerVad()
+
+
+class SessionAudio(_SessionPart):
+    """The audio side of a session."""
+
+    input: SessionInput = SessionInput()
+
+
+class TranscriptionSession(_SessionPart):
+    """A transcription session; each part absent from a request takes its default."""
+
+    type: Literal["transcription"] = "transcription"
+    audio: SessionAudio = SessionAudio()
+
+
+class _ClientEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    event_id: str | None = None
+
+
+class SessionUpdate(_ClientEvent):
+    """`session.update`: the one setup, before the first append."""
+
+    type: Literal["session.update"]
+    session: TranscriptionSession
+
+
+class AudioAppend(_ClientEvent):
+    """`input_audio_buffer.append`: base64 PCM16 at 24 kHz."""
+
+    type: Literal["input_audio_buffer.append"]
+    audio: str
+
+
+class AudioCommit(_ClientEvent):
+    """`input_audio_buffer.commit`: end the open turn now."""
+
+    type: Literal["input_audio_buffer.commit"]
+
+
+ClientEvent = SessionUpdate | AudioAppend | AudioCommit
+_CLIENT_EVENT: Final = TypeAdapter(Annotated[ClientEvent, Field(discriminator="type")])
+
+
+class ClientEventError(ValueError):
+    """A client message that is not one of the events this service accepts."""
+
+    def __init__(self, param: str | None, event_id: str | None) -> None:
+        """Name the field at fault and the client event's own id; never its content."""
+        super().__init__("the client event is not valid")
+        self.param = param
+        self.event_id = event_id
+
+
+def parse_client_event(text: str) -> ClientEvent:
+    """The client event in `text`; raises `ClientEventError` for anything else."""
+    try:
+        return _CLIENT_EVENT.validate_json(text)
+    except ValidationError as error:
+        location = error.errors(
+            include_url=False, include_context=False, include_input=False
+        )[0]["loc"]
+        # A union error leads with the event's type; an unknown type has no location.
+        parts = location[1:] if location else ("type",)
+        raise ClientEventError(
+            ".".join(map(str, parts)) or None, _event_id(text)
+        ) from None
+
+
+def _event_id(text: str) -> str | None:
+    try:
+        event = json.loads(text)
+    except ValueError:
+        return None
+    event_id = event.get("event_id") if isinstance(event, dict) else None
+    return event_id if isinstance(event_id, str) else None
+
+
+def new_event_id() -> str:
+    """A fresh id for a server event."""
+    return f"event_{uuid4().hex}"
+
+
+class _ServerEvent(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    event_id: str = Field(default_factory=new_event_id)
+
+
+class SessionCreated(_ServerEvent):
+    """`session.created`: the effective default session, first on every session."""
+
+    type: Literal["session.created"] = "session.created"
+    session: TranscriptionSession
+
+
+class SessionUpdated(_ServerEvent):
+    """`session.updated`: the session the service applied."""
+
+    type: Literal["session.updated"] = "session.updated"
+    session: TranscriptionSession
+
+
+class SpeechStarted(_ServerEvent):
+    """`input_audio_buffer.speech_started`: C2 first heard speech in a turn."""
+
+    type: Literal["input_audio_buffer.speech_started"] = (
+        "input_audio_buffer.speech_started"
+    )
+    item_id: str
+    audio_start_ms: int
+
+
+class SpeechStopped(_ServerEvent):
+    """`input_audio_buffer.speech_stopped`: C2's silence or cap ended the turn."""
+
+    type: Literal["input_audio_buffer.speech_stopped"] = (
+        "input_audio_buffer.speech_stopped"
+    )
+    item_id: str
+    audio_end_ms: int
+
+
+class AudioCommitted(_ServerEvent):
+    """`input_audio_buffer.committed`: the turn is closed and will be heard."""
+
+    type: Literal["input_audio_buffer.committed"] = "input_audio_buffer.committed"
+    item_id: str
+    previous_item_id: str | None
+
+
+class InputAudioPart(BaseModel):
+    """The audio of a turn; the audio itself is never echoed."""
+
+    model_config = ConfigDict(frozen=True)
+
+    type: Literal["input_audio"] = "input_audio"
+    transcript: str | None = None
+
+
+class UserMessageItem(BaseModel):
+    """The conversation item of one turn."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    object: Literal["realtime.item"] = "realtime.item"
+    type: Literal["message"] = "message"
+    role: Literal["user"] = "user"
+    status: Literal["completed"] = "completed"
+    content: tuple[InputAudioPart, ...] = (InputAudioPart(),)
+
+
+class ItemCreated(_ServerEvent):
+    """`conversation.item.created`: the turn's user message item."""
+
+    type: Literal["conversation.item.created"] = "conversation.item.created"
+    previous_item_id: str | None
+    item: UserMessageItem
+
+
+class TranscriptDelta(_ServerEvent):
+    """A provisional piece of an item's transcript."""
+
+    type: Literal["conversation.item.input_audio_transcription.delta"] = (
+        "conversation.item.input_audio_transcription.delta"
+    )
+    item_id: str
+    content_index: Literal[0] = 0
+    delta: str
+
+
+class DurationUsage(BaseModel):
+    """The seconds of audio an item's transcript was made from."""
+
+    model_config = ConfigDict(frozen=True)
+
+    type: Literal["duration"] = "duration"
+    seconds: float
+
+
+class TranscriptCompleted(_ServerEvent):
+    """An item's authoritative transcript, possibly empty; its one success terminal."""
+
+    type: Literal["conversation.item.input_audio_transcription.completed"] = (
+        "conversation.item.input_audio_transcription.completed"
+    )
+    item_id: str
+    content_index: Literal[0] = 0
+    transcript: str
+    usage: DurationUsage
+
+
+class ItemFailure(BaseModel):
+    """The closed-list error of a failed item."""
+
+    model_config = ConfigDict(frozen=True)
+
+    message: str
+    type: Literal["invalid_request_error", "server_error"]
+    code: RefusalCode
+    param: str | None = None
+
+
+class TranscriptFailed(_ServerEvent):
+    """An item that will not complete; sent only as a session ends."""
+
+    type: Literal["conversation.item.input_audio_transcription.failed"] = (
+        "conversation.item.input_audio_transcription.failed"
+    )
+    item_id: str
+    content_index: Literal[0] = 0
+    error: ItemFailure
+
+
+class RealtimeError(ItemFailure):
+    """The `error` object of an `error` event."""
+
+    event_id: str | None = None
+
+
+class ErrorEvent(_ServerEvent):
+    """`error`: the session ends after it."""
+
+    type: Literal["error"] = "error"
+    error: RealtimeError
+
+
+def item_failure(code: RefusalCode, param: str | None = None) -> ItemFailure:
+    """The failure of a closed-list `code`."""
+    detail = refusal(code).error
+    return ItemFailure(message=detail.message, type=detail.type, code=code, param=param)
+
+
+def error_event(
+    code: RefusalCode, param: str | None = None, event_id: str | None = None
+) -> ErrorEvent:
+    """The `error` event for `code`, naming the field and the client event at fault."""
+    failure = item_failure(code, param)
+    return ErrorEvent(error=RealtimeError(**failure.model_dump(), event_id=event_id))
