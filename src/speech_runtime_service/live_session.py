@@ -70,7 +70,10 @@ class _Final:
 
 
 def _samples_of(encoded: str) -> bytes | None:
-    """The PCM16 in `encoded`, or `None` for invalid base64 (binascii.Error is a ValueError, as is non-ASCII text) or an odd byte count."""
+    """The PCM16 in `encoded`, or `None` for invalid base64 or an odd byte count.
+
+    Non-ASCII text and malformed padding both raise `ValueError`.
+    """
     try:
         raw = base64.b64decode(encoded, validate=True)
     except ValueError:
