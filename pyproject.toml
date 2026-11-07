@@ -14,7 +14,7 @@ dependencies = [
     "overnightworks-webauth @ git+https://github.com/overnightworks/webauth@v0.31.0",
     "numpy==2.5.4",
     "piper-tts==1.8.0",
-    "python-multipart==0.0.32",
+    "python-multipart==0.0.33",
     "pydantic-settings==2.16.2",
     "uvicorn==0.54.0",
     "overnightworks-speech-runtime-client",
