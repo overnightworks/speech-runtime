@@ -29,6 +29,7 @@ class FakeSocket:
         """Start empty and open."""
         self.events: list[dict[str, object]] = []
         self.closed = False
+        self.close_code: int | None = None
         self._changed = asyncio.Condition()
 
     async def send(self, text: str) -> None:
@@ -37,10 +38,11 @@ class FakeSocket:
             self.events.append(json.loads(text))
             self._changed.notify_all()
 
-    async def close(self) -> None:
-        """Record the close."""
+    async def close(self, code: int) -> None:
+        """Record the close and its code."""
         async with self._changed:
             self.closed = True
+            self.close_code = code
             self._changed.notify_all()
 
     async def until(self, ready: Callable[[], bool]) -> None:

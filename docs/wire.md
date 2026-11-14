@@ -174,7 +174,7 @@ token expires until it ends, so the app ends a hearing when its right to hear en
 **Upgrade.** **WIRE-51** A refusal before the session is an HTTP answer in the refusal form
 below, in this order: the tokens, the
 `intent` (`invalid_request`, `param` `intent`), whether hearing is available
-(`unavailable`), the session bound. **WIRE-52** `SPEECH_MAX_HEARING_SESSIONS` (default `1`)
+(`unavailable`, which the drain makes true), the session bound. **WIRE-52** `SPEECH_MAX_HEARING_SESSIONS` (default `1`)
 sessions run at once; one more is `busy` with `Retry-After`. **WIRE-53** A wrong version is
 `unsupported_version`. **WIRE-54** An idle session holds its place only, never the decode.
 
@@ -278,6 +278,21 @@ session's own earlier final included; a final past it is never started, even on 
 free decode, and the session ends `busy`. **WIRE-86** A partial that finds the decode taken is
 skipped. **WIRE-87** The decode is freed only when it has finished, even if the client has gone.
 
+**Drain.** **WIRE-144** On the stop signal (SIGTERM or SIGINT) the service reports not ready at
+once, for speaking and hearing (WIRE-124, WIRE-129), and refuses a new session, speak request
+or recording as `unavailable` (WIRE-103). **WIRE-145** A speak stream or recording already
+running finishes whole; a speak request still waiting for the engine is refused.
+**WIRE-146** Each live session keeps taking audio until its open turn ends, by silence or
+the cap, or by the drain: an open turn ends itself 30 s after the drain began. Audio after
+that turn's end opens no new turn. The session delivers that turn's `completed` and every
+final ahead of it, then closes with `1012` (Service Restart) and no `error`, since nothing
+failed. A session with no open turn closes with `1012`
+at its next poll (0.3 s). A client reconnects with a new session; its items start afresh.
+**WIRE-147** The drain is bounded by 30 s plus `SPEECH_HEARING_FINAL_WAIT_SECONDS`
+(WIRE-120): a final waits at most that long, as WIRE-85 says. The service then closes its
+engines and exits 0; whatever still runs at the bound is cut. A session with an item still
+unfinished at the bound fails it, sends `error` `unavailable` and closes `1012`.
+
 ## Response
 
 **WIRE-88** For `wav`, `200` with `Content-Type: audio/wav`, chunked: 16-bit mono PCM at the voice's
@@ -315,7 +330,7 @@ names is not part of the contract, but for WIRE-139.
 | WIRE-100 | `invalid_request` | 422 | the body is not a JSON object, a field is missing, unknown or mistyped, a value is not accepted, or `input` is empty, without a letter or digit, or over the limit, or `instructions` are not accepted (WIRE-141, WIRE-142); for a recording: the form or `file` is missing, a field is unknown or not accepted, or the audio cannot be decoded (`param` `file`) | |
 | WIRE-101 | `too_large` | 413 | the body is over `SPEECH_MAX_BODY_BYTES` (a recording: `SPEECH_MAX_RECORDING_BYTES`), or the recording is longer than `SPEECH_MAX_RECORDING_SECONDS` (`param` `file`) | |
 | WIRE-102 | `busy` | 429 | the one synthesis (a recording: the one decode) is taken and its waiting places are taken (answered at once), or it is not free within its wait: `SPEECH_MAX_WAITING_REQUESTS` and `SPEECH_BUSY_WAIT_SECONDS`, for a recording `SPEECH_HEARING_MAX_WAITING_REQUESTS` and `SPEECH_HEARING_BUSY_WAIT_SECONDS` | `Retry-After`: the wait in whole seconds, at least 1 |
-| WIRE-103 | `unavailable` | 503 | the tokens cannot be checked because the issuer's key set is unreachable and no cached key serves, or the named voice cannot speak: it is not offered, the start load still runs, its load failed or found its files missing, its worker died while the request waited, or the service is shutting down (`param` `voice`); for a recording: hearing is not loaded or configured, or its decode failed | |
+| WIRE-103 | `unavailable` | 503 | the tokens cannot be checked because the issuer's key set is unreachable and no cached key serves, or the named voice cannot speak: it is not offered, the start load still runs, its load failed or found its files missing, its worker died while the request waited, or the drain began (`param` `voice`); for a recording: hearing is not loaded or configured, the drain began, or its decode failed | |
 
 **WIRE-104** Apps read the `busy` wait with `busy_wait(status, headers)` in
 `speech_client.wire`: it returns the wait in whole seconds, `None` for any
@@ -372,19 +387,19 @@ version path (`/v-1/...`, `/vx/...`, `/speak`) gets the app's default 404 with
 `{"speaking": {"ready", "voices": {"<voice id>": {"model", "name", "languages", "takes_instructions", "ready", "sample_rate"}}}, "hearing": {"model", "ready"}, "card_memory_mb"}`.
 **WIRE-123** It answers while the models are still loading, with `ready` false.
 **WIRE-124** `speaking.ready` is the speaking service's own readiness: the start load has
-ended, shutdown has not begun, and every offered Piper voice (with WIRE-143, every offered voice)
+ended, the drain has not begun (WIRE-144), and every offered Piper voice (with WIRE-143, every offered voice)
 can speak. With no such voice offered, it is true once the start load ends. **WIRE-125** `speaking.voices` lists
 the offered voices by id. Each reports, loaded or not, its `model` (the request's
 `model`), its `name`, its `languages` (the codes it speaks), whether it `takes_instructions` (WIRE-142) and its WAV `sample_rate` (a
 Piper voice's is 0 until it is loaded). A client reads each id as a string, so a voice id it
 does not know, under a model and in languages it knows, does not break its reading of
 health. **WIRE-126** A voice's `ready` is true exactly when a request for it
-would be spoken now: never during the start load or once shutdown began, and
+would be spoken now: never during the start load or once the drain began, and
 never for a GPU voice that is not loaded, failed, or whose worker died.
 **WIRE-127** The service builds the answer through `Health` in `speech_client.wire`,
 which ignores keys it does not know. **WIRE-128** `hearing.model` is the configured hearing
 model, or `unavailable` when none is configured; **WIRE-129** `hearing.ready` is false while
-it loads and for good when its load found no CUDA device or no room on the card,
+it loads, once the drain began and for good when its load found no CUDA device or no room on the card,
 which leaves speaking up.
 
 ## Not offered

@@ -1,25 +1,29 @@
 """Serving binds the configured address first and ends with the listener closed."""
 
 import asyncio
+import os
 import signal
 import socket
 import subprocess
 import sys
 import threading
 import traceback
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
 from speech_provider_contract import QWEN_MODEL_ID, QWEN_SAMPLE_RATE
 
-from speech_client.wire import VOICES, VoiceId
+from speech_client.wire import VOICES, Language, VoiceId
 from speech_service import __main__
+from speech_service.__main__ import StopPolicy
+from speech_service.clock import LoopClock
 from speech_service.config import Settings
+from speech_service.hearing import Hearing
 from speech_service.provider_process import ProviderLaunch, ProviderProcess
 from speech_service.service import Runtime, RuntimeDependencies
 from tests.support.fakes_support import FakeSpeaking
+from tests.support.hear_support import WAIT_SECONDS, FakeHearing, loaded
 from tests.support.identity_support import write_caller_configuration
 from tests.support.tcp_server_support import free_loopback_port, listens_on
 from tests.support.worker_support import provider_worker
@@ -50,41 +54,6 @@ class _BlockedSpeaking(FakeSpeaking):
         self._started.set()
         assert self._release.wait(timeout=5)
         self.ready = True
-
-
-@dataclass(slots=True)
-class _CloseOrderingScenario:
-    spawned: threading.Event
-    stopping: list[asyncio.Event]
-    closed: threading.Event
-    cache: Path
-    observations: list[bool]
-
-
-class _CloseOrderingServer:
-    def __init__(self, *, scenario: _CloseOrderingScenario) -> None:
-        self.scenario = scenario
-        self.stopped = asyncio.Event()
-
-    @property
-    def should_exit(self) -> bool:
-        return self.stopped.is_set()
-
-    @should_exit.setter
-    def should_exit(self, value: bool) -> None:
-        if value:
-            self.stopped.set()
-
-    async def serve(self, *, sockets: list[socket.socket] | None = None) -> None:
-        del sockets
-        assert await asyncio.to_thread(self.scenario.spawned.wait, 5)
-        self.scenario.stopping[0].set()
-        await self.stopped.wait()
-        closed_first = await asyncio.to_thread(self.scenario.closed.wait, 1)
-        self.scenario.observations.append(closed_first)
-        if not closed_first:
-            self.scenario.cache.mkdir(parents=True, exist_ok=True)
-            (self.scenario.cache / "allow-ready").touch()
 
 
 class _HealthServer:
@@ -132,6 +101,20 @@ class _ShutdownOnlyServer:
         await self._stopped.wait()
 
 
+class _SignalledServer(_ShutdownOnlyServer):
+    """A server that SIGTERMs the process once it runs, or once `after` is set."""
+
+    def __init__(self, after: threading.Event | None = None) -> None:
+        super().__init__()
+        self._after = after
+
+    async def serve(self, *, sockets: list[socket.socket] | None = None) -> None:
+        if self._after is not None:
+            assert await asyncio.to_thread(self._after.wait, 5)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await super().serve(sockets=sockets)
+
+
 def test_failed_loader_stops_the_server_and_closes_the_listener(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -173,10 +156,8 @@ def test_an_offered_piper_voice_without_its_files_ends_the_start_naming_the_voic
     assert not listens_on(settings.port)
 
 
-def test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "providers"
+def _provider_ready_on_release(root: Path) -> Path:
+    """A provider entrypoint that reports ready once its cache holds `allow-ready`."""
     entrypoint = provider_worker(root)
     entrypoint.parent.mkdir(parents=True)
     entrypoint.write_text(
@@ -199,24 +180,37 @@ while True:
         encoding="utf-8",
     )
     entrypoint.chmod(0o700)
+    return entrypoint
+
+
+class _ObservedProvider(ProviderProcess):
+    def __init__(self, launch: ProviderLaunch, closed: threading.Event) -> None:
+        super().__init__(launch)
+        self._observed_close = closed
+
+    def close(self) -> None:
+        try:
+            super().close()
+        finally:
+            self._observed_close.set()
+
+
+def test_shutdown_closes_a_pending_real_adapter_before_awaiting_its_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entrypoint = _provider_ready_on_release(tmp_path / "providers")
     spawned = threading.Event()
     closed = threading.Event()
     cache = tmp_path / "cache"
 
-    class ObservedProvider(ProviderProcess):
-        def close(self) -> None:
-            try:
-                super().close()
-            finally:
-                closed.set()
-
-    engine = ObservedProvider(
+    engine = _ObservedProvider(
         ProviderLaunch(
             model_name=QWEN_MODEL_ID,
             sample_rate=QWEN_SAMPLE_RATE,
             executable=entrypoint,
             arguments=("--device", "cpu", "--cache", str(cache)),
-        )
+        ),
+        closed,
     )
     runtime = Runtime(
         {VoiceId.THORSTEN: None},
@@ -232,31 +226,30 @@ while True:
         spawned.set()
         return process
 
-    stopping: list[asyncio.Event] = []
-    close_before_await: list[bool] = []
-    scenario = _CloseOrderingScenario(
-        spawned=spawned,
-        stopping=stopping,
-        closed=closed,
-        cache=cache,
-        observations=close_before_await,
-    )
-    server = _CloseOrderingServer(scenario=scenario)
+    server = _SignalledServer(spawned)
 
-    def install(stop: asyncio.Event) -> None:
-        stopping.append(stop)
+    def release_the_load() -> None:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "allow-ready").touch()
+
+    # Only a missing close would need it: the load then waits for its release.
+    watchdog = threading.Timer(5, release_the_load)
 
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
     monkeypatch.setattr(__main__, "build_server", lambda _app: server)
-    monkeypatch.setattr(__main__, "_install_signal_handlers", install)
     monkeypatch.setattr(
         "speech_service.provider_process.subprocess.Popen", observed_popen
     )
 
-    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
+    watchdog.start()
+    try:
+        outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
+    finally:
+        watchdog.cancel()
 
     assert outcome == 0
-    assert close_before_await == [True]
+    assert closed.is_set()
+    assert not (cache / "allow-ready").exists()
 
 
 def test_owned_speaking_failure_stops_the_server_and_returns_failure(
@@ -421,6 +414,88 @@ def test_signal_exit_is_zero_and_closes_the_listener(
 
     assert outcome == 0
     assert not listens_on(settings.port)
+
+
+def _signalled_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hearing: Hearing,
+    after: threading.Event | None = None,
+) -> Settings:
+    """Serve over `hearing` with a server that SIGTERMs the process once it runs.
+
+    With `after` the SIGTERM waits until that event is set.
+    """
+    runtime = Runtime(
+        {VoiceId.THORSTEN: None},
+        dependencies=RuntimeDependencies(
+            engine_factory=lambda _voice: FakeSpeaking(),
+            missing_artifacts=lambda _voice: (),
+        ),
+        hearing=hearing,
+    )
+    monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
+    monkeypatch.setattr(__main__, "build_server", lambda _app: _SignalledServer(after))
+    return _serving_settings(tmp_path, hearing_final_wait_seconds=0.05)
+
+
+def test_a_session_that_outlasts_the_drain_bound_leaves_the_exit_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WIRE-147: the drain ends at its bound, whatever still runs."""
+    hearing = loaded(FakeHearing(), drain_turn_seconds=0.0)
+    place = hearing.open_session(1)
+    assert place is not None
+    settings = _signalled_stop(tmp_path, monkeypatch, hearing)
+
+    outcome = asyncio.run(__main__.serve(settings, StopPolicy(grace_seconds=0.05)))
+
+    assert outcome == 0
+
+
+def test_engines_that_will_not_close_end_the_process_through_the_abort_with_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WIRE-147: a decode that cannot be interrupted does not hold the exit."""
+    engine = FakeHearing(hold=True)
+    hearing = loaded(engine)
+    lease = hearing.gate.try_acquire()
+    assert lease is not None
+    decode = hearing.submit(lease, lambda ear: ear.transcribe(b"", (Language.DE,)))
+    assert engine.entered.wait(WAIT_SECONDS)
+    settings = _signalled_stop(tmp_path, monkeypatch, hearing)
+    aborted: list[int] = []
+    policy = StopPolicy(grace_seconds=0.05, abort=aborted.append)
+
+    outcome = asyncio.run(__main__.serve(settings, policy))
+
+    engine.release.set()
+    decode.result(WAIT_SECONDS)
+    assert outcome == 0
+    assert aborted == [0]
+
+
+def test_a_hearing_load_that_will_not_end_ends_the_process_through_the_abort_with_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WIRE-147: a load that cannot be interrupted does not hold the exit."""
+    engine = FakeHearing(hold_load=True)
+    settings = _signalled_stop(
+        tmp_path, monkeypatch, Hearing(engine, LoopClock()), engine.load_entered
+    )
+    aborted: list[int] = []
+    policy = StopPolicy(grace_seconds=0.05, abort=aborted.append)
+
+    async def stopped_during_the_load() -> int:
+        try:
+            return await __main__.serve(settings, policy)
+        finally:
+            engine.load_release.set()
+
+    outcome = asyncio.run(stopped_during_the_load())
+
+    assert outcome == 0
+    assert aborted == [0]
 
 
 def test_server_ending_on_its_own_returns_failure_and_closes_the_listener(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 HEARING_SAMPLE_RATE: Final = SAMPLE_RATE
 CPU_THREADS: Final = 4
+DRAIN_TURN_SECONDS: Final = 30.0
 _SETTING: Final = "SPEECH_HEARING_MODEL"
 _DEVICES: Final = frozenset({"cpu", "cuda"})
 # A window is no speech, and adds no words, when its no-speech probability is above
@@ -367,16 +369,27 @@ class WhisperHearing:
 class Hearing:
     """The loaded hearing engine, the gate its decodes pass and their one worker."""
 
-    def __init__(self, engine: HearingEngine | None, clock: Clock) -> None:
+    def __init__(
+        self,
+        engine: HearingEngine | None,
+        clock: Clock,
+        *,
+        drain_turn_seconds: float = DRAIN_TURN_SECONDS,
+    ) -> None:
         """Hold `engine`, or none when no hearing model is configured.
 
-        The gate's deadlines, and so the live sessions', are on `clock`.
+        The gate's deadlines, and so the live sessions', are on `clock`. A drain
+        lets an open turn run `drain_turn_seconds` before it is cut.
         """
         self._engine = engine
+        self._drain_turn_seconds = drain_turn_seconds
         self._ready: HearingEngine | None = None
         self.gate = AdmissionGate(clock)
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hearing")
         self._sessions = 0
+        self._no_sessions = asyncio.Event()
+        self._no_sessions.set()
+        self._drain_began_at: float | None = None
 
     def load(self) -> None:
         """Load the engine.
@@ -405,8 +418,39 @@ class Hearing:
             raise RuntimeError(message)
 
     def capture(self) -> HearingEngine | None:
-        """The loaded engine, or `None` while hearing is unavailable."""
-        return self._ready
+        """The loaded engine, or `None` while hearing is unavailable or draining.
+
+        A session or recording already admitted keeps using the engine to its end.
+        """
+        return None if self.draining else self._ready
+
+    def begin_drain(self) -> None:
+        """Admit no new session or recording; the ones admitted run on."""
+        if self._drain_began_at is None:
+            self._drain_began_at = self.gate.clock.now()
+
+    @property
+    def draining(self) -> bool:
+        """Whether the drain began."""
+        return self._drain_began_at is not None
+
+    def drain_turn_over(self) -> bool:
+        """Whether an open turn is due to be cut: the drain's turn bound has passed."""
+        return self._drain_age() >= self._drain_turn_seconds
+
+    def drain_left(self, final_wait_seconds: float) -> float:
+        """Seconds until the drain's bound: its turn bound plus a final's wait."""
+        bound = self._drain_turn_seconds + final_wait_seconds
+        return max(0.0, bound - self._drain_age())
+
+    def _drain_age(self) -> float:
+        if self._drain_began_at is None:
+            return 0.0
+        return self.gate.clock.now() - self._drain_began_at
+
+    async def sessions_ended(self) -> None:
+        """Wait until no live session holds a place."""
+        await self._no_sessions.wait()
 
     def open_detector(self) -> SpeechDetector:
         """A detector at the start of one live session's audio.
@@ -427,10 +471,13 @@ class Hearing:
         if self._sessions >= limit:
             return None
         self._sessions += 1
+        self._no_sessions.clear()
         return Lease(self._end_session)
 
     def _end_session(self) -> None:
         self._sessions -= 1
+        if not self._sessions:
+            self._no_sessions.set()
 
     def submit[Result](
         self, lease: Lease, job: Callable[[HearingEngine], Result]
@@ -473,7 +520,7 @@ class Hearing:
         """The contract body of hearing for GET /health."""
         return {
             "model": self._engine.model_name if self._engine else "unavailable",
-            "ready": self._ready is not None,
+            "ready": self.capture() is not None,
         }
 
 
