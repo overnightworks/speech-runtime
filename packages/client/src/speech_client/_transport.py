@@ -68,12 +68,20 @@ def checked_origin(base_url: str, deadline_seconds: float, cap_bytes: int) -> Or
 class _DeadlineSocket(socket.socket):
     """A socket whose connect, sends and reads are each bounded by one deadline."""
 
-    def __init__(self, family: int, kind: int, protocol: int, deadline: float) -> None:
+    def __init__(
+        self,
+        family: int,
+        kind: int,
+        protocol: int,
+        deadline: float,
+        clock: Callable[[], float],
+    ) -> None:
         super().__init__(family, kind, protocol)
         self._deadline = deadline
+        self._clock = clock
 
     def arm(self) -> None:
-        left = self._deadline - time.monotonic()
+        left = self._deadline - self._clock()
         if left <= 0:
             # settimeout(0) would make the socket non-blocking, a negative value raises.
             raise TimeoutError
@@ -88,12 +96,14 @@ class _DeadlineSocket(socket.socket):
         return super().recv_into(buffer, nbytes, flags)
 
 
-def _connect(host: str, port: int, deadline: float) -> socket.socket:
+def _connect(
+    host: str, port: int, deadline: float, clock: Callable[[], float]
+) -> socket.socket:
     failure = OSError("the name resolved to no address")
     for family, kind, protocol, _, address in socket.getaddrinfo(
         host, port, type=socket.SOCK_STREAM
     ):
-        candidate = _DeadlineSocket(family, kind, protocol, deadline)
+        candidate = _DeadlineSocket(family, kind, protocol, deadline, clock)
         try:
             candidate.arm()
             candidate.connect(address)
@@ -145,10 +155,10 @@ def read_within(response: HTTPResponse, limit: int) -> bytes | None:
 
 
 def _open(
-    origin: Origin, deadline: float
+    origin: Origin, deadline: float, clock: Callable[[], float]
 ) -> HTTPConnection | PastDeadline | Unreachable:
     try:
-        connected = _connect(origin.host, origin.port, deadline)
+        connected = _connect(origin.host, origin.port, deadline, clock)
     except TimeoutError:
         return PastDeadline()
     except OSError:
@@ -173,9 +183,11 @@ def exchange[Answer](
     origin: Origin,
     deadline_seconds: float,
     ask: Callable[[HTTPConnection], Answer],
+    *,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Answer | Cut | PastDeadline | Malformed | Unreachable:
     """`ask` on one connection to `origin`, or the outcome that stopped it."""
-    connection = _open(origin, time.monotonic() + deadline_seconds)
+    connection = _open(origin, clock() + deadline_seconds, clock)
     if not isinstance(connection, HTTPConnection):
         return connection
     try:
@@ -190,6 +202,8 @@ def exchange_stream[Item](
     origin: Origin,
     deadline_seconds: float,
     ask: Callable[[HTTPConnection], Iterator[Item]],
+    *,
+    clock: Callable[[], float] = time.monotonic,
 ) -> Generator[Item | Cut | PastDeadline | Malformed | Unreachable]:
     """The items `ask` yields on one connection to `origin`, within one deadline.
 
@@ -199,15 +213,15 @@ def exchange_stream[Item](
     the rest is buffered and needs no socket read.
     The connection closes when the stream ends or is closed.
     """
-    deadline = time.monotonic() + deadline_seconds
-    connection = _open(origin, deadline)
+    deadline = clock() + deadline_seconds
+    connection = _open(origin, deadline, clock)
     if not isinstance(connection, HTTPConnection):
         yield connection
         return
     try:
         for item in ask(connection):
             yield item
-            if time.monotonic() >= deadline:
+            if clock() >= deadline:
                 raise TimeoutError
     except (OSError, HTTPException) as error:
         yield _ended_by(error)
