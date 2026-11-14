@@ -117,7 +117,24 @@ def _head(status: str, *headers: str) -> bytes:
 
 _WAV_HEAD = _head("200 OK", "Content-Type: audio/wav", "Transfer-Encoding: chunked")
 _OGG_HEAD = _head("200 OK", "Content-Type: audio/ogg", "Transfer-Encoding: chunked")
-_WAV_BODY = b"RIFF\0\0\0\0WAVE"
+SAMPLE_RATE = 22_050
+SECONDS_PER_PCM_BYTE = 1 / (2 * SAMPLE_RATE)
+
+
+def _wav(pcm: bytes, *, with_data: bool = True) -> bytes:
+    """A WAV head with an INFO chunk before `data`, as the service sends it."""
+    info = struct.pack("<4sI4s", b"LIST", 4 + 8 + 4, b"INFO") + struct.pack(
+        "<4sI", b"ICMT", 4
+    )
+    info += b"AI\0\0"
+    fmt = struct.pack(
+        "<4sIHHIIHH", b"fmt ", 16, 1, 1, SAMPLE_RATE, SAMPLE_RATE * 2, 2, 16
+    )
+    data = struct.pack("<4sI", b"data", 0xFFFFFFFF) + pcm if with_data else b""
+    return b"RIFF\xff\xff\xff\xffWAVE" + fmt + info + data
+
+
+_WAV_BODY = _wav(b"\x01\x00" * 4)
 _OGG_BODY = b"OggS\0\0\0\0"
 
 
@@ -481,25 +498,6 @@ def test_a_429_with_a_whole_second_wait_is_busy(raw_listener: RawListener) -> No
     assert outcome.wait.retry_after_seconds == 7  # noqa: PLR2004 - the header's value
 
 
-# The streaming call.
-
-SAMPLE_RATE = 22_050
-SECONDS_PER_PCM_BYTE = 1 / (2 * SAMPLE_RATE)
-
-
-def _wav(pcm: bytes, *, with_data: bool = True) -> bytes:
-    """A WAV head with an INFO chunk before `data`, as the service sends it."""
-    info = struct.pack("<4sI4s", b"LIST", 4 + 8 + 4, b"INFO") + struct.pack(
-        "<4sI", b"ICMT", 4
-    )
-    info += b"AI\0\0"
-    fmt = struct.pack(
-        "<4sIHHIIHH", b"fmt ", 16, 1, 1, SAMPLE_RATE, SAMPLE_RATE * 2, 2, 16
-    )
-    data = struct.pack("<4sI", b"data", 0xFFFFFFFF) + pcm if with_data else b""
-    return b"RIFF\xff\xff\xff\xffWAVE" + fmt + info + data
-
-
 def _streamed(raw: bytes, raw_listener: RawListener) -> list[SpeakStreamItem]:
     with raw_listener(raw) as (base_url, _):
         return list(
@@ -532,10 +530,42 @@ def test_the_stream_ends_with_the_exact_seconds_whatever_the_chunking(
     assert end == Finished(len(pcm) * SECONDS_PER_PCM_BYTE)
 
 
-def test_a_stream_without_audio_data_ends_malformed(raw_listener: RawListener) -> None:
+def test_a_wav_without_audio_data_is_malformed_in_the_stream_and_the_blocking_call(
+    raw_listener: RawListener,
+) -> None:
+    """Both calls take the same terminal check: the blocking one is the stream's end."""
     raw = _WAV_HEAD + _chunk(_wav(b"", with_data=False)) + _chunk(b"")
 
-    assert _streamed(raw, raw_listener)[-1] == Malformed()
+    streamed = _streamed(raw, raw_listener)
+    with raw_listener(raw) as (base_url, _):
+        spoken = _speak(base_url)
+
+    assert streamed[-1] == Malformed()
+    assert spoken == Malformed()
+
+
+def test_a_deadline_that_passes_while_the_stream_is_held_ends_it_past_the_deadline(
+    raw_listener: RawListener,
+) -> None:
+    """The rest is buffered and needs no socket read, yet the stream does not finish."""
+    wav = _wav(b"\x01\x00" * 100)
+    raw = _WAV_HEAD + _chunk(wav) + _chunk(b"\x01\x00" * 100) + _chunk(b"")
+    with raw_listener(raw) as (base_url, _):
+        stream = speak_stream(
+            base_url,
+            "Hallo",
+            VOICE,
+            workload_token=WORKLOAD_TOKEN,
+            person_token=PERSON_TOKEN,
+            deadline_seconds=DEADLINE_SECONDS,
+            cap_bytes=CAP_BYTES,
+        )
+        first = next(stream)
+        time.sleep(DEADLINE_SECONDS + DRIP_SECONDS)
+        rest = list(stream)
+
+    assert first == wav
+    assert rest == [PastDeadline()]
 
 
 def test_a_stream_cut_off_after_audio_ends_cut_not_finished(

@@ -145,9 +145,8 @@ def read_within(response: HTTPResponse, limit: int) -> bytes | None:
 
 
 def _open(
-    origin: Origin, deadline_seconds: float
+    origin: Origin, deadline: float
 ) -> HTTPConnection | PastDeadline | Unreachable:
-    deadline = time.monotonic() + deadline_seconds
     try:
         connected = _connect(origin.host, origin.port, deadline)
     except TimeoutError:
@@ -176,7 +175,7 @@ def exchange[Answer](
     ask: Callable[[HTTPConnection], Answer],
 ) -> Answer | Cut | PastDeadline | Malformed | Unreachable:
     """`ask` on one connection to `origin`, or the outcome that stopped it."""
-    connection = _open(origin, deadline_seconds)
+    connection = _open(origin, time.monotonic() + deadline_seconds)
     if not isinstance(connection, HTTPConnection):
         return connection
     try:
@@ -195,15 +194,21 @@ def exchange_stream[Item](
     """The items `ask` yields on one connection to `origin`, within one deadline.
 
     The deadline starts with the first item asked for. A failure ends the
-    stream as the outcome that stopped it, after the items already yielded.
+    stream as the outcome that stopped it, after the items already yielded;
+    so does a deadline that passed while the caller held the stream, even when
+    the rest is buffered and needs no socket read.
     The connection closes when the stream ends or is closed.
     """
-    connection = _open(origin, deadline_seconds)
+    deadline = time.monotonic() + deadline_seconds
+    connection = _open(origin, deadline)
     if not isinstance(connection, HTTPConnection):
         yield connection
         return
     try:
-        yield from ask(connection)
+        for item in ask(connection):
+            yield item
+            if time.monotonic() >= deadline:
+                raise TimeoutError
     except (OSError, HTTPException) as error:
         yield _ended_by(error)
     finally:

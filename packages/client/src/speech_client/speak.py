@@ -26,8 +26,9 @@ The deadline starts with the first item asked for. Close the stream
 - `Busy`: the 429 and the wait the service asks for; the app decides to retry.
 - `Malformed`: the answer breaks the wire, for example a 200 that is not
   chunked, is not the ordered format's media type or does not begin with its
-  container signature (WIRE-88, WIRE-133), a refusal outside the error form, a 429
-  without a whole-second `Retry-After`, or a refusal body over 64 KiB.
+  container signature (WIRE-88, WIRE-133), a WAV with no `data` audio or a zero
+  sample rate, a refusal outside the error form, a 429 without a whole-second
+  `Retry-After`, or a refusal body over 64 KiB.
 - `Cut`, `PastDeadline`, `OverCap` and `Unreachable`, shared with the health
   fetch (`speech_client.outcomes`); here `OverCap` is the audio.
 
@@ -297,17 +298,14 @@ def _with_length(
     chunks: Generator[bytes | StreamFailure],
 ) -> Generator[SpeakStreamItem]:
     length = _WavLength()
-    failed = False
     with closing(chunks):
         for item in chunks:
             yield item
-            if isinstance(item, bytes):
-                length.feed(item)
-            else:
-                failed = True
-    if not failed:
-        seconds = length.seconds()
-        yield Malformed() if seconds is None else Finished(seconds)
+            if not isinstance(item, bytes):
+                return
+            length.feed(item)
+    seconds = length.seconds()
+    yield Malformed() if seconds is None else Finished(seconds)
 
 
 # Every input comes from the call site; only `language` and `instructions` default.
@@ -367,9 +365,7 @@ def speak(  # noqa: PLR0913
     call, `cap_bytes` the audio. See the module for the outcomes
     and for what raises.
     """
-    audio = bytearray()
-    failure: StreamFailure | None = None
-    for item in _chunks(
+    chunks = _chunks(
         base_url,
         text,
         voice,
@@ -380,9 +376,14 @@ def speak(  # noqa: PLR0913
         person_token=person_token,
         deadline_seconds=deadline_seconds,
         cap_bytes=cap_bytes,
-    ):
+    )
+    # Only a WAV carries a length to check; Ogg is judged by its signature.
+    items = _with_length(chunks) if response_format is ResponseFormat.WAV else chunks
+    audio = bytearray()
+    failure: StreamFailure | None = None
+    for item in items:
         if isinstance(item, bytes):
             audio += item
-        else:
+        elif not isinstance(item, Finished):
             failure = item
     return Spoken(bytes(audio)) if failure is None else failure
