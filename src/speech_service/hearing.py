@@ -13,7 +13,11 @@ import numpy as np
 from speech_service.admission_gate import AdmissionGate, Lease
 from speech_service.cuda_libs import cuda_library_dirs, prepare_cuda_libraries
 from speech_service.hearing_models import model_directory, voiced_floor
-from speech_service.voice_activity import SAMPLE_RATE, SileroDetectors
+from speech_service.voice_activity import (
+    SAMPLE_RATE,
+    SileroDetectors,
+    open_shipped_model,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
@@ -25,7 +29,7 @@ if TYPE_CHECKING:
     from speech_service.clock import Clock
     from speech_service.config import Settings
     from speech_service.hearing_models import HearingModel
-    from speech_service.voice_activity import SpeechDetector
+    from speech_service.voice_activity import DetectorSource, SpeechDetector
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +154,7 @@ class HearingLibraries:
     model_factory: Callable[..., Any]
     cuda_device_count: Callable[[], int]
     cuda_library_dirs: Callable[[], list[Path]]
+    detectors: DetectorSource
 
 
 def installed_libraries() -> HearingLibraries:
@@ -159,7 +164,10 @@ def installed_libraries() -> HearingLibraries:
     from faster_whisper import WhisperModel  # noqa: PLC0415 - as above
 
     return HearingLibraries(
-        WhisperModel, ctranslate2.get_cuda_device_count, cuda_library_dirs
+        WhisperModel,
+        ctranslate2.get_cuda_device_count,
+        cuda_library_dirs,
+        SileroDetectors(open_shipped_model),
     )
 
 
@@ -260,7 +268,7 @@ class WhisperHearing:
         self._identifier = identifier
         self._libraries = libraries
         self._model = None
-        self._detectors = SileroDetectors()
+        self._detectors: DetectorSource | None = None
 
     def load(self) -> None:
         """Load the CTranslate2 weights from the local directory, never the network."""
@@ -285,10 +293,14 @@ class WhisperHearing:
                 message = "the card is full"
                 raise ResourceUnavailableError(message) from None
             raise
-        self._detectors.load()
+        libraries.detectors.load()
+        self._detectors = libraries.detectors
 
     def open_detector(self) -> SpeechDetector:
-        """A Silero stream at the start of one live session's audio."""
+        """A detector at the start of one live session's audio."""
+        if self._detectors is None:
+            message = "hearing model is not loaded"
+            raise RuntimeError(message)
         return self._detectors.open()
 
     def transcribe(
@@ -346,7 +358,9 @@ class WhisperHearing:
     def close(self) -> None:
         """Drop the model so its memory is freed."""
         self._model = None
-        self._detectors.close()
+        if self._detectors is not None:
+            self._detectors.close()
+            self._detectors = None
         gc.collect()
 
 

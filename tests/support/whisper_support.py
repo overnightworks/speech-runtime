@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Self
 from faster_whisper.feature_extractor import FeatureExtractor
 
 from speech_service.hearing import HearingLibraries
+from speech_service.voice_activity import SileroDetectors, open_shipped_model
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
     import numpy as np
     from faster_whisper.tokenizer import Tokenizer
     from faster_whisper.transcribe import TranscriptionOptions
+
+    from speech_service.voice_activity import DetectorSource
 
 DEFAULT_PROBABILITIES = {"de": 0.7, "en": 0.2, "fr": 0.1}
 
@@ -78,6 +81,7 @@ class StandInWhisper:
         """Start unbuilt, with the default language probabilities."""
         self.built: list[dict[str, object]] = []
         self.failure: RuntimeError | None = None
+        self.detectors: DetectorSource = SileroDetectors(open_shipped_model)
         self.probabilities = dict(DEFAULT_PROBABILITIES)
         self.segments = [Segment(" Guten"), Segment(" Tag ")]
         self.encodes: list[np.ndarray] = []
@@ -93,7 +97,7 @@ class StandInWhisper:
     ) -> HearingLibraries:
         """The library entry points, with this stand-in as the model factory."""
         return HearingLibraries(
-            self, lambda: cuda_devices, lambda: cuda_library_dirs or []
+            self, lambda: cuda_devices, lambda: cuda_library_dirs or [], self.detectors
         )
 
     def __call__(self, path: str, **options: object) -> Self:

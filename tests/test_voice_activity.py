@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import numpy as np
-import onnxruntime
 import pytest
 from faster_whisper.vad import get_vad_model
 
@@ -15,6 +14,7 @@ from speech_service.voice_activity import (
     WINDOW_SAMPLES,
     ModelShapeError,
     SileroDetectors,
+    open_shipped_model,
 )
 
 MIN_VOICED_SECONDS = 0.5
@@ -24,7 +24,7 @@ SPEECH = Path(__file__).parent / "fixtures" / "speech" / "nein_danke.wav"
 
 @pytest.fixture(scope="module")
 def detectors() -> SileroDetectors:
-    loaded = SileroDetectors()
+    loaded = SileroDetectors(open_shipped_model)
     loaded.load()
     return loaded
 
@@ -125,17 +125,13 @@ class _OtherModel:
         return []
 
 
-def test_a_model_of_another_shape_fails_the_load(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        onnxruntime, "InferenceSession", lambda *_args, **_kwargs: _OtherModel()
-    )
+def test_a_model_of_another_shape_fails_the_load() -> None:
+    other = SileroDetectors(_OtherModel)
 
     with pytest.raises(ModelShapeError):
-        SileroDetectors().load()
+        other.load()
 
 
 def test_a_stream_of_an_unloaded_model_is_refused() -> None:
     with pytest.raises(RuntimeError, match="not loaded"):
-        SileroDetectors().open()
+        SileroDetectors(open_shipped_model).open()

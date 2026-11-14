@@ -34,6 +34,7 @@ from speech_service.voice_activity import (
     WINDOW_SECONDS,
     SileroDetectors,
     is_voiced,
+    open_shipped_model,
 )
 
 if TYPE_CHECKING:
@@ -217,7 +218,7 @@ class ClipError(ValueError):
 
 @functools.cache
 def _silero() -> SileroDetectors:
-    detectors = SileroDetectors()
+    detectors = SileroDetectors(open_shipped_model)
     detectors.load()
     return detectors
 

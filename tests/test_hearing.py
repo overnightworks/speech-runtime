@@ -19,6 +19,8 @@ from tests.support.whisper_support import Segment, StandInWhisper
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from speech_service.voice_activity import SpeechDetector
+
 
 @pytest.fixture
 def library() -> StandInWhisper:
@@ -201,15 +203,23 @@ def test_a_decode_without_a_segment_has_no_measures(
     assert (heard.text, heard.no_speech_prob, heard.avg_logprob) == ("", None, None)
 
 
-def test_the_load_fails_loud_when_the_voice_detector_does_not_load(
-    library: StandInWhisper, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def refuse() -> None:
+class _RefusingDetectors:
+    def load(self) -> None:
         message = "no model"
         raise RuntimeError(message)
 
+    def open(self) -> SpeechDetector:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        pass
+
+
+def test_the_load_fails_loud_when_the_voice_detector_does_not_load(
+    library: StandInWhisper, tmp_path: Path
+) -> None:
+    library.detectors = _RefusingDetectors()
     engine = _engine(tmp_path, library)
-    monkeypatch.setattr(engine._detectors, "load", refuse)  # noqa: SLF001 - the shipped model cannot be broken from outside
 
     with pytest.raises(RuntimeError, match="no model"):
         engine.load()

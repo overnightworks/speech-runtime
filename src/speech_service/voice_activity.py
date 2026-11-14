@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Final, Protocol
 import numpy as np
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from onnxruntime import InferenceSession
 
 SAMPLE_RATE: Final = 16_000
@@ -45,6 +47,19 @@ class SpeechDetector(Protocol):
         """
 
 
+class DetectorSource(Protocol):
+    """The loaded voice model, and the source of one detector per live session."""
+
+    def load(self) -> None:
+        """Load the model, or raise."""
+
+    def open(self) -> SpeechDetector:
+        """A detector at the start of one session's audio, once loaded."""
+
+    def close(self) -> None:
+        """Drop the model."""
+
+
 class ModelShapeError(RuntimeError):
     """The Silero model does not have the inputs and outputs the stream feeds."""
 
@@ -62,31 +77,37 @@ def _checked_shapes(session: InferenceSession) -> None:
         raise ModelShapeError(message)
 
 
+def open_shipped_model() -> InferenceSession:
+    """An ONNX session over the Silero model that ships with faster-whisper."""
+    import onnxruntime  # noqa: PLC0415 - heavy and loaded only once hearing is configured
+    from faster_whisper.utils import get_assets_path  # noqa: PLC0415 - as above
+
+    options = onnxruntime.SessionOptions()
+    options.inter_op_num_threads = 1
+    options.intra_op_num_threads = 1
+    options.enable_cpu_mem_arena = False
+    options.log_severity_level = 4
+    return onnxruntime.InferenceSession(
+        f"{get_assets_path()}/silero_vad_v6.onnx",
+        providers=["CPUExecutionProvider"],
+        sess_options=options,
+    )
+
+
 class SileroDetectors:
     """The shared Silero session, and the source of one stream per live session."""
 
-    def __init__(self) -> None:
-        """Start unloaded."""
+    def __init__(self, open_model: Callable[[], InferenceSession]) -> None:
+        """Start unloaded; `open_model` opens the session when `load` runs."""
+        self._open_model = open_model
         self._session: InferenceSession | None = None
 
     def load(self) -> None:
-        """Load the model that ships with faster-whisper and check its shapes.
+        """Open the model and check its shapes.
 
         Raises `ModelShapeError` when the model is not the one the stream feeds.
         """
-        import onnxruntime  # noqa: PLC0415 - heavy and loaded only once hearing is configured
-        from faster_whisper.utils import get_assets_path  # noqa: PLC0415 - as above
-
-        options = onnxruntime.SessionOptions()
-        options.inter_op_num_threads = 1
-        options.intra_op_num_threads = 1
-        options.enable_cpu_mem_arena = False
-        options.log_severity_level = 4
-        session = onnxruntime.InferenceSession(
-            f"{get_assets_path()}/silero_vad_v6.onnx",
-            providers=["CPUExecutionProvider"],
-            sess_options=options,
-        )
+        session = self._open_model()
         _checked_shapes(session)
         self._session = session
         silence = bytes(WINDOW_SAMPLES * _BYTES_PER_SAMPLE)
