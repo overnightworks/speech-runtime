@@ -7,6 +7,7 @@ offers, and the voices whose speak is refused as unavailable.
 from __future__ import annotations
 
 import json
+import struct
 import threading
 from contextlib import contextmanager
 from http import HTTPStatus
@@ -26,7 +27,23 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 POLL_SECONDS = 0.01
-WAV = b"RIFF\0\0\0\0WAVE"
+SAMPLE_RATE = 22_050
+
+
+def wav_of(pcm: bytes, *, with_data: bool = True) -> bytes:
+    """A WAV head with an INFO chunk before `data`, as the service sends it."""
+    info = struct.pack("<4sI4s", b"LIST", 4 + 8 + 4, b"INFO") + struct.pack(
+        "<4sI", b"ICMT", 4
+    )
+    info += b"AI\0\0"
+    fmt = struct.pack(
+        "<4sIHHIIHH", b"fmt ", 16, 1, 1, SAMPLE_RATE, SAMPLE_RATE * 2, 2, 16
+    )
+    data = struct.pack("<4sI", b"data", 0xFFFFFFFF) + pcm if with_data else b""
+    return b"RIFF\xff\xff\xff\xffWAVE" + fmt + info + data
+
+
+WAV = wav_of(b"\x01\x00" * 4)
 
 
 def voice_health(voice: VoiceId, *, ready: bool = True) -> dict[str, object]:

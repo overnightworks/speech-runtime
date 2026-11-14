@@ -22,7 +22,7 @@ from speech_client.wire import (
     VoiceId,
 )
 from speech_service.config import Settings
-from speech_service.pcm import pcm_from_wav
+from speech_service.pcm import pcm_from_wav, wav_header
 from speech_service.service import Runtime
 from speech_service.voices import PIPER_VOICES
 from tests.support.fakes_support import SPEAK_SAMPLE_RATE, FakeSpeaking
@@ -213,7 +213,8 @@ def _recording_speech_service() -> Iterator[tuple[str, list[_RecordedPost]]]:
             self.send_header("Content-Type", "audio/wav")
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
-            self.wfile.write(b"c\r\nRIFF\0\0\0\0WAVE\r\n0\r\n\r\n")
+            wav = wav_header(SPEAK_SAMPLE_RATE) + b"\x01\x00" * 4
+            self.wfile.write(b"%x\r\n%b\r\n0\r\n\r\n" % (len(wav), wav))
 
         def log_message(self, *_: object) -> None:
             pass

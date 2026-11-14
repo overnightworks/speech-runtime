@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import ValidationError
 
+from packages.client.tests.support.scripted_service_support import SAMPLE_RATE, wav_of
 from speech_client import speak as speak_module
 from speech_client._transport import base_origin, body_pieces, exchange_stream
 from speech_client.speak import (
@@ -120,23 +121,7 @@ def _head(status: str, *headers: str) -> bytes:
 
 _WAV_HEAD = _head("200 OK", "Content-Type: audio/wav", "Transfer-Encoding: chunked")
 _OGG_HEAD = _head("200 OK", "Content-Type: audio/ogg", "Transfer-Encoding: chunked")
-SAMPLE_RATE = 22_050
-
-
-def _wav(pcm: bytes, *, with_data: bool = True) -> bytes:
-    """A WAV head with an INFO chunk before `data`, as the service sends it."""
-    info = struct.pack("<4sI4s", b"LIST", 4 + 8 + 4, b"INFO") + struct.pack(
-        "<4sI", b"ICMT", 4
-    )
-    info += b"AI\0\0"
-    fmt = struct.pack(
-        "<4sIHHIIHH", b"fmt ", 16, 1, 1, SAMPLE_RATE, SAMPLE_RATE * 2, 2, 16
-    )
-    data = struct.pack("<4sI", b"data", 0xFFFFFFFF) + pcm if with_data else b""
-    return b"RIFF\xff\xff\xff\xffWAVE" + fmt + info + data
-
-
-_WAV_BODY = _wav(b"\x01\x00" * 4)
+_WAV_BODY = wav_of(b"\x01\x00" * 4)
 _OGG_BODY = b"OggS\0\0\0\0"
 
 
@@ -521,7 +506,7 @@ def test_the_stream_ends_with_the_exact_seconds_whatever_the_chunking(
 ) -> None:
     """The length is counted from the PCM bytes, however the head is split."""
     pcm = b"\x01\x00" * 4410
-    wav = _wav(pcm)
+    wav = wav_of(pcm)
     chunks = b"".join(
         _chunk(wav[at : at + piece_bytes]) for at in range(0, len(wav), piece_bytes)
     )
@@ -536,7 +521,7 @@ def test_a_wav_without_audio_data_is_malformed_in_the_stream_and_the_blocking_ca
     raw_listener: RawListener,
 ) -> None:
     """Both calls take the same terminal check: the blocking one is the stream's end."""
-    raw = _WAV_HEAD + _chunk(_wav(b"", with_data=False)) + _chunk(b"")
+    raw = _WAV_HEAD + _chunk(wav_of(b"", with_data=False)) + _chunk(b"")
 
     streamed = _streamed(raw, raw_listener)
     with raw_listener(raw) as (base_url, _):
@@ -551,7 +536,7 @@ def test_a_deadline_that_passes_while_the_stream_is_held_ends_it_past_the_deadli
 ) -> None:
     """The rest is buffered and needs no socket read, yet the stream does not finish."""
     now = 0.0
-    wav = _wav(b"\x01\x00" * 100)
+    wav = wav_of(b"\x01\x00" * 100)
     raw = _WAV_HEAD + _chunk(wav) + _chunk(b"\x01\x00" * 100) + _chunk(b"")
 
     def pieces(connection: HTTPConnection) -> Iterator[bytes]:
@@ -577,7 +562,7 @@ def test_a_stream_cut_off_after_audio_ends_cut_not_finished(
     raw_listener: RawListener,
 ) -> None:
     """WIRE-90: the chunks that came stay, and the end is the failure."""
-    wav = _wav(b"\x01\x00" * 100)
+    wav = wav_of(b"\x01\x00" * 100)
 
     items = _streamed(_WAV_HEAD + _chunk(wav), raw_listener)
 
