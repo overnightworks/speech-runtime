@@ -241,16 +241,8 @@ def test_a_clip_that_reaches_the_turn_cap_is_refused() -> None:
         figures.check_continuous_turn(clip)
 
 
-def test_a_clip_without_speech_is_refused() -> None:
-    clip = silence(3.0)
-
-    with pytest.raises(figures.ClipError, match="no speech"):
-        figures.check_continuous_turn(clip)
-
-
-def test_a_tone_is_no_speech_however_loud() -> None:
-    clip = tone(3.0)
-
+@pytest.mark.parametrize("clip", [silence(3.0), tone(3.0)], ids=["silence", "tone"])
+def test_a_clip_without_speech_is_refused_however_loud(clip: bytes) -> None:
     with pytest.raises(figures.ClipError, match="no speech"):
         figures.check_continuous_turn(clip)
 
