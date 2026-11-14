@@ -29,7 +29,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
-    "@types/audioworklet": "^0.0.100",
+    "@types/audioworklet": "^0.0.101",
     "@vitest/coverage-v8": "^5.1.0",
     "monocart-coverage-reports": "^3.2.1",
     "typescript": "^7.0.2",

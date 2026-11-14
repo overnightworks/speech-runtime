@@ -167,8 +167,8 @@ importers:
   .:
     devDependencies:
       '@types/audioworklet':
-        specifier: ^0.0.100
-        version: 0.0.100
+        specifier: ^0.0.101
+        version: 0.0.101
       '@vitest/coverage-v8':
         specifier: ^5.1.0
         version: 5.1.0(vitest@5.1.0)
@@ -324,8 +324,8 @@ packages:
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
 
-  '@types/audioworklet@0.0.100':
-    resolution: {integrity: sha512-mWt4Z5CWi0CupDnSYWJgx6dw61XUk9JSRGrM9F/YNrpOoY/0XG+sxP+8rAjQq80H4febOe8PrzGmmN/X3w8LsQ==}
+  '@types/audioworklet@0.0.101':
+    resolution: {integrity: sha512-HLAYPux6EUQNSV0wLbQ8cgcszzlMUAKvejd09UG+QUUedq5cVLSWOOLjbwexeOp06Hy3eS6CTdCdsTwG3PrZEA==}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -987,7 +987,7 @@ snapshots:
 
   '@sindresorhus/merge-streams@4.0.0': {}
 
-  '@types/audioworklet@0.0.100': {}
+  '@types/audioworklet@0.0.101': {}
 
   '@types/chai@5.2.3':
     dependencies:
