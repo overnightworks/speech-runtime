@@ -2,9 +2,12 @@
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 import pytest
 
+from speech_client.wire import Language
+from speech_service.admission_gate import Lease
 from speech_service.voice_activity import WINDOW_SECONDS
 from tests.support.clock_support import FakeClock
 from tests.support.hear_support import HEARD_TEXT, FakeHearing, loaded
@@ -19,8 +22,15 @@ from tests.support.live_support import (
     started,
 )
 
+if TYPE_CHECKING:
+    from speech_service.hearing import HearingEngine
+
 # Half a second of speech touches 16 windows.
 SPEECH_WINDOWS = 16
+
+
+def _marker(engine: HearingEngine) -> None:
+    engine.transcribe(b"\0\0", (Language.DE,))
 
 
 def _timing_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -173,3 +183,31 @@ def test_a_partial_decode_logs_its_measures_and_never_its_text(
     ]
     assert "no_speech_prob=0.200 avg_logprob=-0.400" in logged
     assert HEARD_TEXT not in caplog.text
+
+
+def test_a_partial_decoding_when_the_client_leaves_still_logs_its_measures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def scenario() -> None:
+        engine = FakeHearing(hold=True)
+        engine.measures = (0.2, -0.4)
+        hearing = loaded(engine, FakeClock())
+        session, _ = await started(hearing)
+        await session.on_message(append(audio(0.5)))
+        await session.on_tick()
+        assert await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
+        await session.on_disconnect()
+        engine.release.set()
+        # The worker runs one job at a time, so the marker ends after the partial.
+        await asyncio.wrap_future(hearing.submit(Lease(lambda: None), _marker))
+
+    caplog.set_level(logging.INFO)
+
+    asyncio.run(scenario())
+
+    (logged,) = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("live partial decoded")
+    ]
+    assert "no_speech_prob=0.200 avg_logprob=-0.400" in logged

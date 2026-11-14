@@ -105,6 +105,19 @@ def _measure(value: float | None) -> str:
     return "none" if value is None else f"{value:.3f}"
 
 
+def _log_partial(item_id: str, future: Future[Heard]) -> None:
+    """One line for a decoded partial: its measures, never its text."""
+    if future.cancelled() or future.exception() is not None:
+        return
+    heard = future.result()
+    logger.info(
+        "live partial decoded item_id=%s no_speech_prob=%s avg_logprob=%s",
+        item_id,
+        _measure(heard.no_speech_prob),
+        _measure(heard.avg_logprob),
+    )
+
+
 def _milliseconds(seconds: float) -> int:
     return round(seconds * 1000)
 
@@ -216,12 +229,14 @@ class LiveSession:
         except RuntimeError:
             await self._end_locked(RefusalCode.UNAVAILABLE)
             return
+        # On the worker, so a decode that finishes after the client left still logs.
+        item_id = self._open_item_id()
+        future.add_done_callback(lambda done: _log_partial(item_id, done))
         self._scheduler.partial_started()
         task = self._spawn(
             self._run_partial(
                 future,
                 self._turn_number,
-                self._open_item_id(),
                 self._clock.now(),
                 self._partials,
             )
@@ -382,7 +397,6 @@ class LiveSession:
         self,
         future: Future[Heard],
         turn_number: int,
-        item_id: str,
         started_at: float,
         partials: _Partials,
     ) -> None:
@@ -390,12 +404,6 @@ class LiveSession:
             heard = await asyncio.wrap_future(future)
             partials.count += 1
             partials.seconds += self._clock.now() - started_at
-            logger.info(
-                "live partial decoded item_id=%s no_speech_prob=%s avg_logprob=%s",
-                item_id,
-                _measure(heard.no_speech_prob),
-                _measure(heard.avg_logprob),
-            )
         except Exception as error:  # noqa: BLE001 - logged by type and never by message
             log_failure(logger, "hearing failed", error)
             await self._end(RefusalCode.UNAVAILABLE)
