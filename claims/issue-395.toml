@@ -1,8 +1,0 @@
-claim_id = "05b3a0a9c7cb4eb2b6c97ec4e2b748e7"
-agent = "Claude 2d5729b4-af30-4106-bf50-a26da1bb0a81"
-role = "builder"
-base = "2e324b5c574ed57cf6d3f7a6ac8c501a10c961ce"
-branch = "claude/issue-395-bump-0-15"
-scope = ["packages/browser/package.json", "packages/client/pyproject.toml", "providers/provider-contract/pyproject.toml", "providers/qwen/uv.lock", "pyproject.toml", "uv.lock"]
-opened_commit = "f98fe1c5d9de522227536cfe078334291d475005"
-whole_reason = "A release bump moves every distribution's version and both locks together; split, check_release refuses."
