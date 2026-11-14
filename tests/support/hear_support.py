@@ -61,7 +61,6 @@ class FakeHearing:
         self.closed = 0
         self.heard: list[tuple[int, tuple[Language, ...]]] = []
         self.heard_voiced: list[float] = []
-        self.heard_skipping: list[bool] = []
         self.heard_in: Language | None = None
         self.measures: tuple[float, float] | None = None
         self.entered = threading.Event()
@@ -87,14 +86,11 @@ class FakeHearing:
         pcm: bytes,
         languages: tuple[Language, ...],
         voiced_seconds: float = 0.0,
-        *,
-        skip_no_speech: bool = True,
     ) -> Heard:
         """Record the audio and the set, wait for the test's release, answer."""
         with self._guard:
             self.heard.append((len(pcm), languages))
             self.heard_voiced.append(voiced_seconds)
-            self.heard_skipping.append(skip_no_speech)
             self._active += 1
             self.most_concurrent = max(self.most_concurrent, self._active)
         try:

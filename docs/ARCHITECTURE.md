@@ -109,14 +109,16 @@ flowchart LR
   port; the start and end thresholds, the start confirmation and the pre-roll are
   constants of `voice_activity.py`. A turn decodes from a pre-roll before its
   speech, and a voiced second is one speech window; the language identifier's
-  floor counts voiced seconds. A live decode never lets the recogniser skip a
-  window as no speech, so the log line of each finished live turn holds the
+  floor counts voiced seconds. Hearing applies the recogniser's no-speech rule
+  itself (a high no-speech probability together with a low average log
+  probability): a decode that meets it adds no words, and every decode reports its two
+  measures all the same. The log line of each finished live turn holds the
   duration, voiced seconds, no-speech probability and average log probability of
-  every decode (a partial decode logs its two measures on a line of its own),
-  and never its text. Hearing drops nothing that Silero calls a
-  voice and nothing on those values; a gate on them waits for a recorded corpus.
-  The recording route has no turns, decodes the whole file and keeps the
-  recogniser's own skip.
+  its decode, skipped or not (a partial decode logs its two measures on a line of
+  its own), and never its text. Hearing drops nothing that Silero calls a voice
+  and adds no gate beyond that rule; a gate on the measures waits for a recorded
+  corpus. The recording route has no turns and decodes the whole file under the
+  same rule.
 - **The relay.** `speech_client.relay` (in `packages/client`) is what an app
   mounts behind its own login check: it forwards a browser's binary audio
   frames to a hearing session and hands the typed events to the app, never to

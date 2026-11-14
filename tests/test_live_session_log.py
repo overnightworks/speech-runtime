@@ -150,20 +150,6 @@ def test_the_timing_line_carries_the_measures_of_the_decode_and_never_its_text(
     assert HEARD_TEXT not in caplog.text
 
 
-def test_a_live_turn_is_decoded_without_the_recognisers_skip_of_no_speech() -> None:
-    async def scenario() -> FakeHearing:
-        engine = FakeHearing()
-        session, _ = await started(loaded(engine, FakeClock()))
-        await one_question(session)
-        await session.settled()
-        return engine
-
-    engine = asyncio.run(scenario())
-
-    assert engine.heard_skipping
-    assert not any(engine.heard_skipping)
-
-
 def test_a_partial_decode_logs_its_measures_and_never_its_text(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
