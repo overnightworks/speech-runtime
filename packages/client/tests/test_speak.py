@@ -531,6 +531,16 @@ def test_a_wav_without_audio_data_is_malformed_in_the_stream_and_the_blocking_ca
     assert spoken == Malformed()
 
 
+@pytest.mark.parametrize("body", [b"OggS" + bytes(64), b"OggS"], ids=["long", "short"])
+def test_a_body_that_is_no_wav_container_leaves_no_audio_before_it_is_malformed(
+    body: bytes, raw_listener: RawListener
+) -> None:
+    """The signature is judged on the first bytes, before any audio leaves."""
+    raw = _WAV_HEAD + _chunk(body) + _chunk(b"")
+
+    assert _streamed(raw, raw_listener) == [Malformed()]
+
+
 def test_a_deadline_that_passes_while_the_stream_is_held_ends_it_past_the_deadline(
     raw_listener: RawListener,
 ) -> None:

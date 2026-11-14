@@ -155,6 +155,13 @@ class Finished:
     seconds: float
 
 
+def _judged_head(head: bytearray, response_format: ResponseFormat) -> bytes | Malformed:
+    signature = bytes(head)
+    if response_format.begins_like_container(signature):
+        return signature
+    return Malformed()
+
+
 def _audio(
     response: HTTPResponse, cap_bytes: int, response_format: ResponseFormat
 ) -> Generator[bytes | OverCap | Malformed]:
@@ -178,16 +185,13 @@ def _audio(
             continue
         head += piece
         if len(head) >= _SIGNATURE_BYTES:
-            if not response_format.begins_like_container(bytes(head)):
-                yield Malformed()
+            judged = _judged_head(head, response_format)
+            yield judged
+            if isinstance(judged, Malformed):
                 return
             signed = True
-            yield bytes(head)
     if not signed:
-        if response_format.begins_like_container(bytes(head)):
-            yield bytes(head)
-        else:
-            yield Malformed()
+        yield _judged_head(head, response_format)
 
 
 def _refusal(response: HTTPResponse) -> SpeakOutcome:
