@@ -354,14 +354,17 @@ def speak_stream_with_preference(  # noqa: PLR0913
     person_token: str,
     deadline_seconds: float,
     cap_bytes: int,
+    clock: Callable[[], float] = monotonic,
 ) -> Generator[PreferenceStreamItem]:
     """Speak `text` with the first voice of `preference` the service offers.
 
     `language` narrows the voices to those that speak it and is required when a
     voice of the preference speaks several; a voice that does not speak it is
     skipped. `instructions` name the tone, for a voice that takes them.
-    `deadline_seconds` bounds the whole stream, `cap_bytes` the audio. See the
-    module for the items and for what raises, which happens at the call.
+    `deadline_seconds` bounds the whole stream, `cap_bytes` the audio. `clock`
+    reads the time the deadline runs on and is a seam for tests: leave it at its
+    default. See the module for the items and for what raises, which happens at
+    the call.
     """
     return _stream(
         base_url,
@@ -383,7 +386,7 @@ def speak_stream_with_preference(  # noqa: PLR0913
         person_token=person_token,
         deadline_seconds=deadline_seconds,
         cap_bytes=cap_bytes,
-        clock=monotonic,
+        clock=clock,
     )
 
 
@@ -405,8 +408,7 @@ def speak_with_preference(  # noqa: PLR0913
     """Speak `text` with the first voice of `preference` the service offers.
 
     This is `speak_stream_with_preference` read to its end, so its arguments
-    apply; `response_format` adds Ogg. `clock` reads the time the deadline runs
-    on and is a seam for tests: leave it at its default.
+    apply; `response_format` adds Ogg.
     """
     items = _stream(
         base_url,

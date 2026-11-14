@@ -14,7 +14,6 @@ from packages.client.tests.support.scripted_service_support import (
     WAV,
     scripted_service,
 )
-from speech_client import voice_preference
 from speech_client.outcomes import Cut, Malformed, OverCap, PastDeadline, Unreachable
 from speech_client.speak import Finished, Refused
 from speech_client.voice_preference import (
@@ -284,11 +283,8 @@ def test_the_reads_and_speaks_share_one_deadline(
     assert [VoiceId(request["voice"]) for request in service.asked] == asked
 
 
-def test_a_deadline_passed_after_the_voice_is_chosen_ends_before_the_audio(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_deadline_passed_after_the_voice_is_chosen_ends_before_the_audio() -> None:
     clock = _Clock()
-    monkeypatch.setattr(voice_preference, "monotonic", clock)
     with scripted_service({VoiceId.RYAN: True}) as (base_url, _):
         stream = speak_stream_with_preference(
             base_url,
@@ -299,6 +295,7 @@ def test_a_deadline_passed_after_the_voice_is_chosen_ends_before_the_audio(
             person_token="person-token",  # noqa: S106 - a stand-in the script never checks
             deadline_seconds=DEADLINE_SECONDS,
             cap_bytes=CAP_BYTES,
+            clock=clock,
         )
         chosen = next(stream)
         clock.pass_the_deadline()
