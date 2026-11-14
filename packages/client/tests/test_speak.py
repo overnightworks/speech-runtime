@@ -14,11 +14,13 @@ from speech_client import speak as speak_module
 from speech_client.speak import (
     Busy,
     Cut,
+    Finished,
     Malformed,
     PastDeadline,
     Spoken,
     Unreachable,
     speak,
+    speak_stream,
 )
 from speech_client.wire import (
     RETRY_AFTER_HEADER,
@@ -36,7 +38,7 @@ from speech_client.wire import (
 if TYPE_CHECKING:
     import threading
 
-    from speech_client.speak import SpeakOutcome
+    from speech_client.speak import SpeakOutcome, SpeakStreamItem
     from support.listener_support import Answer, RawListener
 
 VOICE = VoiceId.THORSTEN
@@ -149,7 +151,7 @@ def _closes(connection: socket.socket, stopped: threading.Event) -> None:
     [
         pytest.param(b"HTTP/1.1 200 OK\r\n", b"X", id="inside-a-header-line"),
         pytest.param(_WAV_HEAD, b"1", id="inside-a-chunk-size-line"),
-        pytest.param(_WAV_HEAD + b"ffff\r\n", b"\0", id="inside-a-chunk"),
+        pytest.param(_WAV_HEAD + b"ffff\r\n" + _WAV_BODY, b"\0", id="inside-a-chunk"),
     ],
 )
 def test_a_server_that_drips_cannot_hold_the_call_past_the_deadline(
@@ -168,6 +170,9 @@ def test_every_outcome_is_exported_from_the_speak_module() -> None:
     """A type-checked consumer imports the outcomes from `speak` publicly."""
     exported = {
         "Spoken",
+        "Finished",
+        "SpeakStreamItem",
+        "speak_stream",
         "Refused",
         "Busy",
         "Cut",
@@ -474,3 +479,71 @@ def test_a_429_with_a_whole_second_wait_is_busy(raw_listener: RawListener) -> No
 
     assert isinstance(outcome, Busy)
     assert outcome.wait.retry_after_seconds == 7  # noqa: PLR2004 - the header's value
+
+
+# The streaming call.
+
+SAMPLE_RATE = 22_050
+SECONDS_PER_PCM_BYTE = 1 / (2 * SAMPLE_RATE)
+
+
+def _wav(pcm: bytes, *, with_data: bool = True) -> bytes:
+    """A WAV head with an INFO chunk before `data`, as the service sends it."""
+    info = struct.pack("<4sI4s", b"LIST", 4 + 8 + 4, b"INFO") + struct.pack(
+        "<4sI", b"ICMT", 4
+    )
+    info += b"AI\0\0"
+    fmt = struct.pack(
+        "<4sIHHIIHH", b"fmt ", 16, 1, 1, SAMPLE_RATE, SAMPLE_RATE * 2, 2, 16
+    )
+    data = struct.pack("<4sI", b"data", 0xFFFFFFFF) + pcm if with_data else b""
+    return b"RIFF\xff\xff\xff\xffWAVE" + fmt + info + data
+
+
+def _streamed(raw: bytes, raw_listener: RawListener) -> list[SpeakStreamItem]:
+    with raw_listener(raw) as (base_url, _):
+        return list(
+            speak_stream(
+                base_url,
+                "Hallo",
+                VOICE,
+                workload_token=WORKLOAD_TOKEN,
+                person_token=PERSON_TOKEN,
+                deadline_seconds=GENEROUS_DEADLINE_SECONDS,
+                cap_bytes=CAP_BYTES,
+            )
+        )
+
+
+@pytest.mark.parametrize("piece_bytes", [1, 7, 1000])
+def test_the_stream_ends_with_the_exact_seconds_whatever_the_chunking(
+    piece_bytes: int, raw_listener: RawListener
+) -> None:
+    """The length is counted from the PCM bytes, however the head is split."""
+    pcm = b"\x01\x00" * 4410
+    wav = _wav(pcm)
+    chunks = b"".join(
+        _chunk(wav[at : at + piece_bytes]) for at in range(0, len(wav), piece_bytes)
+    )
+
+    *pieces, end = _streamed(_WAV_HEAD + chunks + _chunk(b""), raw_listener)
+
+    assert b"".join(pieces) == wav
+    assert end == Finished(len(pcm) * SECONDS_PER_PCM_BYTE)
+
+
+def test_a_stream_without_audio_data_ends_malformed(raw_listener: RawListener) -> None:
+    raw = _WAV_HEAD + _chunk(_wav(b"", with_data=False)) + _chunk(b"")
+
+    assert _streamed(raw, raw_listener)[-1] == Malformed()
+
+
+def test_a_stream_cut_off_after_audio_ends_cut_not_finished(
+    raw_listener: RawListener,
+) -> None:
+    """WIRE-90: the chunks that came stay, and the end is the failure."""
+    wav = _wav(b"\x01\x00" * 100)
+
+    items = _streamed(_WAV_HEAD + _chunk(wav), raw_listener)
+
+    assert items == [wav, Cut()]

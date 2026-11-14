@@ -14,11 +14,13 @@ import pytest
 from speech_client.speak import (
     Busy,
     Cut,
+    Finished,
     OverCap,
     PastDeadline,
     Refused,
     Spoken,
     speak,
+    speak_stream,
 )
 from speech_client.voice_preference import (
     SpokenWithPreference,
@@ -40,6 +42,7 @@ from speech_service.pcm import WAV_HEADER_BYTES
 from speech_service.service import Runtime
 from tests.support.fakes_support import (
     GATE_TIMEOUT_SECONDS,
+    SPEAK_SAMPLE_RATE,
     FakeSpeaking,
     GatedSpeaking,
 )
@@ -48,10 +51,10 @@ from tests.support.speak_support import FailingSpeaking
 from tests.support.tcp_server_support import TcpServer, serving_over_tcp
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Iterator
 
     from proof_identity import TokenPair
-    from speech_client.speak import SpeakOutcome
+    from speech_client.speak import SpeakOutcome, SpeakStreamItem
     from speech_client.voice_preference import PreferenceOutcome
 
 DEADLINE_SECONDS = 0.5
@@ -76,6 +79,27 @@ def _speak(  # noqa: PLR0913 - one keyword per call-site option
         voice,
         language=language,
         response_format=response_format,
+        workload_token=pair.workload,
+        person_token=pair.person,
+        deadline_seconds=deadline_seconds,
+        cap_bytes=cap_bytes,
+    )
+
+
+def _speak_stream(
+    base_url: str,
+    *,
+    voice: VoiceId = VoiceId.THORSTEN,
+    language: Language | None = None,
+    deadline_seconds: float = GATE_TIMEOUT_SECONDS,
+    cap_bytes: int = CAP_BYTES,
+) -> Iterator[SpeakStreamItem]:
+    pair = valid_pair()
+    return speak_stream(
+        base_url,
+        "Hallo",
+        voice,
+        language=language,
         workload_token=pair.workload,
         person_token=pair.person,
         deadline_seconds=deadline_seconds,
@@ -266,3 +290,88 @@ def test_a_preference_speaks_with_the_first_voice_the_service_offers(
     assert isinstance(outcome, SpokenWithPreference)
     assert outcome.voice == spoke
     assert outcome.instructions_left_out is instructions_left_out
+
+
+def _streamed(voice: FakeSpeaking | GatedSpeaking) -> list[SpeakStreamItem]:
+    async def scenario() -> list[SpeakStreamItem]:
+        async with _serving(voice) as server:
+            return await asyncio.to_thread(lambda: list(_speak_stream(server.base_url)))
+
+    return asyncio.run(scenario())
+
+
+def test_the_stream_carries_the_wav_and_ends_with_the_exact_seconds() -> None:
+    """WIRE-88: the chunks join to the blocking call's WAV; the end names the length."""
+    streamed = _streamed(FakeSpeaking())
+    spoken = _over_the_service(FakeSpeaking())
+    assert isinstance(spoken, Spoken)
+
+    *chunks, end = streamed
+    assert all(isinstance(chunk, bytes) for chunk in chunks)
+    assert b"".join(chunks) == spoken.audio
+    assert isinstance(end, Finished)
+    assert end.seconds == pytest.approx(
+        int(0.3 * SPEAK_SAMPLE_RATE) / SPEAK_SAMPLE_RATE
+    )
+
+
+def test_the_stream_hands_over_the_first_audio_while_the_voice_still_renders() -> None:
+    """WIRE-90: a player may play the chunks as they arrive."""
+    voice = GatedSpeaking(hold_last_chunk=True)
+
+    async def scenario() -> tuple[bool, list[SpeakStreamItem]]:
+        async with _serving(voice) as server:
+            voice.release_first_step.set()
+            stream = _speak_stream(server.base_url)
+            first = await asyncio.to_thread(next, stream)
+            still_rendering = not voice.release_last_chunk.is_set()
+            voice.release_all()
+            rest = await asyncio.to_thread(list, stream)
+            return still_rendering and isinstance(first, bytes), rest
+
+    first_came_early, rest = asyncio.run(scenario())
+
+    assert first_came_early
+    assert isinstance(rest[-1], Finished)
+
+
+@pytest.mark.parametrize("chunks_before_failing", [0, 1])
+def test_a_stream_the_service_aborted_ends_cut_and_never_finished(
+    chunks_before_failing: int,
+) -> None:
+    """WIRE-90: a body without its end is a failure, not a short sound."""
+    items = _streamed(FailingSpeaking(chunks_before_failing=chunks_before_failing))
+
+    assert items[-1] == Cut()
+    assert not any(isinstance(item, Finished) for item in items)
+
+
+def test_a_voice_that_is_not_offered_is_refused_before_any_audio() -> None:
+    async def scenario() -> list[SpeakStreamItem]:
+        async with _serving(FakeSpeaking()) as server:
+            return await asyncio.to_thread(
+                lambda: list(
+                    _speak_stream(
+                        server.base_url,
+                        voice=VoiceId.RYAN,
+                        language=VOICES[VoiceId.RYAN].languages[0],
+                    )
+                )
+            )
+
+    items = asyncio.run(scenario())
+
+    assert [item.refusal for item in items if isinstance(item, Refused)] == [
+        refusal(RefusalCode.UNAVAILABLE, "voice")
+    ]
+    assert len(items) == 1
+
+
+def test_a_stream_past_the_cap_ends_over_the_cap() -> None:
+    async def scenario() -> list[SpeakStreamItem]:
+        async with _serving(FakeSpeaking()) as server:
+            return await asyncio.to_thread(
+                lambda: list(_speak_stream(server.base_url, cap_bytes=WAV_HEADER_BYTES))
+            )
+
+    assert asyncio.run(scenario())[-1] == OverCap()
