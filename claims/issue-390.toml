@@ -1,0 +1,8 @@
+claim_id = "f3692c878eab42eca82ebe7670be4937"
+agent = "Claude 2d5729b4-af30-4106-bf50-a26da1bb0a81"
+role = "builder"
+base = "6791090784114bcf7086e79803a7ebf6966f352f"
+branch = "claude/issue-390-drain-on-stop"
+scope = ["docs/ARCHITECTURE.md", "docs/wire.md", "src/speech_service", "tests"]
+opened_commit = "1b4c46189098ca83f7c6566b5906ba729db5c92c"
+whole_reason = "The drain is one shutdown order across the entry point, the runtime, hearing and the wire route."
