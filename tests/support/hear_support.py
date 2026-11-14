@@ -18,6 +18,7 @@ from speech_service.control import create_control_app
 from speech_service.hearing import Heard, Hearing
 from speech_service.pcm import wav_header
 from speech_service.service import Runtime
+from tests.support.detector_support import LevelDetector
 from tests.support.fakes_support import FakeSpeaking, sine_pcm
 from tests.support.identity_support import valid_callers, valid_headers
 from tests.support.speak_support import SpeakCall, speak_scope
@@ -59,7 +60,9 @@ class FakeHearing:
         self._load_error = load_error
         self.closed = 0
         self.heard: list[tuple[int, tuple[Language, ...]]] = []
+        self.heard_voiced: list[float] = []
         self.heard_in: Language | None = None
+        self.measures: tuple[float, float] | None = None
         self.entered = threading.Event()
         self.release = threading.Event()
         if not hold:
@@ -74,10 +77,20 @@ class FakeHearing:
         if self._load_error is not None:
             raise self._load_error
 
-    def transcribe(self, pcm: bytes, languages: tuple[Language, ...]) -> Heard:
+    def open_detector(self) -> LevelDetector:
+        """A detector that hears loud windows as speech."""
+        return LevelDetector()
+
+    def transcribe(
+        self,
+        pcm: bytes,
+        languages: tuple[Language, ...],
+        voiced_seconds: float = 0.0,
+    ) -> Heard:
         """Record the audio and the set, wait for the test's release, answer."""
         with self._guard:
             self.heard.append((len(pcm), languages))
+            self.heard_voiced.append(voiced_seconds)
             self._active += 1
             self.most_concurrent = max(self.most_concurrent, self._active)
         try:
@@ -87,7 +100,10 @@ class FakeHearing:
                 raise TimeoutError(message)
             if self.fail_transcription:
                 raise RuntimeError(self.text)
-            return Heard(self.text, self.heard_in or languages[0])
+            language = self.heard_in or languages[0]
+            if self.measures is None:
+                return Heard(self.text, language)
+            return Heard(self.text, language, *self.measures)
         finally:
             with self._guard:
                 self._active -= 1

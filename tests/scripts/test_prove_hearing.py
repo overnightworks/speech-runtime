@@ -6,7 +6,6 @@ import contextlib
 import json
 import re
 import tomllib
-from array import array
 from http import HTTPStatus
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +18,7 @@ from speech_client.hearing import Refused
 from speech_client.outcomes import Unreachable
 from speech_client.wire import Health, RefusalCode, refusal
 from speech_service.hearing_models import HearingModel
+from speech_service.pcm import pcm_from_wav
 from tests.support.clock_support import FakeClock
 from tests.support.nvidia_support import FakeNvidiaSmi
 from tests.support.script_support import script_module
@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 HEARING = script_module("prove_hearing")
 VOICES = Path.home() / "voices"
 RUNS = "7"
+WIRE_RATE = 24_000
+SPEECH = Path(__file__).parents[1] / "fixtures" / "speech" / "nein_danke.wav"
 
 
 def command(*changes: str) -> list[str]:
@@ -221,14 +223,12 @@ class VoiceWithDurationNoise:
         syn_config: SynthesisConfig | None = None,
     ) -> None:
         """Each sentence as two halves of speech with a pause between them."""
-        rate = 22050
-        pause = 0.3 if syn_config and syn_config.noise_w_scale == 0.0 else 0.6
-        wav_file.setparams((1, 2, rate, 0, "NONE", "not compressed"))
-        for sentence in re.split(r"(?<=\.) ", text):
-            half = array("h", [8000]) * (len(sentence) * rate // 200)
-            wav_file.writeframes(
-                half.tobytes() + bytes(int(2 * rate * pause)) + half.tobytes()
-            )
+        pause = 0.1 if syn_config and syn_config.noise_w_scale == 0.0 else 0.6
+        wav_file.setparams((1, 2, WIRE_RATE, 0, "NONE", "not compressed"))
+        rate, phrase = pcm_from_wav(SPEECH.read_bytes())
+        half = HEARING.figures.to_wire_rate(phrase, rate)
+        for _ in re.split(r"(?<=\.) ", text):
+            wav_file.writeframes(half + bytes(int(2 * WIRE_RATE * pause)) + half)
 
 
 def test_an_english_long_turn_stays_one_turn_whatever_the_durations() -> None:

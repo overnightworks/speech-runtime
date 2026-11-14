@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import threading
 from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -62,6 +63,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["POLL_WAIT_SECONDS", "LiveSession", "poll_forever"]
 
+_HEARING_FAILED: Final = "hearing failed"
 _PCM_BYTES_PER_SECOND: Final = 16_000 * BYTES_PER_SAMPLE
 _MAX_ENDED_TURNS: Final = 2
 
@@ -84,6 +86,7 @@ class _Partials:
 class _Final:
     item_id: str
     pcm: bytes
+    voiced_seconds: float
     deadline: float
     ended_at: float
     ended_by: _TurnEndedBy
@@ -91,6 +94,27 @@ class _Final:
     decode_started_at: float = 0.0
     decode_finished_at: float = 0.0
     emitted: asyncio.Event = field(default_factory=asyncio.Event)
+    abandoned: bool = False
+    measures_logged: bool = False
+    # The decode's done callback runs on the worker, the abandon on the event loop.
+    guard: threading.Lock = field(default_factory=threading.Lock)
+
+    def abandon(self, future: Future[Heard]) -> None:
+        """Log the measures of a decode whose result will never be delivered."""
+        with self.guard:
+            self.abandoned = True
+            self._log_if_finished(future)
+
+    def log_if_abandoned(self, future: Future[Heard]) -> None:
+        with self.guard:
+            if self.abandoned:
+                self._log_if_finished(future)
+
+    def _log_if_finished(self, future: Future[Heard]) -> None:
+        if self.measures_logged or not future.done():
+            return
+        self.measures_logged = True
+        _log_decoded("live final undelivered", self.item_id, future)
 
 
 def _turn_ended_by(turn: TurnEnd) -> _TurnEndedBy:
@@ -98,6 +122,24 @@ def _turn_ended_by(turn: TurnEnd) -> _TurnEndedBy:
         return _TurnEndedBy.CLIENT
     reached_cap = len(turn.pcm) / _PCM_BYTES_PER_SECOND >= MAX_TURN_SECONDS
     return _TurnEndedBy.CAP if reached_cap else _TurnEndedBy.SILENCE
+
+
+def _measure(value: float | None) -> str:
+    return "none" if value is None else f"{value:.3f}"
+
+
+def _log_decoded(event: str, item_id: str, future: Future[Heard]) -> None:
+    """One line for a finished decode: its measures, never its text."""
+    if future.cancelled() or future.exception() is not None:
+        return
+    heard = future.result()
+    logger.info(
+        "%s item_id=%s no_speech_prob=%s avg_logprob=%s",
+        event,
+        item_id,
+        _measure(heard.no_speech_prob),
+        _measure(heard.avg_logprob),
+    )
 
 
 def _milliseconds(seconds: float) -> int:
@@ -137,7 +179,7 @@ class LiveSession:
         self._send = send
         self._close = close
         self._clock = hearing.gate.clock
-        self._scheduler = HearingSession(self._clock.now)
+        self._scheduler = HearingSession(self._clock.now, hearing.open_detector())
         self._resampler = Resampler()
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -180,13 +222,11 @@ class LiveSession:
                 await self._on_commit(event)
 
     async def on_tick(self) -> None:
-        """End a silent turn, decode a partial when due."""
+        """Decode a partial when due."""
         async with self._lock:
             if self._ended:
                 return
-            await self._apply(self._scheduler.poll())
-            if not self._ended:
-                await self._decode_partial()
+            await self._decode_partial()
 
     async def on_disconnect(self) -> None:
         """The client left: cancel what is outstanding and send nothing."""
@@ -200,21 +240,31 @@ class LiveSession:
             await asyncio.wait(pending)
 
     async def _decode_partial(self) -> None:
-        pcm = self._scheduler.partial_due()
-        if pcm is None:
+        open_turn = self._scheduler.partial_due()
+        if open_turn is None:
             return
         lease = self._hearing.gate.try_acquire()
         if lease is None:
             return
         try:
-            future = self._hearing.submit(lease, self._transcription(pcm))
+            future = self._hearing.submit(
+                lease, self._transcription(open_turn.pcm, open_turn.voiced_seconds)
+            )
         except RuntimeError:
             await self._end_locked(RefusalCode.UNAVAILABLE)
             return
+        # On the worker, so a decode that finishes after the client left still logs.
+        item_id = self._open_item_id()
+        future.add_done_callback(
+            lambda done: _log_decoded("live partial decoded", item_id, done)
+        )
         self._scheduler.partial_started()
         task = self._spawn(
             self._run_partial(
-                future, self._turn_number, self._clock.now(), self._partials
+                future,
+                self._turn_number,
+                self._clock.now(),
+                self._partials,
             )
         )
         task.add_done_callback(lambda _done: future.cancel())
@@ -287,7 +337,15 @@ class LiveSession:
         if not backlog:
             ended_by = _turn_ended_by(turn)
             self._queue_final(
-                _Final(item_id, turn.pcm, deadline, ended_at, ended_by, partials)
+                _Final(
+                    item_id,
+                    turn.pcm,
+                    turn.voiced_seconds,
+                    deadline,
+                    ended_at,
+                    ended_by,
+                    partials,
+                )
             )
         previous, self._last_item = self._last_item, item_id
         outgoing: list[BaseModel] = []
@@ -311,12 +369,29 @@ class LiveSession:
             return
         try:
             final.decode_started_at = self._clock.now()
-            heard = await asyncio.wrap_future(
-                self._hearing.submit(lease, self._transcription(final.pcm))
+            future = self._hearing.submit(
+                lease, self._transcription(final.pcm, final.voiced_seconds)
             )
+        except Exception as error:  # noqa: BLE001 - logged by type and never by message
+            log_failure(logger, _HEARING_FAILED, error)
+            await self._end(RefusalCode.UNAVAILABLE)
+            return
+        # On the worker, so a decode that finishes after the session ended still logs.
+        future.add_done_callback(final.log_if_abandoned)
+        try:
+            await self._deliver_final(final, future, ahead)
+        except asyncio.CancelledError:
+            final.abandon(future)
+            raise
+
+    async def _deliver_final(
+        self, final: _Final, future: Future[Heard], ahead: _Final | None
+    ) -> None:
+        try:
+            heard = await asyncio.wrap_future(future)
             final.decode_finished_at = self._clock.now()
         except Exception as error:  # noqa: BLE001 - logged by type and never by message
-            log_failure(logger, "hearing failed", error)
+            log_failure(logger, _HEARING_FAILED, error)
             await self._end(RefusalCode.UNAVAILABLE)
             return
         if ahead is not None:
@@ -337,16 +412,21 @@ class LiveSession:
         )
         self._finals.popleft()
         final.emitted.set()
-        self._log_timings(final, seconds)
+        self._log_turn(final, seconds, heard)
 
-    def _log_timings(self, final: _Final, audio_seconds: float) -> None:
+    def _log_turn(self, final: _Final, audio_seconds: float, heard: Heard) -> None:
+        """One line per finished utterance: timings and measures, never its text."""
         logger.info(
             "live turn completed item_id=%s ended_by=%s audio_seconds=%.2f"
+            " voiced_seconds=%.2f no_speech_prob=%s avg_logprob=%s"
             " wait_ms=%d decode_ms=%d completed_ms=%d"
             " partial_count=%d partial_decode_ms=%d",
             final.item_id,
             final.ended_by.value,
             audio_seconds,
+            final.voiced_seconds,
+            _measure(heard.no_speech_prob),
+            _measure(heard.avg_logprob),
             _milliseconds(final.decode_started_at - final.ended_at),
             _milliseconds(final.decode_finished_at - final.decode_started_at),
             _milliseconds(self._clock.now() - final.ended_at),
@@ -366,7 +446,7 @@ class LiveSession:
             partials.count += 1
             partials.seconds += self._clock.now() - started_at
         except Exception as error:  # noqa: BLE001 - logged by type and never by message
-            log_failure(logger, "hearing failed", error)
+            log_failure(logger, _HEARING_FAILED, error)
             await self._end(RefusalCode.UNAVAILABLE)
             return
         async with self._lock:
@@ -389,11 +469,13 @@ class LiveSession:
         self._sent_words = agreed
         await self._emit(TranscriptDelta(item_id=self._open_item_id(), delta=delta))
 
-    def _transcription(self, pcm: bytes) -> Callable[[HearingEngine], Heard]:
+    def _transcription(
+        self, pcm: bytes, voiced_seconds: float
+    ) -> Callable[[HearingEngine], Heard]:
         languages = self._languages
 
         def job(engine: HearingEngine) -> Heard:
-            return engine.transcribe(pcm, languages)
+            return engine.transcribe(pcm, languages, voiced_seconds)
 
         return job
 

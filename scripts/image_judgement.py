@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 from packaging.markers import Marker
 
-from hearing_figures import words
+from hearing_figures import voiced_seconds, words
 from prove_speech import spoken_in_log
 from speech_client.outcomes import RetryAfterError, busy_wait
 from speech_client.wire import (
@@ -27,7 +27,7 @@ from speech_client.wire import (
     VoiceId,
 )
 from speech_service.hearing_models import HearingModel, voiced_floor
-from speech_service.pcm import AI_MARK, pcm_from_wav, voiced_seconds
+from speech_service.pcm import AI_MARK, pcm_from_wav
 from speech_service.voices import PIPER_VOICES, loads_at_start
 
 if TYPE_CHECKING:

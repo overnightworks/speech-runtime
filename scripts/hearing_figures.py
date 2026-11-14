@@ -1,14 +1,14 @@
 """The pure figures of the hearing stage proof: timings, word errors, clips, record.
 
 Nothing here starts a process or reads a clock; `prove_hearing` drives the
-service and hands the observations to these functions.
+service and hands the observations to these functions. The clip functions hear
+a clip through the service's own turn detection, with the shipped Silero model.
 """
 
 from __future__ import annotations
 
 import functools
 import io
-import math
 import re
 import statistics
 import wave
@@ -20,12 +20,20 @@ from typing import TYPE_CHECKING, Final
 import numpy as np
 
 from speech_client.wire import Language, RefusalCode
-from speech_service.hearing_session import MAX_TURN_SECONDS, SILENCE_SECONDS
-from speech_service.pcm import (
-    BYTES_PER_SAMPLE,
-    LIVE_INPUT_RATE,
-    SPEECH_RMS,
-    frame_rms,
+from speech_service.hearing_session import (
+    MAX_TURN_SECONDS,
+    SILENCE_SECONDS,
+    HearingSession,
+    TurnEnd,
+)
+from speech_service.pcm import BYTES_PER_SAMPLE, LIVE_INPUT_RATE, Resampler
+from speech_service.voice_activity import (
+    PRE_ROLL_SECONDS,
+    SAMPLE_RATE,
+    WINDOW_SAMPLES,
+    SileroDetectors,
+    is_voiced,
+    open_shipped_model,
 )
 
 if TYPE_CHECKING:
@@ -207,52 +215,72 @@ class ClipError(ValueError):
     """A clip that cannot serve as one continuous turn."""
 
 
-def _frame_levels(pcm: bytes) -> list[float]:
-    return frame_rms(pcm, FRAME_BYTES // BYTES_PER_SAMPLE).tolist()
+@functools.cache
+def _silero() -> SileroDetectors:
+    detectors = SileroDetectors(open_shipped_model)
+    detectors.load()
+    return detectors
+
+
+def _voiced_windows(pcm: bytes) -> list[bool]:
+    """Whether each window of 24 kHz `pcm`, as the service hears it, is voiced."""
+    heard = Resampler().feed(pcm)
+    return [is_voiced(p) for p in _silero().open().probabilities(heard)]
+
+
+def _turns(pcm: bytes) -> list[TurnEnd]:
+    """The turns the service ends on 24 kHz `pcm` and the silence that follows it."""
+    session = HearingSession(lambda: 0.0, _silero().open())
+    resampler = Resampler()
+    events = []
+    for frame in frames_with_closing_silence(pcm):
+        events += session.add(resampler.feed(frame))
+    return [event for event in events if isinstance(event, TurnEnd)]
+
+
+def voiced_seconds(pcm: bytes, rate: int) -> float:
+    """The voiced seconds in the turns the service ends on `pcm` (PCM16 at `rate`)."""
+    return sum(turn.voiced_seconds for turn in _turns(to_wire_rate(pcm, rate)))
 
 
 def check_continuous_turn(pcm: bytes) -> float:
     """Fail loud unless `pcm` (24 kHz) is one turn the service hears whole.
 
-    No stretch of `SILENCE_SECONDS` inside the speech may fall under the
-    service's speech threshold, since that would end the turn early, and the
-    clip with the silence that ends it must stay below the turn cap. Returns
-    the clip's seconds.
+    The service ends a turn at `SILENCE_SECONDS` without speech; a clip with such
+    a pause inside it would arrive as two turns, and the clip with the silence that
+    ends it must stay below the turn cap. Returns the clip's seconds.
     """
     seconds = seconds_of(pcm)
-    if seconds + SILENCE_SECONDS >= MAX_TURN_SECONDS:
+    if seconds + SILENCE_SECONDS + PRE_ROLL_SECONDS >= MAX_TURN_SECONDS:
         message = (
             f"the clip is {seconds:.1f} s; with the closing silence it must stay"
             f" below the {MAX_TURN_SECONDS:.0f} s turn cap"
         )
         raise ClipError(message)
-    all_levels = _frame_levels(pcm)
-    loud = [index for index, level in enumerate(all_levels) if level >= SPEECH_RMS]
-    if not loud:
+    turns = _turns(pcm)
+    if not turns:
         message = "the clip holds no speech"
         raise ClipError(message)
-    levels = all_levels[loud[0] : loud[-1] + 1]
-    window = math.ceil(SILENCE_SECONDS / FRAME_SECONDS)
-    for start in range(len(levels) - window + 1):
-        energy = sum(level**2 for level in levels[start : start + window]) / window
-        if math.sqrt(energy) < SPEECH_RMS:
-            at = (loud[0] + start) * FRAME_SECONDS
-            message = (
-                f"a pause of {SILENCE_SECONDS} s at {at:.1f} s would end the turn early"
-            )
-            raise ClipError(message)
+    if len(turns) > 1:
+        at = turns[0].end_ms / 1000
+        message = (
+            f"a pause of {SILENCE_SECONDS} s at {at:.1f} s would end the turn early"
+        )
+        raise ClipError(message)
     return seconds
 
 
 def speech_only(pcm: bytes) -> bytes:
-    """`pcm` (24 kHz) without the silence before its first and after its last speech."""
-    loud = [
-        index for index, level in enumerate(_frame_levels(pcm)) if level >= SPEECH_RMS
-    ]
-    if not loud:
+    """`pcm` (24 kHz) from a pre-roll before its first speech to its last speech."""
+    voiced = [index for index, yes in enumerate(_voiced_windows(pcm)) if yes]
+    if not voiced:
         message = "the clip holds no speech"
         raise ClipError(message)
-    return pcm[loud[0] * FRAME_BYTES : (loud[-1] + 1) * FRAME_BYTES]
+    window_bytes = WINDOW_SAMPLES * LIVE_INPUT_RATE // SAMPLE_RATE * BYTES_PER_SAMPLE
+    pre_roll = int(PRE_ROLL_SECONDS * LIVE_INPUT_RATE) * BYTES_PER_SAMPLE
+    return pcm[
+        max(voiced[0] * window_bytes - pre_roll, 0) : (voiced[-1] + 1) * window_bytes
+    ]
 
 
 def to_wire_rate(pcm: bytes, rate: int) -> bytes:

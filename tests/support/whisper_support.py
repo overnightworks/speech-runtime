@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Self
 from faster_whisper.feature_extractor import FeatureExtractor
 
 from speech_service.hearing import HearingLibraries
+from speech_service.voice_activity import SileroDetectors, open_shipped_model
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,14 +19,18 @@ if TYPE_CHECKING:
     from faster_whisper.tokenizer import Tokenizer
     from faster_whisper.transcribe import TranscriptionOptions
 
+    from speech_service.voice_activity import DetectorSource
+
 DEFAULT_PROBABILITIES = {"de": 0.7, "en": 0.2, "fr": 0.1}
 
 
 @dataclass(frozen=True, slots=True)
 class Segment:
-    """One decoded segment."""
+    """One decoded segment, by default a confident one."""
 
     text: str
+    no_speech_prob: float = 0.01
+    avg_logprob: float = -0.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +81,9 @@ class StandInWhisper:
         """Start unbuilt, with the default language probabilities."""
         self.built: list[dict[str, object]] = []
         self.failure: RuntimeError | None = None
+        self.detectors: DetectorSource = SileroDetectors(open_shipped_model)
         self.probabilities = dict(DEFAULT_PROBABILITIES)
+        self.segments = [Segment(" Guten"), Segment(" Tag ")]
         self.encodes: list[np.ndarray] = []
         self.detections: list[EncoderOutput] = []
         self.decodes: list[Decode] = []
@@ -90,7 +97,7 @@ class StandInWhisper:
     ) -> HearingLibraries:
         """The library entry points, with this stand-in as the model factory."""
         return HearingLibraries(
-            self, lambda: cuda_devices, lambda: cuda_library_dirs or []
+            self, lambda: cuda_devices, lambda: cuda_library_dirs or [], self.detectors
         )
 
     def __call__(self, path: str, **options: object) -> Self:
@@ -125,4 +132,4 @@ class StandInWhisper:
         self.decodes.append(
             Decode(features, tokenizer, options, log_progress, encoder_output)
         )
-        return [Segment(" Guten"), Segment(" Tag ")]
+        return self.segments

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import wave
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -11,10 +12,33 @@ import pytest
 import hearing_figures as figures
 from speech_client.wire import Language, RefusalCode
 from speech_service.hearing_session import SILENCE_SECONDS
+from speech_service.pcm import pcm_from_wav
+from speech_service.voice_activity import PRE_ROLL_SECONDS, START_WINDOWS
 
 RATE = 24000
 LOUD = 8000
-BARELY_AUDIBLE = 1
+# The silence the phrase carries before and after its words.
+EDGES_SECONDS = 0.3
+WINDOW_BYTES = 512 * RATE // 16_000 * 2
+# Fewer Silero windows than confirm a turn, taken from inside the words, some of
+# which Silero rates as voiced.
+BURST_BYTES = (START_WINDOWS - 1) * WINDOW_BYTES
+BURST_FROM_BYTES = 10 * WINDOW_BYTES
+SPEECH = Path(__file__).parents[1] / "fixtures" / "speech" / "nein_danke.wav"
+
+
+def speech() -> bytes:
+    """A German phrase spoken by a Piper voice, at the wire rate."""
+    rate, pcm = pcm_from_wav(SPEECH.read_bytes())
+    return figures.to_wire_rate(pcm, rate)
+
+
+def silence(seconds: float) -> bytes:
+    return bytes(round(seconds * RATE) * 2)
+
+
+def seconds_of(pcm: bytes) -> float:
+    return figures.seconds_of(pcm)
 
 
 def tone(seconds: float, amplitude: int = LOUD, rate: int = RATE) -> bytes:
@@ -165,61 +189,85 @@ def test_word_errors_of_several_runs_add_up_to_one_rate() -> None:
 
 
 def test_a_clip_of_continuous_speech_is_one_turn() -> None:
-    assert figures.check_continuous_turn(tone(5.0)) == pytest.approx(5.0)
+    assert figures.check_continuous_turn(speech()) == pytest.approx(
+        seconds_of(speech())
+    )
 
 
 def test_a_short_pause_does_not_end_the_turn() -> None:
-    pause = SILENCE_SECONDS - 0.1
-    clip = tone(2.0) + tone(pause, amplitude=0) + tone(2.0)
+    pause = SILENCE_SECONDS - EDGES_SECONDS - 0.1
+    clip = speech() + silence(pause) + speech()
 
-    assert figures.check_continuous_turn(clip) == pytest.approx(4.0 + pause)
+    assert figures.check_continuous_turn(clip) == pytest.approx(
+        2 * seconds_of(speech()) + pause
+    )
 
 
 def test_a_pause_beyond_the_silence_length_ends_the_turn_early() -> None:
-    clip = tone(2.0) + tone(SILENCE_SECONDS + 0.1, amplitude=0) + tone(2.0)
+    clip = speech() + silence(SILENCE_SECONDS) + speech()
 
     with pytest.raises(figures.ClipError, match="would end the turn early"):
         figures.check_continuous_turn(clip)
 
 
 def test_silence_before_and_after_the_speech_is_not_a_pause() -> None:
-    clip = tone(1.0, amplitude=0) + tone(3.0) + tone(1.0, amplitude=0)
+    clip = silence(1.0) + speech() + silence(1.0)
 
-    assert figures.check_continuous_turn(clip) == pytest.approx(5.0)
+    assert figures.check_continuous_turn(clip) == pytest.approx(
+        seconds_of(speech()) + 2.0
+    )
 
 
-def test_speech_only_cuts_the_silence_at_both_ends() -> None:
-    clip = tone(1.0, amplitude=0) + tone(2.0) + tone(1.0, amplitude=0)
+def test_speech_only_cuts_the_silence_before_and_after_the_speech() -> None:
+    clip = silence(2.0) + speech() + silence(2.0)
 
-    assert figures.speech_only(clip) == tone(2.0)
+    cut = figures.speech_only(clip)
+
+    assert seconds_of(cut) <= seconds_of(speech()) + PRE_ROLL_SECONDS
+    assert seconds_of(cut) < seconds_of(clip) - 2.0
 
 
 def test_speech_only_refuses_a_clip_without_speech() -> None:
-    clip = tone(1.0, amplitude=0)
+    clip = silence(1.0)
 
     with pytest.raises(figures.ClipError, match="holds no speech"):
         figures.speech_only(clip)
 
 
 def test_a_clip_that_reaches_the_turn_cap_is_refused() -> None:
-    clip = tone(29.5)
+    clip = silence(29.5)
 
     with pytest.raises(figures.ClipError, match="turn cap"):
         figures.check_continuous_turn(clip)
 
 
-def test_a_clip_without_speech_is_refused() -> None:
-    clip = tone(3.0, amplitude=BARELY_AUDIBLE)
-
+@pytest.mark.parametrize("clip", [silence(3.0), tone(3.0)], ids=["silence", "tone"])
+def test_a_clip_without_speech_is_refused_however_loud(clip: bytes) -> None:
     with pytest.raises(figures.ClipError, match="no speech"):
         figures.check_continuous_turn(clip)
+
+
+def test_the_voiced_seconds_of_speech_are_its_own_and_of_silence_are_none() -> None:
+    clip = silence(1.0) + speech() + silence(1.0)
+
+    assert 0.0 < figures.voiced_seconds(clip, RATE) <= seconds_of(speech())
+    assert figures.voiced_seconds(silence(2.0), RATE) == 0.0
+
+
+def test_a_sound_that_opens_no_turn_adds_no_voiced_seconds() -> None:
+    burst = speech()[BURST_FROM_BYTES : BURST_FROM_BYTES + BURST_BYTES]
+    without = silence(1.0) + speech() + silence(1.0)
+    with_burst = silence(1.0) + burst + silence(1.5) + speech() + silence(1.0)
+
+    assert figures.voiced_seconds(with_burst, RATE) <= figures.voiced_seconds(
+        without, RATE
+    )
 
 
 def test_resampling_gives_the_samples_of_the_wire_rate() -> None:
     resampled = figures.to_wire_rate(tone(1.0, rate=22050), 22050)
 
     assert len(resampled) == RATE * 2
-    assert figures.check_continuous_turn(resampled) == 1.0
 
 
 def test_a_wav_carries_the_clip_at_the_wire_rate() -> None:

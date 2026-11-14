@@ -30,8 +30,9 @@ flowchart LR
   serves the wire; `hearing.py` holds the hearing engine behind a port, the
   language identifier behind its own port, the engine's gate and its one
   submission worker; `live_session.py` is a live session's state machine;
-  `hearing_session.py` schedules its turns and partials; `pcm.py` holds the
-  resampler and the voiced-speech count; `hearing_models.py` the pinned models
+  `hearing_session.py` schedules its turns and partials from a speech detector;
+  `voice_activity.py` holds the streaming Silero VAD and the turn thresholds;
+  `pcm.py` the resampler; `hearing_models.py` the pinned models
   and each one's voiced floor; `recording.py` the incremental decode of an
   uploaded recording; `clock.py` the monotonic clock every gate deadline is read
   and waited on.
@@ -100,6 +101,25 @@ flowchart LR
   step; the shipped `ScoreIdentifier` does not know below the model's voiced
   seconds (`hearing_models.py`). The session, the wire and the decode never see
   which identifier runs.
+- **Turns start and end on Silero VAD.** The Silero model that ships with
+  faster-whisper runs in the process on the CPU: one ONNX session, loaded and
+  shape-checked with the Whisper model (a failure stops the start), and one
+  stream per live session that carries its state, so loudness plays no part and a
+  noise opens no turn. `HearingSession` stays pure behind a `SpeechDetector`
+  port; the start and end thresholds, the start confirmation and the pre-roll are
+  constants of `voice_activity.py`. A turn decodes from a pre-roll before its
+  speech, and a voiced second is one speech window; the language identifier's
+  floor counts voiced seconds. Hearing applies the recogniser's no-speech rule
+  itself (a high no-speech probability together with a low average log
+  probability): a decode that meets it adds no words, and every decode reports its two
+  measures all the same. The log line of each finished live turn holds the
+  duration, voiced seconds, no-speech probability and average log probability of
+  its decode, skipped or not (a partial decode logs its two measures on a line of
+  its own), and never its text. Hearing drops nothing that Silero calls a voice,
+  with one exception: a turn Silero opened whose decode meets the no-speech rule
+  ends with no words, and no new confidence gate is added; a gate on the measures
+  waits for a recorded corpus. The recording route has no turns and decodes the whole file under the
+  same rule.
 - **The relay.** `speech_client.relay` (in `packages/client`) is what an app
   mounts behind its own login check: it forwards a browser's binary audio
   frames to a hearing session and hands the typed events to the app, never to
@@ -126,7 +146,7 @@ flowchart LR
   no new submission and frees the engine after the running decode returns.
 - **The live session.** `/v1/realtime` is one state machine per socket. Receiving
   never waits for a decode: audio is resampled from 24 to 16 kHz and scheduled
-  into turns (silence after speech, or the 30 s cap), and decodes run in the
+  into turns (Silero speech, then silence, or the 30 s cap), and decodes run in the
   worker. One lock orders messages, polls and results, and the session alone
   decides each item's terminal event, once; a result that arrives after its item's
   terminal is dropped. A session holds two ended turns and the open turn. Both

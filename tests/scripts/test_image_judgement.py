@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import math
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import jwt
 import pytest
 
 import image_judgement as judged
+from hearing_figures import to_wire_rate
 from image_stack import REPOSITORY, LiveOutcome, Reply
 from proof_identity import mint_pair
 from speech_client.wire import (
@@ -21,8 +22,8 @@ from speech_client.wire import (
     refusal,
 )
 from speech_service.config import CallerConfig, load_caller_config
-from speech_service.hearing_models import HearingModel, voiced_floor
-from speech_service.pcm import VOICED_FRAME_SECONDS, wav_header
+from speech_service.hearing_models import HearingModel
+from speech_service.pcm import pcm_from_wav, wav_header
 from speech_service.voices import PIPER_VOICES
 
 if TYPE_CHECKING:
@@ -30,6 +31,9 @@ if TYPE_CHECKING:
 
 BAKED_CONFIG = REPOSITORY / "deploy" / "speech.toml"
 SAMPLE_RATE = 24_000
+SPEECH = Path(__file__).parents[1] / "fixtures" / "speech" / "nein_danke.wav"
+# One phrase holds less voiced speech than any model's floor, this many hold more.
+LONG_ENOUGH_PHRASES = 4
 SILENCE = bytes(64)
 
 
@@ -530,18 +534,16 @@ def test_a_final_in_another_language_than_expected_fails_the_proof() -> None:
     judged.require_language(turn, Language.EN)
 
 
-def _clip(voiced_seconds: float) -> bytes:
-    frames = math.ceil(voiced_seconds / VOICED_FRAME_SECONDS - 1e-9)
-    samples = frames * round(SAMPLE_RATE * VOICED_FRAME_SECONDS)
-    pcm = b"\x88\x13" * samples
+def _clip(phrases: int) -> bytes:
+    """`phrases` spoken phrases of a Piper voice, one after the other, as a WAV."""
+    rate, phrase = pcm_from_wav(SPEECH.read_bytes())
+    pcm = to_wire_rate(phrase, rate) * phrases
     return wav_header(SAMPLE_RATE, len(pcm)) + pcm
 
 
 def test_a_clip_below_the_voiced_floor_cannot_prove_the_language_step() -> None:
-    floor = voiced_floor(HearingModel.SMALL)
-
-    long_enough = _clip(floor)
-    too_short = _clip(floor - 2 * VOICED_FRAME_SECONDS)
+    long_enough = _clip(LONG_ENOUGH_PHRASES)
+    too_short = _clip(1)
 
     judged.require_voiced_floor(long_enough, HearingModel.SMALL)
     with pytest.raises(SystemExit, match="voiced seconds"):

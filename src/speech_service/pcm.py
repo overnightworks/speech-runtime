@@ -1,4 +1,4 @@
-"""16-bit PCM helpers for the wire: a streaming WAV header, energy and resampling."""
+"""16-bit PCM helpers for the wire: a streaming WAV header, level and resampling."""
 
 from __future__ import annotations
 
@@ -17,9 +17,6 @@ WAV_HEADER_BYTES: Final = 44
 # Streaming WAV: the length is not known when the first byte leaves.
 STREAMING_DATA_SIZE: Final = 0xFFFFFFFF
 SILENCE_RMS: Final = 0.015
-# The level from which audio is speech; the session's turn detection reads it.
-SPEECH_RMS: Final = 0.02
-VOICED_FRAME_SECONDS: Final = 0.03
 _INT16_SCALE: Final = 32768.0
 # The IPTC term id for synthetic audio; never fetched (AI Act Art. 50(2)).
 AI_MARK: Final = (
@@ -103,20 +100,6 @@ def rms(pcm: bytes) -> float:
     if not samples.size:
         return 0.0
     return math.sqrt(float(np.mean(samples**2)))
-
-
-def frame_rms(pcm: bytes, frame_samples: int) -> np.ndarray:
-    """The root-mean-square of each whole frame of `frame_samples` samples, 0..1."""
-    samples = _scaled_samples(pcm)
-    count = samples.size // frame_samples
-    frames = samples[: count * frame_samples].reshape(count, frame_samples)
-    return np.sqrt(np.mean(frames**2, axis=1))
-
-
-def voiced_seconds(pcm: bytes, sample_rate: int) -> float:
-    """The seconds of `pcm` in frames that are speech, not silence, at `SPEECH_RMS`."""
-    levels = frame_rms(pcm, round(sample_rate * VOICED_FRAME_SECONDS))
-    return float(np.count_nonzero(levels >= SPEECH_RMS)) * VOICED_FRAME_SECONDS
 
 
 def is_silence(pcm: bytes, threshold: float = SILENCE_RMS) -> bool:

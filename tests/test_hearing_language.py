@@ -1,8 +1,8 @@
 """The adapter names a language in one encoder pass and decodes as faster-whisper."""
 
-import math
-import struct
+import dataclasses
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -11,7 +11,6 @@ from faster_whisper import WhisperModel
 from speech_client.wire import Language
 from speech_service.hearing import (
     HEARING_SAMPLE_RATE,
-    Heard,
     LanguageIdentifier,
     LanguageScores,
     ScoreIdentifier,
@@ -19,16 +18,17 @@ from speech_service.hearing import (
     WhisperHearing,
 )
 from speech_service.hearing_models import HearingModel, voiced_floor
-from speech_service.pcm import VOICED_FRAME_SECONDS
+from speech_service.voice_activity import WINDOW_SECONDS
 from tests.support.whisper_support import StandInWhisper
+
+if TYPE_CHECKING:
+    from faster_whisper.transcribe import TranscriptionOptions
 
 DE = Language.DE
 EN = Language.EN
 FLOOR = voiced_floor(HearingModel.SMALL)
-FRAME_SAMPLES = round(HEARING_SAMPLE_RATE * VOICED_FRAME_SECONDS)
-# The tolerance keeps a floor that is an exact frame multiple from rounding up a frame.
-FLOOR_FRAMES = math.ceil(FLOOR / VOICED_FRAME_SECONDS - 1e-9)
 LOUD = 5000
+ENOUGH = FLOOR + 1.0
 
 
 class _ReadsOnlyThePcm:
@@ -45,15 +45,11 @@ class _ReadsOnlyThePcm:
         return next(self._answers)
 
 
-def _frames(count: int, level: int) -> bytes:
-    return struct.pack(f"<{count * FRAME_SAMPLES}h", *[level] * (count * FRAME_SAMPLES))
-
-
-def _speech(frames: int) -> bytes:
-    """Frames of a noise-like signal, so the features differ per frame."""
-    generator = np.random.default_rng(frames)
-    samples = generator.integers(-LOUD, LOUD, frames * FRAME_SAMPLES, dtype=np.int16)
-    return samples.tobytes()
+def _speech(seconds: float) -> bytes:
+    """A noise-like signal, so the features differ per frame."""
+    count = round(seconds * HEARING_SAMPLE_RATE)
+    generator = np.random.default_rng(count)
+    return generator.integers(-LOUD, LOUD, count, dtype=np.int16).tobytes()
 
 
 def _engine(
@@ -86,6 +82,11 @@ def _library_transcribe(stand_in: StandInWhisper, pcm: bytes, language: str) -> 
     assert "".join(segment.text for segment in segments).strip() == "Guten Tag"
 
 
+def _without_the_librarys_skip(options: TranscriptionOptions) -> TranscriptionOptions:
+    """Hearing skips no-speech windows itself, so the library never skips one."""
+    return dataclasses.replace(options, no_speech_threshold=None)
+
+
 @pytest.fixture
 def stand_in() -> StandInWhisper:
     return StandInWhisper()
@@ -97,17 +98,17 @@ def test_a_one_element_set_decodes_as_faster_whispers_own_transcribe_does(
     stand_in: StandInWhisper, language: Language, seconds: float
 ) -> None:
     """WIRE-38: greedy at temperature 0, with the options of faster-whisper's call."""
-    pcm = _speech(round(seconds / VOICED_FRAME_SECONDS))
+    pcm = _speech(seconds)
     _library_transcribe(stand_in, pcm, language.value)
     expected = stand_in.decodes.pop()
 
     heard = _engine(stand_in).transcribe(pcm, (language,))
 
     (decode,) = stand_in.decodes
-    assert heard == Heard("Guten Tag", language)
+    assert (heard.text, heard.language) == ("Guten Tag", language)
     assert decode.language_code == expected.language_code == language.value
     assert np.array_equal(decode.features, expected.features)
-    assert decode.options == expected.options
+    assert decode.options == _without_the_librarys_skip(expected.options)
     assert decode.log_progress == expected.log_progress
     assert decode.encoder_output is None
     assert stand_in.encodes == []
@@ -118,7 +119,7 @@ def test_a_one_element_set_decodes_as_faster_whispers_own_transcribe_does(
 def test_a_set_of_two_decodes_with_the_same_options_from_its_one_encoder_pass(
     stand_in: StandInWhisper, seconds: float
 ) -> None:
-    pcm = _speech(round(seconds / VOICED_FRAME_SECONDS))
+    pcm = _speech(seconds)
     _library_transcribe(stand_in, pcm, "de")
     expected = stand_in.decodes.pop()
 
@@ -128,7 +129,7 @@ def test_a_set_of_two_decodes_with_the_same_options_from_its_one_encoder_pass(
     assert heard.language is DE
     assert decode.language_code == "de"
     assert np.array_equal(decode.features, expected.features)
-    assert decode.options == expected.options
+    assert decode.options == _without_the_librarys_skip(expected.options)
     assert len(stand_in.encodes) == 1
     assert decode.encoder_output is not None
     assert decode.encoder_output.number == 1
@@ -136,14 +137,14 @@ def test_a_set_of_two_decodes_with_the_same_options_from_its_one_encoder_pass(
 
 
 @pytest.mark.parametrize(
-    "frames", [FLOOR_FRAMES + 20, FLOOR_FRAMES - 1], ids=["above-the-floor", "below"]
+    "voiced", [ENOUGH, FLOOR - 0.1], ids=["above-the-floor", "below"]
 )
 def test_a_decode_of_a_set_of_two_encodes_once_also_when_the_identifier_gives_up(
-    stand_in: StandInWhisper, frames: int
+    stand_in: StandInWhisper, voiced: float
 ) -> None:
-    pcm = _speech(frames)
+    pcm = _speech(3.0)
 
-    _engine(stand_in).transcribe(pcm, (DE, EN))
+    _engine(stand_in).transcribe(pcm, (DE, EN), voiced)
 
     (decode,) = stand_in.decodes
     assert len(stand_in.encodes) == 1
@@ -154,7 +155,7 @@ def test_a_decode_of_a_set_of_two_encodes_once_also_when_the_identifier_gives_up
 def test_the_encoder_is_fed_one_window_of_the_features_the_decode_gets(
     stand_in: StandInWhisper,
 ) -> None:
-    pcm = _speech(round(40.0 / VOICED_FRAME_SECONDS))
+    pcm = _speech(40.0)
 
     _engine(stand_in).transcribe(pcm, (DE, EN))
 
@@ -168,8 +169,8 @@ def test_the_encoder_is_fed_one_window_of_the_features_the_decode_gets(
 def test_the_options_are_built_anew_for_every_decode(stand_in: StandInWhisper) -> None:
     engine = _engine(stand_in)
 
-    engine.transcribe(_speech(40), (DE,))
-    engine.transcribe(_speech(40), (DE,))
+    engine.transcribe(_speech(1.2), (DE,))
+    engine.transcribe(_speech(1.2), (DE,))
 
     first, second = (decode.options for decode in stand_in.decodes)
     assert first is not second
@@ -179,7 +180,7 @@ def test_the_options_are_built_anew_for_every_decode(stand_in: StandInWhisper) -
 def test_a_set_of_one_never_asks_the_identifier(stand_in: StandInWhisper) -> None:
     identifier = _ReadsOnlyThePcm()
 
-    _engine(stand_in, identifier).transcribe(_speech(100), (EN,))
+    _engine(stand_in, identifier).transcribe(_speech(3.0), (EN,))
 
     assert identifier.asked == []
     assert stand_in.detections == []
@@ -191,13 +192,13 @@ def test_the_identifier_is_given_the_pcm_and_the_probabilities_of_the_set_only(
     """WIRE-135: no language outside the set is chosen; no Whisper token crosses."""
     stand_in.probabilities = {"fr": 0.5, "de": 0.1, "en": 0.4}
     identifier = _ReadsOnlyThePcm(None)
-    pcm = _speech(100)
+    pcm = _speech(3.0)
 
     _engine(stand_in, identifier).transcribe(pcm, (EN, DE))
 
     ((utterance, allowed),) = identifier.asked
     assert allowed == (EN, DE)
-    assert utterance == Utterance(pcm, LanguageScores({DE: 0.1, EN: 0.4}))
+    assert utterance == Utterance(pcm, 0.0, LanguageScores({DE: 0.1, EN: 0.4}))
 
 
 @pytest.mark.parametrize(
@@ -211,7 +212,7 @@ def test_when_the_identifier_does_not_know_the_first_language_of_the_set_holds(
     language: Language,
 ) -> None:
     """WIRE-135: not knowing means the main language."""
-    heard = _engine(stand_in, _ReadsOnlyThePcm(None)).transcribe(_speech(100), allowed)
+    heard = _engine(stand_in, _ReadsOnlyThePcm(None)).transcribe(_speech(3.0), allowed)
 
     assert heard.language is language
     assert stand_in.decodes[0].language_code == language.value
@@ -222,10 +223,9 @@ def test_a_word_after_a_long_pause_below_the_floor_is_heard_in_the_main_language
 ) -> None:
     """A turn counts its voiced seconds, not its length."""
     stand_in.probabilities = {"de": 0.1, "en": 0.9}
-    five_seconds = round(5.0 / VOICED_FRAME_SECONDS)
-    pcm = _frames(five_seconds, 0) + _speech(FLOOR_FRAMES - 1)
+    pcm = _speech(5.0 + FLOOR)
 
-    heard = _engine(stand_in).transcribe(pcm, (DE, EN))
+    heard = _engine(stand_in).transcribe(pcm, (DE, EN), FLOOR - 0.1)
 
     assert heard.language is DE
 
@@ -235,9 +235,9 @@ def test_above_the_floor_the_language_the_scores_favour_is_heard(
 ) -> None:
     stand_in.probabilities = {"de": 0.1, "en": 0.9}
 
-    heard = _engine(stand_in).transcribe(_speech(FLOOR_FRAMES + 20), (DE, EN))
+    heard = _engine(stand_in).transcribe(_speech(3.0), (DE, EN), ENOUGH)
 
-    assert heard == Heard("Guten Tag", EN)
+    assert (heard.text, heard.language) == ("Guten Tag", EN)
     assert stand_in.decodes[0].language_code == "en"
 
 
@@ -248,14 +248,14 @@ def test_an_identifier_that_reads_only_the_pcm_can_replace_the_shipped_one(
     stand_in.probabilities = {"de": 0.9, "en": 0.1}
     engine = _engine(stand_in, _ReadsOnlyThePcm(EN, None))
 
-    first = engine.transcribe(_speech(100), (DE, EN))
-    second = engine.transcribe(_speech(100), (DE, EN))
+    first = engine.transcribe(_speech(3.0), (DE, EN), ENOUGH)
+    second = engine.transcribe(_speech(3.0), (DE, EN), ENOUGH)
 
     assert (first.language, second.language) == (EN, DE)
 
 
-def _utterance(pcm: bytes, *, de: float, en: float) -> Utterance:
-    return Utterance(pcm, LanguageScores({DE: de, EN: en}))
+def _utterance(voiced_seconds: float, *, de: float, en: float) -> Utterance:
+    return Utterance(_speech(1.0), voiced_seconds, LanguageScores({DE: de, EN: en}))
 
 
 def test_a_language_outside_the_set_is_never_chosen() -> None:
@@ -263,7 +263,7 @@ def test_a_language_outside_the_set_is_never_chosen() -> None:
     scores = LanguageScores({DE: 0.04, EN: 0.03})
 
     named = ScoreIdentifier(FLOOR).identify(
-        Utterance(_speech(FLOOR_FRAMES + 20), scores), (EN,)
+        Utterance(_speech(1.0), ENOUGH, scores), (EN,)
     )
 
     assert named is EN
@@ -278,7 +278,7 @@ def test_above_the_floor_the_higher_score_is_named_either_way(
     de: float, en: float, named: Language
 ) -> None:
     identifier = ScoreIdentifier(FLOOR)
-    utterance = _utterance(_speech(FLOOR_FRAMES + 20), de=de, en=en)
+    utterance = _utterance(ENOUGH, de=de, en=en)
 
     assert identifier.identify(utterance, (DE, EN)) is named
     assert identifier.identify(utterance, (EN, DE)) is named
@@ -288,20 +288,20 @@ def test_above_the_floor_the_higher_score_is_named_either_way(
     ("de", "en"), [(0.4, 0.4), (0.0, 0.0)], ids=["tie", "all-zero"]
 )
 def test_a_tie_or_scores_of_zero_are_not_known(de: float, en: float) -> None:
-    utterance = _utterance(_speech(FLOOR_FRAMES + 20), de=de, en=en)
+    utterance = _utterance(ENOUGH, de=de, en=en)
 
     assert ScoreIdentifier(FLOOR).identify(utterance, (DE, EN)) is None
 
 
 @pytest.mark.parametrize(
-    ("frames", "named"),
-    [(FLOOR_FRAMES, EN), (FLOOR_FRAMES - 1, None)],
-    ids=["at-the-floor", "one-frame-below"],
+    ("voiced", "named"),
+    [(FLOOR, EN), (FLOOR - WINDOW_SECONDS, None)],
+    ids=["at-the-floor", "one-window-below"],
 )
-def test_the_floor_is_met_at_exactly_its_voiced_seconds_and_not_one_frame_below(
-    frames: int, named: Language | None
+def test_the_floor_is_met_at_exactly_its_voiced_seconds_and_not_one_window_below(
+    voiced: float, named: Language | None
 ) -> None:
-    utterance = _utterance(_speech(frames), de=0.1, en=0.9)
+    utterance = _utterance(voiced, de=0.1, en=0.9)
 
     assert ScoreIdentifier(FLOOR).identify(utterance, (DE, EN)) is named
 
@@ -309,8 +309,4 @@ def test_the_floor_is_met_at_exactly_its_voiced_seconds_and_not_one_frame_below(
 def test_silence_holds_no_voiced_speech_so_it_is_not_known() -> None:
     identifier = ScoreIdentifier(FLOOR)
 
-    assert (
-        identifier.identify(_utterance(_frames(500, 0), de=0.1, en=0.9), (EN, DE))
-        is None
-    )
-    assert identifier.identify(_utterance(b"", de=0.1, en=0.9), (EN, DE)) is None
+    assert identifier.identify(_utterance(0.0, de=0.1, en=0.9), (EN, DE)) is None

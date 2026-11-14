@@ -208,13 +208,23 @@ PCM16 at 24 kHz) and
 `input_audio_buffer.commit`. **WIRE-60** Invalid base64 or an odd byte count ends the session. **WIRE-61** Any other event type, `input_audio_buffer.clear`
 included, is a protocol violation. **WIRE-62** A client `event_id` is optional; the service
 echoes it only in an `error` about that event. **WIRE-63** A commit ends the open turn at
-once; **WIRE-64** a commit with no audio since the last turn ended is a protocol violation.
+once, and with no turn open it ends one of the audio the service still holds: the last
+0.35 s up to the newest 32 ms window it has judged, plus the samples short of the next
+window, or, while one or two speech windows wait to be confirmed, the audio from 0.35 s
+before the first of them (WIRE-66); **WIRE-64** a commit with no audio since the last
+turn ended is a protocol violation.
 **WIRE-65** With server turn detection a client need not commit.
 
-**Turns.** **WIRE-66** The service ends a turn after speech followed by 0.5 s of silence, or
-at 30 s of audio; the rest of the audio opens the next turn. **WIRE-67** A session holds at
-most two ended turns, both queued to be heard from their turn's end, and the
-open turn, so at most 90 s of audio.
+**Turns.** **WIRE-66** Speech is what Silero VAD hears as a voice, whatever its loudness
+or distance: any voice, a television's included, is speech, and noise is not. A turn opens
+once three consecutive 32 ms windows are speech and decodes from 0.35 s before the first
+of them. The service ends it after speech followed by 0.5 s without speech, or at 30 s of
+audio, pre-roll included; the rest of the audio opens the next turn. Between turns the
+service drops all audio older than that pre-roll. **WIRE-67** A session holds at most two
+ended turns, both queued to be heard from their turn's end, and the open turn, so at most
+90 s of audio. The wire carries no confidence value; the service logs each finished
+utterance's duration, voiced seconds, no-speech probability and average log probability,
+never its text.
 
 **Server events**, in the order one turn produces them:
 
@@ -222,7 +232,7 @@ open turn, so at most 90 s of audio.
 |---|---|---|
 | WIRE-68 | `session.created` | first, on every session |
 | WIRE-69 | `session.updated` | after a valid `session.update` |
-| WIRE-70 | `input_audio_buffer.speech_started` (`item_id`, `audio_start_ms`) | speech first heard in the turn; the position counts as below |
+| WIRE-70 | `input_audio_buffer.speech_started` (`item_id`, `audio_start_ms`) | speech confirmed in the turn (WIRE-66); the position counts as below |
 | WIRE-71 | `conversation.item.input_audio_transcription.delta` (`item_id`, `content_index` 0, `delta`) | zero or more, before the commit: the words two consecutive decodes agree on. Provisional; a delta names no language, and a partial may be heard in another language than its final. |
 | WIRE-72 | `input_audio_buffer.speech_stopped` (`item_id`, `audio_end_ms`) | silence or the cap ended the turn, at the position counted as below; not sent after a client commit |
 | WIRE-73 | `input_audio_buffer.committed` (`item_id`, `previous_item_id`) | the turn is closed; `previous_item_id` is `null` for the first |
@@ -232,14 +242,15 @@ open turn, so at most 90 s of audio.
 | WIRE-77 | `error` (`error.type`, `error.code`, `error.message`, `error.param`, `error.event_id`) | the session ends after it |
 
 `audio_start_ms` and `audio_end_ms` (WIRE-70, WIRE-72) count milliseconds of the audio
-the service received in this session, from its first byte, in the service's 16 kHz time.
-They depend on neither the wall clock nor when an event is sent. Turns are contiguous: a
-turn's end is its start plus the turn's audio in whole milliseconds, rounded down once
-per turn, and the next turn starts at that end. `audio_start_ms` is where the first
-appended audio of the turn that was not silence starts, with no pre-roll, so it lies at
-or before the first speech by at most one appended frame.
-`audio_end_ms` is the end of all audio in the turn: it includes the silence that ended it
-(WIRE-66), or lies at the turn's start plus the cap.
+the service received in this session, from its first byte, in the service's 16 kHz time,
+the dropped audio between turns included. They depend on neither the wall clock nor when
+an event is sent. Turns are ordered, not contiguous: a turn's end is the position of the
+last audio it holds in whole milliseconds, and the next turn starts at or after that end.
+`audio_start_ms` is where the first of the speech windows that opened the turn starts,
+so the audio the turn decodes begins up to 0.35 s earlier. `audio_end_ms` is the end of
+all audio in the turn: it includes the silence that ended it (WIRE-66), or lies 30 s
+after the turn's pre-roll starts. `usage.seconds` (WIRE-75) is the length of that
+audio, pre-roll included.
 
 **WIRE-136** `completed.languages` is `[{"code": "<code>"}]` with exactly one element, the
 language the turn was decoded in: also for a session of one language, for a turn heard in
