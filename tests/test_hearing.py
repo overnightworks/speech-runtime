@@ -155,14 +155,8 @@ def test_a_device_hearing_does_not_know_stops_the_start(
 
 
 @pytest.mark.parametrize(
-    ("no_speech_prob", "avg_logprob", "text"),
-    [
-        (0.7, -1.2, ""),
-        (0.7, -1.0, ""),
-        (0.7, -0.9, "Guten"),
-        (0.6, -1.2, "Guten"),
-        (0.1, -1.2, "Guten"),
-    ],
+    ("no_speech_prob", "avg_logprob"),
+    [(0.7, -1.2), (0.7, -1.0), (0.7, -0.9), (0.6, -1.2), (0.1, -1.2)],
     ids=[
         "improbable-words-of-no-speech",
         "at-the-log-probability-line",
@@ -171,21 +165,20 @@ def test_a_device_hearing_does_not_know_stops_the_start(
         "improbable-words-of-speech",
     ],
 )
-def test_a_decode_is_no_speech_when_both_measures_say_so_and_still_reports_them(
+def test_a_live_decode_drops_no_words_on_its_measures_and_still_reports_them(
     library: StandInWhisper,
     tmp_path: Path,
     no_speech_prob: float,
     avg_logprob: float,
-    text: str,
 ) -> None:
     library.segments = [Segment(" Guten", no_speech_prob, avg_logprob)]
     engine = _engine(tmp_path, library)
     engine.load()
 
-    heard = engine.transcribe(b"\0\0" * 16_000, (Language.DE,))
+    heard = engine.transcribe(b"\0\0" * 16_000, (Language.DE,), skip_no_speech=False)
 
     assert (heard.text, heard.no_speech_prob, heard.avg_logprob) == (
-        text,
+        "Guten",
         no_speech_prob,
         avg_logprob,
     )

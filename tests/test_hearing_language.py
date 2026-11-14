@@ -83,7 +83,7 @@ def _library_transcribe(stand_in: StandInWhisper, pcm: bytes, language: str) -> 
 
 
 def _without_the_librarys_skip(options: TranscriptionOptions) -> TranscriptionOptions:
-    """The adapter judges no speech itself, so the library never skips a window."""
+    """A live turn drops no window as no speech, so the library never skips one."""
     return dataclasses.replace(options, no_speech_threshold=None)
 
 
@@ -108,7 +108,7 @@ def test_a_one_element_set_decodes_as_faster_whispers_own_transcribe_does(
     assert (heard.text, heard.language) == ("Guten Tag", language)
     assert decode.language_code == expected.language_code == language.value
     assert np.array_equal(decode.features, expected.features)
-    assert decode.options == _without_the_librarys_skip(expected.options)
+    assert decode.options == expected.options
     assert decode.log_progress == expected.log_progress
     assert decode.encoder_output is None
     assert stand_in.encodes == []
@@ -129,11 +129,25 @@ def test_a_set_of_two_decodes_with_the_same_options_from_its_one_encoder_pass(
     assert heard.language is DE
     assert decode.language_code == "de"
     assert np.array_equal(decode.features, expected.features)
-    assert decode.options == _without_the_librarys_skip(expected.options)
+    assert decode.options == expected.options
     assert len(stand_in.encodes) == 1
     assert decode.encoder_output is not None
     assert decode.encoder_output.number == 1
     assert stand_in.detections == [decode.encoder_output]
+
+
+@pytest.mark.parametrize("languages", [(DE,), (DE, EN)], ids=["one", "two"])
+def test_a_live_decode_is_the_librarys_own_without_its_skip_of_a_window(
+    stand_in: StandInWhisper, languages: tuple[Language, ...]
+) -> None:
+    pcm = _speech(1.0)
+    _library_transcribe(stand_in, pcm, "de")
+    expected = stand_in.decodes.pop()
+
+    _engine(stand_in).transcribe(pcm, languages, ENOUGH, skip_no_speech=False)
+
+    (decode,) = stand_in.decodes
+    assert decode.options == _without_the_librarys_skip(expected.options)
 
 
 @pytest.mark.parametrize(

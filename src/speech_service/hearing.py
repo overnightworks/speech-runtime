@@ -37,8 +37,8 @@ HEARING_SAMPLE_RATE: Final = SAMPLE_RATE
 CPU_THREADS: Final = 4
 _SETTING: Final = "SPEECH_HEARING_MODEL"
 _DEVICES: Final = frozenset({"cpu", "cuda"})
-# A decode is no speech when its no-speech probability is above the first and its
-# average log probability is not above the second.
+# faster-whisper's own skip of a recording's window as no speech: its no-speech
+# probability is above the first and its average log probability not above the second.
 NO_SPEECH_THRESHOLD: Final = 0.6
 LOG_PROB_THRESHOLD: Final = -1.0
 
@@ -51,8 +51,8 @@ class ResourceUnavailableError(Exception):
 class Heard:
     """The words of one decode, the language it was decoded in and its measures.
 
-    The measures are those of the decode's first segment, whether or not it was
-    judged no speech, and `None` when the decode yielded no segment.
+    The measures are those of the decode's first segment, and `None` when the decode
+    yielded no segment.
     """
 
     text: str
@@ -129,13 +129,17 @@ class HearingEngine(Protocol):
         pcm: bytes,
         languages: tuple[Language, ...],
         voiced_seconds: float = 0.0,
+        *,
+        skip_no_speech: bool = True,
     ) -> Heard:
         """The words in 16 kHz mono 16-bit PCM, and the language they were heard in.
 
         `languages` is ordered, non-empty and unique; its first element is the main
         language, heard when the set holds one language or the language is not known.
         `voiced_seconds` are those of `pcm`'s speech windows; a recording has no turns
-        and names no language, so it leaves them out.
+        and names no language, so it leaves them out. A window the recogniser judges
+        no speech adds no words unless `skip_no_speech` is off: a live turn drops
+        nothing on its measures.
         """
 
     def close(self) -> None:
@@ -181,11 +185,13 @@ def _scores(
     )
 
 
-def _decode_options(suppress_tokens: list[int]) -> TranscriptionOptions:
+def _decode_options(
+    suppress_tokens: list[int], *, skip_no_speech: bool
+) -> TranscriptionOptions:
     """The options of today's decode: greedy, one temperature, no timestamps.
 
-    Every other field is the default of faster-whisper's own `transcribe`, except
-    that it never skips a window as no speech: `_judged_no_speech` does. A fresh
+    Every other field is the default of faster-whisper's own `transcribe`, and
+    `skip_no_speech` off drops its skip of a window as no speech. A fresh
     object for every decode, because `generate_segments` rewrites its clip timestamps.
     """
     from faster_whisper.transcribe import TranscriptionOptions  # noqa: PLC0415 - as above
@@ -198,7 +204,7 @@ def _decode_options(suppress_tokens: list[int]) -> TranscriptionOptions:
         repetition_penalty=1,
         no_repeat_ngram_size=0,
         log_prob_threshold=LOG_PROB_THRESHOLD,
-        no_speech_threshold=None,
+        no_speech_threshold=NO_SPEECH_THRESHOLD if skip_no_speech else None,
         compression_ratio_threshold=2.4,
         condition_on_previous_text=False,
         prompt_reset_on_temperature=0.5,
@@ -220,22 +226,12 @@ def _decode_options(suppress_tokens: list[int]) -> TranscriptionOptions:
     )
 
 
-def _judged_no_speech(segment: Segment) -> bool:
-    """faster-whisper's own skip rule, applied to one segment's window."""
-    return (
-        segment.no_speech_prob > NO_SPEECH_THRESHOLD
-        and segment.avg_logprob <= LOG_PROB_THRESHOLD
-    )
-
-
 def _heard(segments: Iterable[Segment], language: Language) -> Heard:
-    """The words of the segments judged speech, with the first segment's measures."""
+    """The words of the segments, with the first segment's measures."""
     measured = list(segments)
     if not measured:
         return Heard("", language)
-    words = "".join(
-        segment.text for segment in measured if not _judged_no_speech(segment)
-    )
+    words = "".join(segment.text for segment in measured)
     first = measured[0]
     return Heard(words.strip(), language, first.no_speech_prob, first.avg_logprob)
 
@@ -308,12 +304,14 @@ class WhisperHearing:
         pcm: bytes,
         languages: tuple[Language, ...],
         voiced_seconds: float = 0.0,
+        *,
+        skip_no_speech: bool = True,
     ) -> Heard:
         """The recognised words and their language; the same audio gives the same text.
 
         A set of two or more encodes the first window once; the identifier chooses
-        from that pass and the decode reuses its output. A segment of a window judged
-        no speech adds no words, and its measures are still returned.
+        from that pass and the decode reuses its output. A window faster-whisper
+        judges no speech adds no words unless `skip_no_speech` is off.
         """
         from faster_whisper.audio import pad_or_trim  # noqa: PLC0415 - as above
         from faster_whisper.tokenizer import Tokenizer  # noqa: PLC0415 - as above
@@ -345,7 +343,9 @@ class WhisperHearing:
             task="transcribe",
             language=language.value,
         )
-        options = _decode_options(get_suppressed_tokens(tokenizer, [-1]))
+        options = _decode_options(
+            get_suppressed_tokens(tokenizer, [-1]), skip_no_speech=skip_no_speech
+        )
         segments = model.generate_segments(
             features,
             tokenizer,

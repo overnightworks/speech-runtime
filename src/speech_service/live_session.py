@@ -415,7 +415,9 @@ class LiveSession:
         languages = self._languages
 
         def job(engine: HearingEngine) -> Heard:
-            return engine.transcribe(pcm, languages, voiced_seconds)
+            return engine.transcribe(
+                pcm, languages, voiced_seconds, skip_no_speech=False
+            )
 
         return job
 
