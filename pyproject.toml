@@ -9,7 +9,7 @@ description = "Local speech synthesis, one process on the card."
 requires-python = ">=3.14"
 dependencies = [
     "av==19.0.2",
-    "fastapi==0.162.2",
+    "fastapi==0.162.4",
     "faster-whisper==1.2.1",
     "huggingface-hub==2.4.0",
     "overnightworks-webauth @ git+https://github.com/overnightworks/webauth@v0.36.0",
@@ -38,7 +38,7 @@ speech-fetch-voice = "speech_service.fetch_voice:main"
 dev = [
     "cryptography==50.0.2",
     "httpx2==2.16.0",
-    "playwright==1.64.1",
+    "playwright==1.65.0",
     "pyjwt[crypto]==2.15.1",
     "pytest==9.2.0",
     "pytest-cov==7.1.0",
