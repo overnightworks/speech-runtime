@@ -378,9 +378,7 @@ def test_the_stream_names_the_voice_first_then_the_audio_then_the_exact_seconds(
     assert end == Finished(4 / SAMPLE_RATE)
 
 
-def test_the_stream_moves_to_the_next_voice_that_is_unavailable_before_any_chunk() -> (
-    None
-):
+def test_the_stream_moves_on_when_a_voice_is_unavailable_before_any_chunk() -> None:
     offered = {VoiceId.RYAN: True, VoiceId.THORSTEN: True}
     with scripted_service(offered) as (base_url, service):
         service.unavailable_on_speak.add(VoiceId.RYAN)
