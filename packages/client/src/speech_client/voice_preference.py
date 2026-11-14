@@ -114,6 +114,29 @@ def _is_unavailable(outcome: SpeakOutcome) -> bool:
     )
 
 
+def _next_voice(
+    base_url: str,
+    remaining: Sequence[VoiceId],
+    language: Language | None,
+    seconds_left: float,
+) -> VoiceId | PreferenceOutcome:
+    health = fetch_health(
+        base_url, deadline_seconds=seconds_left, cap_bytes=_HEALTH_BODY_LIMIT
+    )
+    if not isinstance(health, Health):
+        return _unhealthy(health)
+    voice = _first_offered(health, remaining, language)
+    if voice is None:
+        return Refused(refusal(RefusalCode.UNAVAILABLE, "voice"))
+    return voice
+
+
+def _seconds_left(
+    deadline_seconds: float, began: float, clock: Callable[[], float]
+) -> float:
+    return deadline_seconds - (clock() - began)
+
+
 def _first_offered(
     health: Health, preference: Sequence[VoiceId], language: Language | None
 ) -> VoiceId | None:
@@ -127,6 +150,73 @@ def _first_offered(
             and (language is None or language in offered.languages)
         ),
         None,
+    )
+
+
+def _checked_speakers(  # noqa: PLR0913
+    base_url: str,
+    text: str,
+    preference: Sequence[VoiceId],
+    *,
+    language: Language | None,
+    instructions: str | None,
+    response_format: ResponseFormat,
+    deadline_seconds: float,
+    cap_bytes: int,
+) -> tuple[VoiceId, ...]:
+    """Check every bound and request, then keep the voices that speak `language`."""
+    if not preference:
+        message = "preference must name at least one voice"
+        raise ValueError(message)
+    checked_origin(base_url, deadline_seconds, cap_bytes)
+    speakers = tuple(
+        voice
+        for voice in preference
+        if language is None or language in VOICES[voice].languages
+    )
+    for voice in speakers:
+        speech_request_body(
+            text,
+            voice,
+            response_format,
+            language,
+            _instructions_for(voice, instructions),
+        )
+    return speakers
+
+
+def _speak_with_voice(  # noqa: PLR0913
+    base_url: str,
+    text: str,
+    voice: VoiceId,
+    *,
+    language: Language | None,
+    instructions: str | None,
+    response_format: ResponseFormat,
+    workload_token: str,
+    person_token: str,
+    deadline_seconds: float,
+    cap_bytes: int,
+) -> SpeakOutcome | SpokenWithPreference:
+    voice_instructions = _instructions_for(voice, instructions)
+    outcome = speak(
+        base_url,
+        text,
+        voice,
+        language=language,
+        instructions=voice_instructions,
+        response_format=response_format,
+        workload_token=workload_token,
+        person_token=person_token,
+        deadline_seconds=deadline_seconds,
+        cap_bytes=cap_bytes,
+    )
+    if not isinstance(outcome, Spoken):
+        return outcome
+    return SpokenWithPreference(
+        outcome.audio,
+        voice,
+        instructions_left_out=instructions is not None and voice_instructions is None,
     )
 
 
@@ -149,64 +239,43 @@ def speak_with_preference(  # noqa: PLR0913
 
     `language` narrows the voices to those that speak it and is required when a
     voice of the preference speaks several; a voice that does not speak it is
-    skipped. `instructions` name the tone, for a
-    voice that takes them. `deadline_seconds` bounds the whole call, `cap_bytes`
-    the audio. `clock` reads the time the deadline runs on. See the module for
-    the outcomes and for what raises.
+    skipped. `instructions` name the tone, for a voice that takes them.
+    `deadline_seconds` bounds the whole call, `cap_bytes` the audio, `clock`
+    reads the time the deadline runs on. See the module for the outcomes.
     """
-    if not preference:
-        message = "preference must name at least one voice"
-        raise ValueError(message)
-    checked_origin(base_url, deadline_seconds, cap_bytes)
-    speakers = tuple(
-        voice
-        for voice in preference
-        if language is None or language in VOICES[voice].languages
+    remaining = _checked_speakers(
+        base_url,
+        text,
+        preference,
+        language=language,
+        instructions=instructions,
+        response_format=response_format,
+        deadline_seconds=deadline_seconds,
+        cap_bytes=cap_bytes,
     )
-    for voice in speakers:
-        speech_request_body(
-            text,
-            voice,
-            response_format,
-            language,
-            _instructions_for(voice, instructions),
-        )
     began = clock()
-    remaining = speakers
     while True:
-        seconds_left = deadline_seconds - (clock() - began)
+        seconds_left = _seconds_left(deadline_seconds, began, clock)
         if seconds_left <= 0:
             return PastDeadline()
-        health = fetch_health(
-            base_url, deadline_seconds=seconds_left, cap_bytes=_HEALTH_BODY_LIMIT
-        )
-        if not isinstance(health, Health):
-            return _unhealthy(health)
-        voice = _first_offered(health, remaining, language)
-        if voice is None:
-            return Refused(refusal(RefusalCode.UNAVAILABLE, "voice"))
-        seconds_left = deadline_seconds - (clock() - began)
+        voice = _next_voice(base_url, remaining, language, seconds_left)
+        if not isinstance(voice, VoiceId):
+            return voice
+        seconds_left = _seconds_left(deadline_seconds, began, clock)
         if seconds_left <= 0:
             return PastDeadline()
-        left_out = (
-            instructions is not None and _instructions_for(voice, instructions) is None
-        )
-        outcome = speak(
+        outcome = _speak_with_voice(
             base_url,
             text,
             voice,
             language=language,
-            instructions=_instructions_for(voice, instructions),
+            instructions=instructions,
             response_format=response_format,
             workload_token=workload_token,
             person_token=person_token,
             deadline_seconds=seconds_left,
             cap_bytes=cap_bytes,
         )
-        if isinstance(outcome, Spoken):
-            return SpokenWithPreference(
-                outcome.audio, voice, instructions_left_out=left_out
-            )
         if not _is_unavailable(outcome):
             return outcome
         remaining = remaining[remaining.index(voice) + 1 :]
