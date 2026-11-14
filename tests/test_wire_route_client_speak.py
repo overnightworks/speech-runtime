@@ -20,6 +20,10 @@ from speech_client.speak import (
     Spoken,
     speak,
 )
+from speech_client.voice_preference import (
+    SpokenWithPreference,
+    speak_with_preference,
+)
 from speech_client.wire import (
     REFUSAL_STATUS,
     SPEECH_PATH,
@@ -48,6 +52,7 @@ if TYPE_CHECKING:
 
     from proof_identity import TokenPair
     from speech_client.speak import SpeakOutcome
+    from speech_client.voice_preference import PreferenceOutcome
 
 DEADLINE_SECONDS = 0.5
 MARGIN_SECONDS = 3.0
@@ -212,3 +217,52 @@ def test_a_request_beyond_the_waiting_places_is_told_busy_with_the_wait() -> Non
     assert isinstance(first, Busy)
     assert first.wait.retry_after_seconds == math.ceil(Settings().busy_wait_seconds)
     assert all(isinstance(outcome, Spoken) for outcome in later)
+
+
+def _speak_with_preference(
+    base_url: str, preference: list[VoiceId], instructions: str
+) -> PreferenceOutcome:
+    pair = valid_pair()
+    return speak_with_preference(
+        base_url,
+        "Hallo",
+        preference,
+        language=Language.DE,
+        instructions=instructions,
+        response_format=ResponseFormat.WAV,
+        workload_token=pair.workload,
+        person_token=pair.person,
+        deadline_seconds=GATE_TIMEOUT_SECONDS,
+        cap_bytes=CAP_BYTES,
+    )
+
+
+@pytest.mark.parametrize(
+    ("offered", "spoke", "instructions_left_out"),
+    [
+        ([VoiceId.RYAN, VoiceId.THORSTEN], VoiceId.RYAN, False),
+        ([VoiceId.THORSTEN], VoiceId.THORSTEN, True),
+    ],
+)
+def test_a_preference_speaks_with_the_first_voice_the_service_offers(
+    offered: list[VoiceId], spoke: VoiceId, *, instructions_left_out: bool
+) -> None:
+    """WIRE-125, WIRE-142: the service offers fewer voices; the tone is not refused."""
+    runtime = Runtime(
+        {voice: FakeSpeaking() for voice in offered}, memory_probe=lambda: 0
+    )
+
+    async def scenario() -> PreferenceOutcome:
+        async with serving_over_tcp(runtime) as server:
+            return await asyncio.to_thread(
+                _speak_with_preference,
+                server.base_url,
+                [VoiceId.RYAN, VoiceId.THORSTEN],
+                "Sprich ruhig",
+            )
+
+    outcome = asyncio.run(scenario())
+
+    assert isinstance(outcome, SpokenWithPreference)
+    assert outcome.voice == spoke
+    assert outcome.instructions_left_out is instructions_left_out

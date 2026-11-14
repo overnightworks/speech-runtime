@@ -22,6 +22,13 @@ Realtime events and the refusal list; build the body and read the refusals throu
 byte cap, and answers with a typed outcome; its module documents them. `speak` and
 `speech_request_body` take `language`; one the voice lacks, or none for a voice of
 several languages, raises the request's validation error before the network.
+`speech_client.voice_preference` speaks with an ordered preference of voices instead of
+one: it reads health, speaks with the first voice that `speaking.voices` offers as
+`ready` in the requested language, sends `instructions` only to a voice that
+`takes_instructions` (WIRE-142) and says in its outcome which voice spoke and whether
+the instructions were left out. A speak answered `unavailable` (the service switched
+voices mid-call) reads health again and speaks with the next voice; with none offered
+the outcome is `unavailable` for `voice`. It adds nothing to the wire.
 `speech_client.health` fetches `GET /health` (WIRE-122) within a deadline and a
 cap and answers with a typed outcome; the outcomes the calls share live in
 `speech_client.outcomes`. `speech_client.hearing` runs the live hearing
