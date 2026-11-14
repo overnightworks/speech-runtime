@@ -17,7 +17,9 @@ from speech_provider_contract import QWEN_MODEL_ID, QWEN_SAMPLE_RATE
 from speech_client.wire import VOICES, Language, VoiceId
 from speech_service import __main__
 from speech_service.__main__ import StopPolicy
+from speech_service.clock import LoopClock
 from speech_service.config import Settings
+from speech_service.hearing import Hearing
 from speech_service.provider_process import ProviderLaunch, ProviderProcess
 from speech_service.service import Runtime, RuntimeDependencies
 from tests.support.fakes_support import FakeSpeaking
@@ -29,8 +31,6 @@ from tests.support.worker_support import provider_worker
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-    from speech_service.hearing import Hearing
 
 
 def _serving_settings(directory: Path, **changes: object) -> Settings:
@@ -468,6 +468,22 @@ def test_engines_that_will_not_close_end_the_process_through_the_abort_with_zero
 
     engine.release.set()
     decode.result(WAIT_SECONDS)
+    assert outcome == 0
+    assert aborted == [0]
+
+
+def test_a_hearing_load_that_will_not_end_ends_the_process_through_the_abort_with_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WIRE-147: a load that cannot be interrupted does not hold the exit."""
+    engine = FakeHearing(hold_load=True)
+    settings = _signalled_stop(tmp_path, monkeypatch, Hearing(engine, LoopClock()))
+    aborted: list[int] = []
+    policy = StopPolicy(grace_seconds=0.05, abort=aborted.append)
+
+    outcome = asyncio.run(__main__.serve(settings, policy))
+
+    engine.load_release.set()
     assert outcome == 0
     assert aborted == [0]
 

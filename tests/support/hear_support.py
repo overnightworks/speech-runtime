@@ -54,10 +54,18 @@ class FakeHearing:
         *,
         load_error: Exception | None = None,
         hold: bool = False,
+        hold_load: bool = False,
     ) -> None:
-        """Answer `text`; fail the load with `load_error`; hold decodes if `hold`."""
+        """Answer `text`; fail the load with `load_error`; hold decodes if `hold`.
+
+        With `hold_load` the load waits for `load_release`, announced by `load_entered`.
+        """
         self.text = text
         self._load_error = load_error
+        self.load_entered = threading.Event()
+        self.load_release = threading.Event()
+        if not hold_load:
+            self.load_release.set()
         self.closed = 0
         self.heard: list[tuple[int, tuple[Language, ...]]] = []
         self.heard_voiced: list[float] = []
@@ -73,7 +81,9 @@ class FakeHearing:
         self.fail_transcription = False
 
     def load(self) -> None:
-        """Raise the load error, if one was set."""
+        """Wait for the test's release, then raise the load error, if one was set."""
+        self.load_entered.set()
+        self.load_release.wait(WAIT_SECONDS)
         if self._load_error is not None:
             raise self._load_error
 

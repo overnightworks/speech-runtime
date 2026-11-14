@@ -42,7 +42,7 @@ class StopPolicy:
 
     The sessions get `grace_seconds` past the drain's bound to close, the server
     and the engines each `grace_seconds` to stop; `abort` ends the process when
-    the engines will not close, as a running decode cannot be interrupted.
+    the engines will not close or a load will not end, as neither can be interrupted.
     """
 
     grace_seconds: float = _CLOSE_GRACE_SECONDS
@@ -172,7 +172,8 @@ async def _stop(stopping: _Stopping, result: int) -> int:
     """Refuse new work, let the admitted run to the drain's bound, then close.
 
     Sessions, then the server, then the engines; each step has its own bound, and
-    engines that will not close end the process through `policy.abort`.
+    engines that will not close, or a load that will not end, end the process through
+    `policy.abort`.
     """
     runtime, policy = stopping.runtime, stopping.policy
     log = logging.getLogger(__name__)
@@ -195,13 +196,15 @@ async def _stop(stopping: _Stopping, result: int) -> int:
     except RuntimeError:
         log.exception("speech model cleanup failed")
         result, closed = 1, True
-    with contextlib.suppress(TimeoutError):
-        async with asyncio.timeout(policy.grace_seconds):
-            await asyncio.gather(
-                stopping.server_task, stopping.loader, return_exceptions=True
-            )
-    if not closed:
-        log.error("speech engines did not close within the stop; the process ends")
+    ended, _running = await asyncio.wait(
+        {stopping.server_task, stopping.loader}, timeout=policy.grace_seconds
+    )
+    for task in ended:
+        if not task.cancelled():
+            task.exception()
+    loading = not stopping.loader.done()
+    if loading or not closed:
+        log.error("the engines or a model load outlasted the stop; the process ends")
         policy.abort(result)
     return result
 
