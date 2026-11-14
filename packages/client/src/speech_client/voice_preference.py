@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from time import monotonic
 from typing import TYPE_CHECKING, Final
 
+from speech_client._transport import checked_origin
 from speech_client.health import UnexpectedStatus, fetch_health
 from speech_client.outcomes import (
     Busy,
@@ -55,7 +56,7 @@ from speech_client.wire import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from speech_client.health import HealthOutcome
     from speech_client.speak import SpeakOutcome
@@ -142,6 +143,7 @@ def speak_with_preference(  # noqa: PLR0913
     person_token: str,
     deadline_seconds: float,
     cap_bytes: int,
+    clock: Callable[[], float] = monotonic,
 ) -> PreferenceOutcome:
     """Speak `text` with the first voice of `preference` the service offers.
 
@@ -149,11 +151,13 @@ def speak_with_preference(  # noqa: PLR0913
     voice of the preference speaks several; a voice that does not speak it is
     skipped. `instructions` name the tone, for a
     voice that takes them. `deadline_seconds` bounds the whole call, `cap_bytes`
-    the audio. See the module for the outcomes and for what raises.
+    the audio. `clock` reads the time the deadline runs on. See the module for
+    the outcomes and for what raises.
     """
     if not preference:
         message = "preference must name at least one voice"
         raise ValueError(message)
+    checked_origin(base_url, deadline_seconds, cap_bytes)
     speakers = tuple(
         voice
         for voice in preference
@@ -167,10 +171,10 @@ def speak_with_preference(  # noqa: PLR0913
             language,
             _instructions_for(voice, instructions),
         )
-    began = monotonic()
+    began = clock()
     remaining = speakers
     while True:
-        seconds_left = deadline_seconds - (monotonic() - began)
+        seconds_left = deadline_seconds - (clock() - began)
         if seconds_left <= 0:
             return PastDeadline()
         health = fetch_health(
@@ -181,7 +185,7 @@ def speak_with_preference(  # noqa: PLR0913
         voice = _first_offered(health, remaining, language)
         if voice is None:
             return Refused(refusal(RefusalCode.UNAVAILABLE, "voice"))
-        seconds_left = deadline_seconds - (monotonic() - began)
+        seconds_left = deadline_seconds - (clock() - began)
         if seconds_left <= 0:
             return PastDeadline()
         left_out = (

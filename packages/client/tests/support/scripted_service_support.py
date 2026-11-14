@@ -49,6 +49,7 @@ class ScriptedService:
         """Start with `offered` (voice to ready), refusing nothing."""
         self.offered = offered
         self.unavailable_on_speak: set[VoiceId] = set()
+        self.on_health: Callable[[], None] = lambda: None
         self.on_speak: Callable[[VoiceId], None] = lambda _voice: None
         self.asked: list[dict[str, object]] = []
 
@@ -81,6 +82,7 @@ def _handler(service: ScriptedService) -> type[BaseHTTPRequestHandler]:
             self.wfile.write(body)
 
         def do_GET(self) -> None:
+            service.on_health()
             self._send(HTTPStatus.OK, service.health_body())
 
         def do_POST(self) -> None:
