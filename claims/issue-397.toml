@@ -1,0 +1,8 @@
+claim_id = "8d38e644cb2447efa3dde235924e5627"
+agent = "Claude 2d5729b4-af30-4106-bf50-a26da1bb0a81"
+role = "builder"
+base = "8965ec0bf39ed0af63343d31e4303a09726ae98c"
+branch = "claude/issue-397-stream-preference"
+scope = ["README.md", "packages/client/src/speech_client", "packages/client/tests", "tests"]
+opened_commit = "30e972d031ec546de68381b2ebb57d224014968b"
+whole_reason = "The streamed and the blocking speak with a preference share one voice choice in one module; #384's polish lives in the same module."
