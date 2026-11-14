@@ -28,6 +28,8 @@ from speech_client.wire import (
     TranscriptCompleted,
     TranscriptDelta,
 )
+from speech_service.hearing_session import SILENCE_SECONDS
+from speech_service.voice_activity import PRE_ROLL_SECONDS
 from tests.support.browser_support import (
     HELD_WORKLET_PATH,
     MESSAGING_HOP_PATH,
@@ -64,10 +66,10 @@ QUIET_RMS = 0.01
 SPEECH_RMS = 0.14
 SILENT_TAIL_SECONDS = 1.5
 LAYOUTS = [(2.0, 1.0), (1.0, 2.5)]
-# The turn's seconds beyond the layout's quiet and speech: the silent tail the
-# service waits for, up to a poll interval, a frame, the lead before the recording
-# and jitter.
-TURN_EXTRA_SECONDS = (0.3, 1.6)
+# The turn's seconds beyond the layout's speech: the pre-roll before it and the
+# silence that ends it, give or take a frame and a window.
+TURN_EXTRA_SECONDS = PRE_ROLL_SECONDS + SILENCE_SECONDS
+TURN_TOLERANCE_SECONDS = 0.15
 FRAMES_BEFORE_STOP = 3
 STOP_BOUND_MS = 1000
 CLOSED = 3
@@ -272,13 +274,15 @@ def test_every_quiet_frame_of_a_recording_reaches_the_app(
 
 
 @pytest.mark.parametrize(("quiet", "speech"), LAYOUTS)
-def test_the_turn_holds_the_whole_recording_at_the_wire_rate(
+def test_the_turn_holds_the_speech_with_its_pre_roll_and_closing_silence(
     tmp_path: Path, quiet: float, speech: float
 ) -> None:
+    """WIRE-66: the quiet lead is dropped; the turn is the speech, pre-roll and end."""
     _, seconds = asyncio.run(_play(tmp_path, quiet, speech))
 
-    least, most = TURN_EXTRA_SECONDS
-    assert least <= seconds - (quiet + speech) <= most
+    assert seconds - speech == pytest.approx(
+        TURN_EXTRA_SECONDS, abs=TURN_TOLERANCE_SECONDS
+    )
 
 
 def test_stop_leaves_the_apps_device_track_live_and_opens_no_device(
