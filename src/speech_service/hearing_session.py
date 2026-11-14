@@ -105,7 +105,13 @@ class HearingSession:
         return events
 
     def commit(self) -> TurnEnd | None:
-        """End the open turn at the client's word; `None` when it holds no audio."""
+        """End the open turn at the client's word; `None` when it holds no audio.
+
+        After `stop_opening_turns` only a turn that is open can end: audio kept
+        since the last turn is not a turn.
+        """
+        if self._last_turn and not self.turn_open:
+            return None
         ended = self._end(self._held_end, by_client=True)
         return ended[0] if ended else None
 

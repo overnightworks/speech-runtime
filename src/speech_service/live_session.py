@@ -322,7 +322,11 @@ class LiveSession:
         await self._apply(self._scheduler.add(self._resampler.feed(raw)))
 
     async def _on_commit(self, event: AudioCommit) -> None:
+        if self._hearing.draining:
+            self._scheduler.stop_opening_turns()
         turn = self._scheduler.commit()
+        if turn is None and self._hearing.draining:
+            return
         if turn is None:
             await self._end_locked(RefusalCode.INVALID_REQUEST, None, event.event_id)
             return

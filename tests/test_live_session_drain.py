@@ -28,6 +28,7 @@ from tests.support.live_support import (
     FakeSocket,
     append,
     audio,
+    commit,
     started,
 )
 from tests.support.speak_support import assert_refusal_body
@@ -55,6 +56,29 @@ def test_a_draining_session_opens_no_second_turn_though_audio_keeps_coming() -> 
         hearing.begin_drain()
         await session.on_message(append(audio(0.8, 0) + audio(0.5)))
         await session.on_message(append(audio(0.5)))
+        engine.release.set()
+        await session.settled()
+        await session.on_tick()
+        return socket, engine
+
+    socket, engine = asyncio.run(scenario())
+
+    assert socket.types() == _ANNOUNCED_AND_COMPLETED
+    assert len(engine.heard) == 1
+    assert socket.close_code == WS_1012_SERVICE_RESTART
+
+
+def test_a_commit_after_the_draining_turn_ended_opens_no_second_item() -> None:
+    """WIRE-146: a commit of audio after the last turn adds no item and no error."""
+
+    async def scenario() -> tuple[FakeSocket, FakeHearing]:
+        engine = FakeHearing(hold=True)
+        hearing = loaded(engine, FakeClock())
+        session, socket = await started(hearing)
+        await session.on_message(append(audio(0.5)))
+        hearing.begin_drain()
+        await session.on_message(append(audio(0.8, 0) + audio(0.5)))
+        await session.on_message(commit())
         engine.release.set()
         await session.settled()
         await session.on_tick()
