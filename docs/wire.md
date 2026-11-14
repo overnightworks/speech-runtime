@@ -283,14 +283,15 @@ once, for speaking and hearing (WIRE-124, WIRE-129), and refuses a new session, 
 or recording as `unavailable` (WIRE-103). **WIRE-145** A speak stream or recording already
 running finishes whole; a speak request still waiting for the engine is refused.
 **WIRE-146** Each live session keeps taking audio until its open turn ends, by silence or
-the cap, or by the drain: an open turn ends itself 30 s after the drain began. The session
-delivers that turn's `completed` and every final ahead of it, then closes with `1012` (Service
-Restart) and no `error`, since nothing failed. A session with no open turn closes with `1012`
+the cap, or by the drain: an open turn ends itself 30 s after the drain began. Audio after
+that turn's end opens no new turn. The session delivers that turn's `completed` and every
+final ahead of it, then closes with `1012` (Service Restart) and no `error`, since nothing
+failed. A session with no open turn closes with `1012`
 at its next poll (0.3 s). A client reconnects with a new session; its items start afresh.
 **WIRE-147** The drain is bounded by 30 s plus `SPEECH_HEARING_FINAL_WAIT_SECONDS`
 (WIRE-120): a final waits at most that long, as WIRE-85 says. The service then closes its
-engines and exits 0; whatever still runs at the bound is cut, and a session still open is
-closed `1012`.
+engines and exits 0; whatever still runs at the bound is cut. A session with an item still
+unfinished at the bound fails it, sends `error` `unavailable` and closes `1012`.
 
 ## Response
 

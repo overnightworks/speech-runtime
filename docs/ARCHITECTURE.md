@@ -158,8 +158,9 @@ flowchart LR
   A session end sends a `failed` per announced unfinished item, then `error`, then
   closes; a disconnect sends nothing. In a drain the session's poll ends it at a
   turn boundary: it takes audio until the open turn ends (by itself, or cut 30 s
-  after the drain began), lets the queued finals complete, then closes `1012` with
-  no `error`.
+  after the drain began) and opens no turn after it, lets the queued finals
+  complete, then closes `1012` with no `error`. A final still running at the
+  drain's bound fails its item, then the session sends `error` and closes `1012`.
 
 ## Delivery
 
@@ -202,10 +203,12 @@ boundaries; the server then shuts down, waiting for the speak streams and
 recordings still running; the engines close last. A speak stream or a final is
 never cut by an engine closing under it. The drain is bounded by one number,
 30 s (the open turn) plus `SPEECH_HEARING_FINAL_WAIT_SECONDS` (default 60 s), so
-90 s by default; past it the server's shutdown cuts what still runs, the engines
-close and the process exits 0. A pod's grace period must be at least the drain
-bound plus the time its endpoint takes to leave the balancer (a preStop sleep),
-and a replacement must start before the old pod stops (a rolling update that
+90 s by default, which `Hearing` owns for the sessions and the process alike. Past
+it the server's shutdown cuts what still runs and the engines close, each of five
+steps with a 5 s grace of its own; engines that will not close (a decode cannot be
+interrupted) end the process without them, with exit 0. A pod's grace period must
+be at least the drain bound, the five graces (25 s) and the time its endpoint
+takes to leave the balancer (a preStop sleep), and a replacement must start before the old pod stops (a rolling update that
 never lowers the ready count).
 
 ## Crosscutting Concepts

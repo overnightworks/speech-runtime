@@ -15,7 +15,7 @@ from speech_client.wire import (
 from speech_service.clock import LoopClock
 from speech_service.config import Settings
 from speech_service.control import create_control_app
-from speech_service.hearing import Heard, Hearing
+from speech_service.hearing import DRAIN_TURN_SECONDS, Heard, Hearing
 from speech_service.pcm import wav_header
 from speech_service.service import Runtime
 from tests.support.detector_support import LevelDetector
@@ -113,9 +113,16 @@ class FakeHearing:
         self.closed += 1
 
 
-def loaded(engine: FakeHearing | None, clock: Clock | None = None) -> Hearing:
+def loaded(
+    engine: FakeHearing | None,
+    clock: Clock | None = None,
+    *,
+    drain_turn_seconds: float = DRAIN_TURN_SECONDS,
+) -> Hearing:
     """Hearing over `engine`, loaded; its deadlines are on `clock`."""
-    hearing = Hearing(engine, clock or LoopClock())
+    hearing = Hearing(
+        engine, clock or LoopClock(), drain_turn_seconds=drain_turn_seconds
+    )
     hearing.load()
     return hearing
 

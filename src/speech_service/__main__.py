@@ -6,10 +6,14 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import os
 import signal
 import socket
+import threading
 import time
-from typing import TYPE_CHECKING
+from concurrent.futures import Future
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Final
 
 import uvicorn
 from webauth.https_client import fetch_key_set_over_https
@@ -17,19 +21,32 @@ from webauth.https_client import fetch_key_set_over_https
 from speech_service.callers import SpeechCallers
 from speech_service.config import Settings, load_caller_config, load_settings
 from speech_service.control import create_control_app
-from speech_service.hearing_session import DRAIN_TURN_SECONDS
 from speech_service.service import Runtime
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
+_CLOSE_GRACE_SECONDS: Final = 5.0
 _USAGE_DESCRIPTION = "Serve the speech wire over TCP."
 _USAGE_EPILOG = (
     "Configuration comes from the SPEECH_* environment and the file named by "
     "SPEECH_CONFIG_FILE; docs/wire.md lists the wire's settings and the "
     "Settings section of README.md the process's own."
 )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StopPolicy:
+    """What the stop allows past the drain, and how it ends a process that is stuck.
+
+    The sessions get `grace_seconds` past the drain's bound to close, the server
+    and the engines each `grace_seconds` to stop; `abort` ends the process when
+    the engines will not close, as a running decode cannot be interrupted.
+    """
+
+    grace_seconds: float = _CLOSE_GRACE_SECONDS
+    abort: Callable[[int], object] = os._exit
 
 
 def configure_logging() -> None:
@@ -71,7 +88,7 @@ def bind_listener(settings: Settings) -> socket.socket:
     return listener
 
 
-async def serve(settings: Settings) -> int:
+async def serve(settings: Settings, stop: StopPolicy = StopPolicy()) -> int:  # noqa: B008 - a frozen value
     """Run the server until a signal or fatal lifecycle outcome."""
     callers = SpeechCallers.from_config(
         load_caller_config(_require_config_file(settings)),
@@ -87,18 +104,20 @@ async def serve(settings: Settings) -> int:
         )
         return 1
     with listener:
-        return await _serve_on(settings, callers, listener)
+        return await _serve_on(settings, callers, listener, stop)
 
 
 async def _serve_on(
-    settings: Settings, callers: SpeechCallers, listener: socket.socket
+    settings: Settings,
+    callers: SpeechCallers,
+    listener: socket.socket,
+    stop: StopPolicy = StopPolicy(),  # noqa: B008 - a frozen value
 ) -> int:
     loop = asyncio.get_running_loop()
     fatal = asyncio.Event()
     runtime = Runtime.from_settings(settings)
     runtime.set_fatal_callback(lambda: loop.call_soon_threadsafe(fatal.set))
     server = build_server(create_control_app(settings, runtime, callers))
-    drain_seconds = DRAIN_TURN_SECONDS + settings.hearing_final_wait_seconds
     stopping = asyncio.Event()
     _install_signal_handlers(stopping)
     server_task = asyncio.create_task(server.serve(sockets=[listener]))
@@ -129,22 +148,61 @@ async def _serve_on(
                 )
                 result = 0 if stopped in done else 1
     finally:
-        deadline = loop.time() + drain_seconds
-        runtime.begin_shutdown()
-        await asyncio.to_thread(runtime.abandon_loads)
-        if result == 0:
-            await _until_sessions_end(runtime, deadline - loop.time())
-        server.should_exit = True
         stopped.cancel()
         fatal_task.cancel()
-        await asyncio.wait({server_task}, timeout=max(0.0, deadline - loop.time()))
-        server_task.cancel()
-        try:
-            await asyncio.to_thread(runtime.close)
-        except RuntimeError:
-            logging.getLogger(__name__).exception("speech model cleanup failed")
-            result = 1
-        await asyncio.gather(server_task, loader, return_exceptions=True)
+        result = await _stop(
+            _Stopping(runtime, server, server_task, loader, settings, stop), result
+        )
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class _Stopping:
+    """What the stop winds down."""
+
+    runtime: Runtime
+    server: uvicorn.Server
+    server_task: asyncio.Task[None]
+    loader: asyncio.Task[None]
+    settings: Settings
+    policy: StopPolicy
+
+
+async def _stop(stopping: _Stopping, result: int) -> int:
+    """Refuse new work, let the admitted run to the drain's bound, then close.
+
+    Sessions, then the server, then the engines; each step has its own bound, and
+    engines that will not close end the process through `policy.abort`.
+    """
+    runtime, policy = stopping.runtime, stopping.policy
+    log = logging.getLogger(__name__)
+    loop = asyncio.get_running_loop()
+    runtime.begin_shutdown()
+    drain_left = runtime.hearing.drain_left(
+        stopping.settings.hearing_final_wait_seconds
+    )
+    drain_ends = loop.time() + drain_left + policy.grace_seconds
+    if not await _finished_within(runtime.abandon_loads, policy.grace_seconds):
+        log.warning("a voice load outlasted the stop")
+    if result == 0:
+        await _until_sessions_end(runtime, drain_ends - loop.time())
+    stopping.server.should_exit = True
+    server_stop = max(drain_ends - loop.time(), policy.grace_seconds)
+    await asyncio.wait({stopping.server_task}, timeout=server_stop)
+    stopping.server_task.cancel()
+    try:
+        closed = await _finished_within(runtime.close, policy.grace_seconds)
+    except RuntimeError:
+        log.exception("speech model cleanup failed")
+        result, closed = 1, True
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(policy.grace_seconds):
+            await asyncio.gather(
+                stopping.server_task, stopping.loader, return_exceptions=True
+            )
+    if not closed:
+        log.error("speech engines did not close within the stop; the process ends")
+        policy.abort(result)
     return result
 
 
@@ -155,6 +213,31 @@ async def _until_sessions_end(runtime: Runtime, seconds: float) -> None:
             await runtime.hearing.sessions_ended()
     except TimeoutError:
         logging.getLogger(__name__).warning("live hearing sessions outlasted the drain")
+
+
+async def _finished_within(work: Callable[[], None], seconds: float) -> bool:
+    """Run `work` on a daemon thread; whether it returned within `seconds`.
+
+    A thread that outlasts the wait does not hold the process back at its exit,
+    and its `work` still runs on. An error `work` raises is raised here.
+    """
+    outcome: Future[None] = Future()
+
+    def run() -> None:
+        try:
+            work()
+        except Exception as error:  # noqa: BLE001 - handed to the waiting coroutine
+            outcome.set_exception(error)
+        else:
+            outcome.set_result(None)
+
+    threading.Thread(target=run, daemon=True, name="stop").start()
+    try:
+        async with asyncio.timeout(seconds):
+            await asyncio.shield(asyncio.wrap_future(outcome))
+    except TimeoutError:
+        return False
+    return True
 
 
 class _ServiceServer(uvicorn.Server):

@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 HEARING_SAMPLE_RATE: Final = SAMPLE_RATE
 CPU_THREADS: Final = 4
+DRAIN_TURN_SECONDS: Final = 30.0
 _SETTING: Final = "SPEECH_HEARING_MODEL"
 _DEVICES: Final = frozenset({"cpu", "cuda"})
 # A window is no speech, and adds no words, when its no-speech probability is above
@@ -368,12 +369,20 @@ class WhisperHearing:
 class Hearing:
     """The loaded hearing engine, the gate its decodes pass and their one worker."""
 
-    def __init__(self, engine: HearingEngine | None, clock: Clock) -> None:
+    def __init__(
+        self,
+        engine: HearingEngine | None,
+        clock: Clock,
+        *,
+        drain_turn_seconds: float = DRAIN_TURN_SECONDS,
+    ) -> None:
         """Hold `engine`, or none when no hearing model is configured.
 
-        The gate's deadlines, and so the live sessions', are on `clock`.
+        The gate's deadlines, and so the live sessions', are on `clock`. A drain
+        lets an open turn run `drain_turn_seconds` before it is cut.
         """
         self._engine = engine
+        self._drain_turn_seconds = drain_turn_seconds
         self._ready: HearingEngine | None = None
         self.gate = AdmissionGate(clock)
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hearing")
@@ -425,8 +434,16 @@ class Hearing:
         """Whether the drain began."""
         return self._drain_began_at is not None
 
-    def drain_age(self) -> float:
-        """Seconds on the gate's clock since the drain began; 0 before it."""
+    def drain_turn_over(self) -> bool:
+        """Whether an open turn is due to be cut: the drain's turn bound has passed."""
+        return self._drain_age() >= self._drain_turn_seconds
+
+    def drain_left(self, final_wait_seconds: float) -> float:
+        """Seconds until the drain's bound: its turn bound plus a final's wait."""
+        bound = self._drain_turn_seconds + final_wait_seconds
+        return max(0.0, bound - self._drain_age())
+
+    def _drain_age(self) -> float:
         if self._drain_began_at is None:
             return 0.0
         return self.gate.clock.now() - self._drain_began_at

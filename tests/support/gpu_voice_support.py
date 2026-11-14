@@ -21,9 +21,10 @@ from speech_provider_contract import (
 
 from speech_client.wire import HEALTH_PATH, Health, VoiceId
 from speech_service import __main__
+from speech_service.__main__ import StopPolicy
 from speech_service.config import Settings
 from speech_service.control import create_control_app
-from speech_service.hearing import Hearing
+from speech_service.hearing import DRAIN_TURN_SECONDS, Hearing
 from speech_service.service import Runtime
 from speech_service.voices import PIPER_VOICES, piper_voice_paths
 from tests.support.hear_support import FakeHearing
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
 PIPER_SAMPLE_RATE = 22_050
 PIPER_PCM = b"\x00\x01"
 LOOPBACK = "127.0.0.1"
+STOP_GRACE_SECONDS = 1.0
 
 
 def touch_snapshot(
@@ -121,6 +123,7 @@ class StageSetup:
     hearing: FakeHearing | None = None
     started: bool = True
     reaps_fail: bool = False
+    drain_turn_seconds: float = DRAIN_TURN_SECONDS
 
 
 @contextlib.contextmanager
@@ -152,7 +155,9 @@ def gpu_voice_stage(
         **settings,
     )
     runtime = Runtime.from_settings(configured)
-    runtime.hearing = Hearing(ear, runtime.clock)
+    runtime.hearing = Hearing(
+        ear, runtime.clock, drain_turn_seconds=setup.drain_turn_seconds
+    )
     try:
         if setup.started:
             runtime.load()
@@ -258,7 +263,10 @@ class Serving:
         """Serve; once the start load ended, a client whose tokens are valid."""
         self._task = asyncio.create_task(
             __main__._serve_on(  # noqa: SLF001 - the serve loop behind the TCP listener
-                self._stage.settings, valid_callers(), self.listener
+                self._stage.settings,
+                valid_callers(),
+                self.listener,
+                StopPolicy(grace_seconds=STOP_GRACE_SECONDS),
             )
         )
         deadline = time.monotonic() + WORKER_WAIT_SECONDS
