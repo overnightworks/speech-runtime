@@ -211,3 +211,32 @@ def test_a_partial_decoding_when_the_client_leaves_still_logs_its_measures(
         if record.getMessage().startswith("live partial decoded")
     ]
     assert "no_speech_prob=0.200 avg_logprob=-0.400" in logged
+
+
+def test_a_final_decoding_when_the_client_leaves_still_logs_its_measures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def scenario() -> None:
+        engine = FakeHearing(hold=True)
+        engine.measures = (0.2, -0.4)
+        hearing = loaded(engine, FakeClock())
+        session, _ = await started(hearing)
+        await one_question(session)
+        assert await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
+        await session.on_disconnect()
+        engine.release.set()
+        # The worker runs one job at a time, so the marker ends after the final.
+        await asyncio.wrap_future(hearing.submit(Lease(lambda: None), _marker))
+
+    caplog.set_level(logging.INFO)
+
+    asyncio.run(scenario())
+
+    (logged,) = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("live final undelivered")
+    ]
+    assert "no_speech_prob=0.200 avg_logprob=-0.400" in logged
+    assert HEARD_TEXT not in caplog.text
+    assert _timing_lines(caplog) == []
