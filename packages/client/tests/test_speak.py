@@ -10,15 +10,19 @@ from typing import TYPE_CHECKING
 import pytest
 from pydantic import ValidationError
 
+from packages.client.tests.support.scripted_service_support import SAMPLE_RATE, wav_of
 from speech_client import speak as speak_module
+from speech_client._transport import base_origin, body_pieces, exchange_stream
 from speech_client.speak import (
     Busy,
     Cut,
+    Finished,
     Malformed,
     PastDeadline,
     Spoken,
     Unreachable,
     speak,
+    speak_stream,
 )
 from speech_client.wire import (
     RETRY_AFTER_HEADER,
@@ -35,8 +39,10 @@ from speech_client.wire import (
 
 if TYPE_CHECKING:
     import threading
+    from collections.abc import Iterator
+    from http.client import HTTPConnection
 
-    from speech_client.speak import SpeakOutcome
+    from speech_client.speak import SpeakOutcome, SpeakStreamItem
     from support.listener_support import Answer, RawListener
 
 VOICE = VoiceId.THORSTEN
@@ -115,7 +121,7 @@ def _head(status: str, *headers: str) -> bytes:
 
 _WAV_HEAD = _head("200 OK", "Content-Type: audio/wav", "Transfer-Encoding: chunked")
 _OGG_HEAD = _head("200 OK", "Content-Type: audio/ogg", "Transfer-Encoding: chunked")
-_WAV_BODY = b"RIFF\0\0\0\0WAVE"
+_WAV_BODY = wav_of(b"\x01\x00" * 4)
 _OGG_BODY = b"OggS\0\0\0\0"
 
 
@@ -149,7 +155,7 @@ def _closes(connection: socket.socket, stopped: threading.Event) -> None:
     [
         pytest.param(b"HTTP/1.1 200 OK\r\n", b"X", id="inside-a-header-line"),
         pytest.param(_WAV_HEAD, b"1", id="inside-a-chunk-size-line"),
-        pytest.param(_WAV_HEAD + b"ffff\r\n", b"\0", id="inside-a-chunk"),
+        pytest.param(_WAV_HEAD + b"ffff\r\n" + _WAV_BODY, b"\0", id="inside-a-chunk"),
     ],
 )
 def test_a_server_that_drips_cannot_hold_the_call_past_the_deadline(
@@ -168,6 +174,9 @@ def test_every_outcome_is_exported_from_the_speak_module() -> None:
     """A type-checked consumer imports the outcomes from `speak` publicly."""
     exported = {
         "Spoken",
+        "Finished",
+        "SpeakStreamItem",
+        "speak_stream",
         "Refused",
         "Busy",
         "Cut",
@@ -474,3 +483,97 @@ def test_a_429_with_a_whole_second_wait_is_busy(raw_listener: RawListener) -> No
 
     assert isinstance(outcome, Busy)
     assert outcome.wait.retry_after_seconds == 7  # noqa: PLR2004 - the header's value
+
+
+def _streamed(raw: bytes, raw_listener: RawListener) -> list[SpeakStreamItem]:
+    with raw_listener(raw) as (base_url, _):
+        return list(
+            speak_stream(
+                base_url,
+                "Hallo",
+                VOICE,
+                workload_token=WORKLOAD_TOKEN,
+                person_token=PERSON_TOKEN,
+                deadline_seconds=GENEROUS_DEADLINE_SECONDS,
+                cap_bytes=CAP_BYTES,
+            )
+        )
+
+
+@pytest.mark.parametrize("piece_bytes", [1, 7, 1000])
+def test_the_stream_ends_with_the_exact_seconds_whatever_the_chunking(
+    piece_bytes: int, raw_listener: RawListener
+) -> None:
+    """The length is counted from the PCM bytes, however the head is split."""
+    pcm = b"\x01\x00" * 4410
+    wav = wav_of(pcm)
+    chunks = b"".join(
+        _chunk(wav[at : at + piece_bytes]) for at in range(0, len(wav), piece_bytes)
+    )
+
+    *pieces, end = _streamed(_WAV_HEAD + chunks + _chunk(b""), raw_listener)
+
+    assert b"".join(pieces) == wav
+    assert end == Finished(len(pcm) // 2 / SAMPLE_RATE)
+
+
+def test_a_wav_without_audio_data_is_malformed_in_the_stream_and_the_blocking_call(
+    raw_listener: RawListener,
+) -> None:
+    """Both calls take the same terminal check: the blocking one is the stream's end."""
+    raw = _WAV_HEAD + _chunk(wav_of(b"", with_data=False)) + _chunk(b"")
+
+    streamed = _streamed(raw, raw_listener)
+    with raw_listener(raw) as (base_url, _):
+        spoken = _speak(base_url)
+
+    assert streamed[-1] == Malformed()
+    assert spoken == Malformed()
+
+
+@pytest.mark.parametrize("body", [b"OggS" + bytes(64), b"OggS"], ids=["long", "short"])
+def test_a_body_that_is_no_wav_container_leaves_no_audio_before_it_is_malformed(
+    body: bytes, raw_listener: RawListener
+) -> None:
+    """The signature is judged on the first bytes, before any audio leaves."""
+    raw = _WAV_HEAD + _chunk(body) + _chunk(b"")
+
+    assert _streamed(raw, raw_listener) == [Malformed()]
+
+
+def test_a_deadline_that_passes_while_the_stream_is_held_ends_it_past_the_deadline(
+    raw_listener: RawListener,
+) -> None:
+    """The rest is buffered and needs no socket read, yet the stream does not finish."""
+    now = 0.0
+    wav = wav_of(b"\x01\x00" * 100)
+    raw = _WAV_HEAD + _chunk(wav) + _chunk(b"\x01\x00" * 100) + _chunk(b"")
+
+    def pieces(connection: HTTPConnection) -> Iterator[bytes]:
+        connection.request("POST", SPEECH_PATH)
+        return body_pieces(connection.getresponse())
+
+    with raw_listener(raw) as (base_url, _):
+        stream = exchange_stream(
+            base_origin(base_url),
+            GENEROUS_DEADLINE_SECONDS,
+            pieces,
+            clock=lambda: now,
+        )
+        first = next(stream)
+        now += GENEROUS_DEADLINE_SECONDS
+        rest = list(stream)
+
+    assert first == wav
+    assert rest == [PastDeadline()]
+
+
+def test_a_stream_cut_off_after_audio_ends_cut_not_finished(
+    raw_listener: RawListener,
+) -> None:
+    """WIRE-90: the chunks that came stay, and the end is the failure."""
+    wav = wav_of(b"\x01\x00" * 100)
+
+    items = _streamed(_WAV_HEAD + _chunk(wav), raw_listener)
+
+    assert items == [wav, Cut()]
