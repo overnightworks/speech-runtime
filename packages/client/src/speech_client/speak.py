@@ -381,9 +381,11 @@ def speak(  # noqa: PLR0913
     items = _with_length(chunks) if response_format is ResponseFormat.WAV else chunks
     audio = bytearray()
     failure: StreamFailure | None = None
-    for item in items:
-        if isinstance(item, bytes):
-            audio += item
-        elif not isinstance(item, Finished):
-            failure = item
+    with closing(items):
+        for item in items:
+            if isinstance(item, bytes):
+                audio += item
+            elif not isinstance(item, Finished):
+                failure = item
+                break
     return Spoken(bytes(audio)) if failure is None else failure
