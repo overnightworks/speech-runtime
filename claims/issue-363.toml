@@ -1,8 +1,0 @@
-claim_id = "fcfaaf60cd5c42eebbc17a1a1297f403"
-agent = "Claude 2d5729b4-af30-4106-bf50-a26da1bb0a81"
-role = "builder"
-base = "c99d8fb82bc274b7f3065eadc17aafd880af7d25"
-branch = "claude/issue-363-voice-preference"
-scope = ["README.md", "docs/wire.md", "packages/client/src/speech_client", "packages/client/tests", "tests"]
-opened_commit = "3f448d338dd0cdb44d91fd459604345e69f25c56"
-whole_reason = "The preference, its health lookup and the speak retry are one client behaviour."
