@@ -1,0 +1,8 @@
+claim_id = "698fc2e3d8ff46629779699c32a18c97"
+agent = "Claude 2d5729b4-af30-4106-bf50-a26da1bb0a81"
+role = "builder"
+base = "99b651f3d6ea8fbf07daad63c8f97a5bee00a0ce"
+branch = "claude/issue-364-streaming-speak"
+scope = ["README.md", "packages/client/src/speech_client", "tests"]
+opened_commit = "8509b8b13685a9a3cba4d3eb59b4c229a4a1a56f"
+whole_reason = "The streaming speak and the blocking one become one transport path."
