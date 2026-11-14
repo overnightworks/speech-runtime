@@ -31,7 +31,6 @@ from speech_service.voice_activity import (
     PRE_ROLL_SECONDS,
     SAMPLE_RATE,
     WINDOW_SAMPLES,
-    WINDOW_SECONDS,
     SileroDetectors,
     is_voiced,
     open_shipped_model,
@@ -229,11 +228,6 @@ def _voiced_windows(pcm: bytes) -> list[bool]:
     return [is_voiced(p) for p in _silero().open().probabilities(heard)]
 
 
-def voiced_seconds(pcm: bytes, rate: int) -> float:
-    """The voiced seconds the service hears in `pcm` (PCM16 mono at `rate`)."""
-    return sum(_voiced_windows(to_wire_rate(pcm, rate))) * WINDOW_SECONDS
-
-
 def _turns(pcm: bytes) -> list[TurnEnd]:
     """The turns the service ends on 24 kHz `pcm` and the silence that follows it."""
     session = HearingSession(lambda: 0.0, _silero().open())
@@ -242,6 +236,11 @@ def _turns(pcm: bytes) -> list[TurnEnd]:
     for frame in frames_with_closing_silence(pcm):
         events += session.add(resampler.feed(frame))
     return [event for event in events if isinstance(event, TurnEnd)]
+
+
+def voiced_seconds(pcm: bytes, rate: int) -> float:
+    """The voiced seconds in the turns the service ends on `pcm` (PCM16 at `rate`)."""
+    return sum(turn.voiced_seconds for turn in _turns(to_wire_rate(pcm, rate)))
 
 
 def check_continuous_turn(pcm: bytes) -> float:
