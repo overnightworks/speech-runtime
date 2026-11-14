@@ -657,7 +657,7 @@ wheels = [
 
 [[package]]
 name = "overnightworks-speech-client"
-version = "0.13.0"
+version = "0.14.0"
 source = { editable = "packages/client" }
 dependencies = [
     { name = "pydantic" },
@@ -672,12 +672,12 @@ requires-dist = [
 
 [[package]]
 name = "overnightworks-speech-provider-contract"
-version = "0.13.0"
+version = "0.14.0"
 source = { editable = "providers/provider-contract" }
 
 [[package]]
 name = "overnightworks-speech-service"
-version = "0.13.0"
+version = "0.14.0"
 source = { editable = "." }
 dependencies = [
     { name = "av" },
