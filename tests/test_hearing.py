@@ -14,7 +14,7 @@ from speech_service.hearing import (
     WhisperHearing,
 )
 from speech_service.hearing_models import HearingModel
-from tests.support.whisper_support import StandInWhisper
+from tests.support.whisper_support import Segment, StandInWhisper
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -150,3 +150,89 @@ def test_a_device_hearing_does_not_know_stops_the_start(
 ) -> None:
     with pytest.raises(ValueError, match="SPEECH_DEVICE"):
         _engine(tmp_path, device=device)
+
+
+@pytest.mark.parametrize(
+    ("no_speech_prob", "avg_logprob", "text"),
+    [
+        (0.7, -1.2, ""),
+        (0.7, -1.0, ""),
+        (0.7, -0.9, "Guten"),
+        (0.6, -1.2, "Guten"),
+        (0.1, -1.2, "Guten"),
+    ],
+    ids=[
+        "improbable-words-of-no-speech",
+        "at-the-log-probability-line",
+        "likely-words-despite-no-speech",
+        "at-the-no-speech-line",
+        "improbable-words-of-speech",
+    ],
+)
+def test_a_decode_is_no_speech_when_both_measures_say_so_and_still_reports_them(
+    library: StandInWhisper,
+    tmp_path: Path,
+    no_speech_prob: float,
+    avg_logprob: float,
+    text: str,
+) -> None:
+    library.segments = [Segment(" Guten", no_speech_prob, avg_logprob)]
+    engine = _engine(tmp_path, library)
+    engine.load()
+
+    heard = engine.transcribe(b"\0\0" * 16_000, (Language.DE,))
+
+    assert (heard.text, heard.no_speech_prob, heard.avg_logprob) == (
+        text,
+        no_speech_prob,
+        avg_logprob,
+    )
+
+
+def test_a_decode_without_a_segment_has_no_measures(
+    library: StandInWhisper, tmp_path: Path
+) -> None:
+    library.segments = []
+    engine = _engine(tmp_path, library)
+    engine.load()
+
+    heard = engine.transcribe(b"\0\0" * 16_000, (Language.DE,))
+
+    assert (heard.text, heard.no_speech_prob, heard.avg_logprob) == ("", None, None)
+
+
+def test_the_load_fails_loud_when_the_voice_detector_does_not_load(
+    library: StandInWhisper, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse() -> None:
+        message = "no model"
+        raise RuntimeError(message)
+
+    engine = _engine(tmp_path, library)
+    monkeypatch.setattr(engine._detectors, "load", refuse)  # noqa: SLF001 - the shipped model cannot be broken from outside
+
+    with pytest.raises(RuntimeError, match="no model"):
+        engine.load()
+
+
+def test_a_loaded_engine_opens_a_detector_for_a_session(
+    library: StandInWhisper, tmp_path: Path
+) -> None:
+    engine = _engine(tmp_path, library)
+    engine.load()
+
+    detector = engine.open_detector()
+
+    assert detector.probabilities(bytes(2 * 1024)) != []
+
+
+def test_a_closed_engine_opens_no_detector(
+    library: StandInWhisper, tmp_path: Path
+) -> None:
+    engine = _engine(tmp_path, library)
+    engine.load()
+
+    engine.close()
+
+    with pytest.raises(RuntimeError, match="not loaded"):
+        engine.open_detector()

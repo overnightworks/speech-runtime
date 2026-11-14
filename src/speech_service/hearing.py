@@ -13,25 +13,30 @@ import numpy as np
 from speech_service.admission_gate import AdmissionGate, Lease
 from speech_service.cuda_libs import cuda_library_dirs, prepare_cuda_libraries
 from speech_service.hearing_models import model_directory, voiced_floor
-from speech_service.pcm import voiced_seconds
+from speech_service.voice_activity import SAMPLE_RATE, SileroDetectors
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
     from pathlib import Path
 
-    from faster_whisper.transcribe import TranscriptionOptions
+    from faster_whisper.transcribe import Segment, TranscriptionOptions
 
     from speech_client.wire import Language
     from speech_service.clock import Clock
     from speech_service.config import Settings
     from speech_service.hearing_models import HearingModel
+    from speech_service.voice_activity import SpeechDetector
 
 logger = logging.getLogger(__name__)
 
-HEARING_SAMPLE_RATE: Final = 16_000
+HEARING_SAMPLE_RATE: Final = SAMPLE_RATE
 CPU_THREADS: Final = 4
 _SETTING: Final = "SPEECH_HEARING_MODEL"
 _DEVICES: Final = frozenset({"cpu", "cuda"})
+# A decode is no speech when its no-speech probability is above the first and its
+# average log probability is not above the second.
+NO_SPEECH_THRESHOLD: Final = 0.6
+LOG_PROB_THRESHOLD: Final = -1.0
 
 
 class ResourceUnavailableError(Exception):
@@ -40,10 +45,16 @@ class ResourceUnavailableError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Heard:
-    """The words of one decode and the language it was decoded in."""
+    """The words of one decode, the language it was decoded in and its measures.
+
+    The measures are those of the decode's first segment, whether or not it was
+    judged no speech, and `None` when the decode yielded no segment.
+    """
 
     text: str
     language: Language
+    no_speech_prob: float | None = None
+    avg_logprob: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,9 +66,13 @@ class LanguageScores:
 
 @dataclass(frozen=True, slots=True)
 class Utterance:
-    """What an identifier may read: the turn's 16 kHz mono PCM16 and the scores."""
+    """What an identifier may read: the turn's PCM, its voiced seconds and the scores.
+
+    The PCM is 16 kHz mono 16-bit; the voiced seconds are those of its speech windows.
+    """
 
     pcm: bytes
+    voiced_seconds: float
     scores: LanguageScores
 
 
@@ -86,7 +101,7 @@ class ScoreIdentifier:
 
         `None` below `min_voiced_seconds` of voiced speech, and on a tie.
         """
-        if voiced_seconds(utterance.pcm, HEARING_SAMPLE_RATE) < self.min_voiced_seconds:
+        if utterance.voiced_seconds < self.min_voiced_seconds:
             return None
         scores = utterance.scores.allowed
         best = max(scores[language] for language in allowed)
@@ -102,11 +117,21 @@ class HearingEngine(Protocol):
     def load(self) -> None:
         """Load the weights, or raise `ResourceUnavailableError` or another error."""
 
-    def transcribe(self, pcm: bytes, languages: tuple[Language, ...]) -> Heard:
+    def open_detector(self) -> SpeechDetector:
+        """A detector at the start of one live session's audio, once loaded."""
+
+    def transcribe(
+        self,
+        pcm: bytes,
+        languages: tuple[Language, ...],
+        voiced_seconds: float = 0.0,
+    ) -> Heard:
         """The words in 16 kHz mono 16-bit PCM, and the language they were heard in.
 
         `languages` is ordered, non-empty and unique; its first element is the main
         language, heard when the set holds one language or the language is not known.
+        `voiced_seconds` are those of `pcm`'s speech windows; a recording has no turns
+        and names no language, so it leaves them out.
         """
 
     def close(self) -> None:
@@ -151,7 +176,8 @@ def _scores(
 def _decode_options(suppress_tokens: list[int]) -> TranscriptionOptions:
     """The options of today's decode: greedy, one temperature, no timestamps.
 
-    Every other field is the default of faster-whisper's own `transcribe`. A fresh
+    Every other field is the default of faster-whisper's own `transcribe`, except
+    that it never skips a window as no speech: `_judged_no_speech` does. A fresh
     object for every decode, because `generate_segments` rewrites its clip timestamps.
     """
     from faster_whisper.transcribe import TranscriptionOptions  # noqa: PLC0415 - as above
@@ -163,8 +189,8 @@ def _decode_options(suppress_tokens: list[int]) -> TranscriptionOptions:
         length_penalty=1,
         repetition_penalty=1,
         no_repeat_ngram_size=0,
-        log_prob_threshold=-1.0,
-        no_speech_threshold=0.6,
+        log_prob_threshold=LOG_PROB_THRESHOLD,
+        no_speech_threshold=None,
         compression_ratio_threshold=2.4,
         condition_on_previous_text=False,
         prompt_reset_on_temperature=0.5,
@@ -184,6 +210,26 @@ def _decode_options(suppress_tokens: list[int]) -> TranscriptionOptions:
         hallucination_silence_threshold=None,
         hotwords=None,
     )
+
+
+def _judged_no_speech(segment: Segment) -> bool:
+    """faster-whisper's own skip rule, applied to one segment's window."""
+    return (
+        segment.no_speech_prob > NO_SPEECH_THRESHOLD
+        and segment.avg_logprob <= LOG_PROB_THRESHOLD
+    )
+
+
+def _heard(segments: Iterable[Segment], language: Language) -> Heard:
+    """The words of the segments judged speech, with the first segment's measures."""
+    measured = list(segments)
+    if not measured:
+        return Heard("", language)
+    words = "".join(
+        segment.text for segment in measured if not _judged_no_speech(segment)
+    )
+    first = measured[0]
+    return Heard(words.strip(), language, first.no_speech_prob, first.avg_logprob)
 
 
 class WhisperHearing:
@@ -214,6 +260,7 @@ class WhisperHearing:
         self._identifier = identifier
         self._libraries = libraries
         self._model = None
+        self._detectors = SileroDetectors()
 
     def load(self) -> None:
         """Load the CTranslate2 weights from the local directory, never the network."""
@@ -238,12 +285,23 @@ class WhisperHearing:
                 message = "the card is full"
                 raise ResourceUnavailableError(message) from None
             raise
+        self._detectors.load()
 
-    def transcribe(self, pcm: bytes, languages: tuple[Language, ...]) -> Heard:
+    def open_detector(self) -> SpeechDetector:
+        """A Silero stream at the start of one live session's audio."""
+        return self._detectors.open()
+
+    def transcribe(
+        self,
+        pcm: bytes,
+        languages: tuple[Language, ...],
+        voiced_seconds: float = 0.0,
+    ) -> Heard:
         """The recognised words and their language; the same audio gives the same text.
 
         A set of two or more encodes the first window once; the identifier chooses
-        from that pass and the decode reuses its output.
+        from that pass and the decode reuses its output. A segment of a window judged
+        no speech adds no words, and its measures are still returned.
         """
         from faster_whisper.audio import pad_or_trim  # noqa: PLC0415 - as above
         from faster_whisper.tokenizer import Tokenizer  # noqa: PLC0415 - as above
@@ -265,7 +323,9 @@ class WhisperHearing:
             encoder_output = model.encode(pad_or_trim(features[:, :window]))
             ranked = model.model.detect_language(encoder_output)[0]
             scores = _scores(ranked, languages)
-            known = self._identifier.identify(Utterance(pcm, scores), languages)
+            known = self._identifier.identify(
+                Utterance(pcm, voiced_seconds, scores), languages
+            )
             language = known or language
         tokenizer = Tokenizer(
             model.hf_tokenizer,
@@ -281,11 +341,12 @@ class WhisperHearing:
             log_progress=False,
             encoder_output=encoder_output,
         )
-        return Heard("".join(segment.text for segment in segments).strip(), language)
+        return _heard(segments, language)
 
     def close(self) -> None:
         """Drop the model so its memory is freed."""
         self._model = None
+        self._detectors.close()
         gc.collect()
 
 
@@ -332,6 +393,17 @@ class Hearing:
     def capture(self) -> HearingEngine | None:
         """The loaded engine, or `None` while hearing is unavailable."""
         return self._ready
+
+    def open_detector(self) -> SpeechDetector:
+        """A detector at the start of one live session's audio.
+
+        Raises `RuntimeError` while hearing is unavailable.
+        """
+        engine = self._ready
+        if engine is None:
+            message = "hearing is unavailable"
+            raise RuntimeError(message)
+        return engine.open_detector()
 
     def open_session(self, limit: int) -> Lease | None:
         """A place for one live session, or `None` while `limit` sessions are open.

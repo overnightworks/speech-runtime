@@ -23,9 +23,11 @@ DEFAULT_PROBABILITIES = {"de": 0.7, "en": 0.2, "fr": 0.1}
 
 @dataclass(frozen=True, slots=True)
 class Segment:
-    """One decoded segment."""
+    """One decoded segment, by default a confident one."""
 
     text: str
+    no_speech_prob: float = 0.01
+    avg_logprob: float = -0.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +79,7 @@ class StandInWhisper:
         self.built: list[dict[str, object]] = []
         self.failure: RuntimeError | None = None
         self.probabilities = dict(DEFAULT_PROBABILITIES)
+        self.segments = [Segment(" Guten"), Segment(" Tag ")]
         self.encodes: list[np.ndarray] = []
         self.detections: list[EncoderOutput] = []
         self.decodes: list[Decode] = []
@@ -125,4 +128,4 @@ class StandInWhisper:
         self.decodes.append(
             Decode(features, tokenizer, options, log_progress, encoder_output)
         )
-        return [Segment(" Guten"), Segment(" Tag ")]
+        return self.segments

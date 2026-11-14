@@ -10,6 +10,7 @@ import pytest
 from speech_client.wire import Language
 from speech_service.admission_gate import Lease
 from speech_service.live_session import POLL_WAIT_SECONDS, poll_forever
+from speech_service.voice_activity import WINDOW_SECONDS
 from tests.support.clock_support import FakeClock
 from tests.support.hear_support import HEARD_TEXT, FakeHearing, loaded
 from tests.support.live_support import (
@@ -34,6 +35,9 @@ POLLS = 3
 THREE_TURNS_SECONDS = 4 * 30 + 1
 BLOCKER_AND_MARKER = 2
 DELTA = "conversation.item.input_audio_transcription.delta"
+# Half a second of speech touches 16 windows; 16 windows of silence end the turn.
+QUESTION_WINDOWS = 32
+SPEECH_WINDOWS = 16
 
 
 def _transcribe_silence(engine: HearingEngine) -> str:
@@ -82,7 +86,7 @@ def test_a_question_without_a_commit_is_announced_ended_and_heard_once() -> None
     assert socket.events[-1]["transcript"] == HEARD_TEXT
     assert socket.events[-1]["usage"] == {
         "type": "duration",
-        "seconds": pytest.approx(1.3),
+        "seconds": pytest.approx(QUESTION_WINDOWS * WINDOW_SECONDS),
     }
 
 
@@ -372,7 +376,10 @@ def test_an_item_whose_final_decode_is_empty_completes_once_with_empty_text() ->
     completed = socket.of_type(COMPLETED)
     assert [event["transcript"] for event in completed] == [""]
     assert [event["usage"] for event in completed] == [
-        {"type": "duration", "seconds": pytest.approx(1.3)}
+        {
+            "type": "duration",
+            "seconds": pytest.approx(QUESTION_WINDOWS * WINDOW_SECONDS),
+        }
     ]
     assert socket.of_type(FAILED) == []
 
@@ -752,6 +759,7 @@ def test_a_completed_turn_logs_one_line_with_its_timings(
     (line,) = _timing_lines(caplog)
     assert line == (
         f"live turn completed item_id={item_id} ended_by=client audio_seconds=0.50"
+        " voiced_seconds=0.48 no_speech_prob=none avg_logprob=none"
         " wait_ms=200 decode_ms=500 completed_ms=700"
         " partial_count=1 partial_decode_ms=300"
     )
@@ -786,4 +794,38 @@ def test_the_timing_line_holds_none_of_the_heard_text(
 
     (line,) = _timing_lines(caplog)
     assert HEARD_TEXT not in line
+    assert HEARD_TEXT not in caplog.text
+
+
+def test_the_decode_of_a_turn_is_given_its_voiced_seconds() -> None:
+    async def scenario() -> FakeHearing:
+        engine = FakeHearing()
+        session, _ = await started(loaded(engine, FakeClock()))
+        await _one_question(session)
+        await session.settled()
+        return engine
+
+    engine = asyncio.run(scenario())
+
+    assert engine.heard_voiced[-1] == pytest.approx(SPEECH_WINDOWS * WINDOW_SECONDS)
+
+
+@pytest.mark.parametrize("text", [HEARD_TEXT, ""], ids=["heard", "judged-no-speech"])
+def test_the_timing_line_carries_the_measures_of_the_decode_and_never_its_text(
+    caplog: pytest.LogCaptureFixture, text: str
+) -> None:
+    async def scenario() -> None:
+        engine = FakeHearing(text)
+        engine.measures = (0.1, -0.3)
+        session, _ = await started(loaded(engine, FakeClock()))
+        await _one_question(session)
+        await session.settled()
+
+    caplog.set_level(logging.INFO)
+
+    asyncio.run(scenario())
+
+    (logged,) = _timing_lines(caplog)
+    assert "no_speech_prob=0.100 avg_logprob=-0.300" in logged
+    assert "voiced_seconds=0.51" in logged
     assert HEARD_TEXT not in caplog.text
