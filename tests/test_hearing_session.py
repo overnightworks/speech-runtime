@@ -18,7 +18,7 @@ from speech_service.voice_activity import (
     WINDOW_SAMPLES,
     WINDOW_SECONDS,
 )
-from tests.support.detector_support import LOUD_LEVEL, LevelDetector
+from tests.support.detector_support import LOUD_LEVEL, LevelDetector, ScriptedDetector
 
 BYTES_PER_SECOND = SAMPLE_RATE * 2
 SILENT_WINDOWS = round(SILENCE_SECONDS / WINDOW_SECONDS + 0.5)
@@ -110,6 +110,23 @@ def test_a_turn_holds_its_voiced_seconds_and_not_its_silence() -> None:
     (ended,) = _ends(session.add(_quiet(SILENT_WINDOWS)))
 
     assert ended.voiced_seconds == pytest.approx(40 * WINDOW_SECONDS)
+
+
+@pytest.mark.parametrize("leading", [10, 30])
+def test_a_turn_counts_the_voiced_windows_of_its_pre_roll_and_no_older_ones(
+    leading: int,
+) -> None:
+    """Windows from the end threshold up are voiced, confirmed or not."""
+    faint, speech = 0.4, 0.9
+    probabilities = [faint] * leading + [speech] * 50 + [0.0] * SILENT_WINDOWS
+    session = HearingSession(_Clock(), ScriptedDetector(probabilities))
+
+    (ended,) = _ends(session.add(_quiet(len(probabilities))))
+
+    pre_roll_windows = int(PRE_ROLL_SECONDS / WINDOW_SECONDS)
+    assert ended.voiced_seconds == pytest.approx(
+        (min(leading, pre_roll_windows) + 50) * WINDOW_SECONDS
+    )
 
 
 def test_a_turn_starts_a_pre_roll_before_its_speech_and_drops_older_audio() -> None:

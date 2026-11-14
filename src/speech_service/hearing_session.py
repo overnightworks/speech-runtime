@@ -8,6 +8,7 @@ transport and the item lifecycle belong to the caller.
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -89,6 +90,7 @@ class HearingSession:
         self._run_start = 0
         self._silent_windows = 0
         self._voiced_windows = 0
+        self._waiting_voiced: deque[int] = deque()
         self._last_partial_at: float | None = None
         self._last_partial_samples = 0
 
@@ -131,6 +133,8 @@ class HearingSession:
         self._windows += 1
         if self._speaking:
             return self._continue_turn(probability, start + WINDOW_SAMPLES)
+        if is_voiced(probability):
+            self._waiting_voiced.append(start)
         return self._wait_for_speech(probability, start)
 
     def _wait_for_speech(
@@ -151,7 +155,8 @@ class HearingSession:
     def _open_turn(self) -> list[SpeechStart | TurnEnd]:
         self._drop_before(self._run_start - _PRE_ROLL_SAMPLES)
         self._speaking = True
-        self._voiced_windows = self._speech_windows
+        self._voiced_windows = len(self._waiting_voiced)
+        self._waiting_voiced.clear()
         self._silent_windows = 0
         self._speech_windows = 0
         return [
@@ -178,18 +183,23 @@ class HearingSession:
         if dropped > 0:
             del self._pcm[: dropped * _BYTES_PER_SAMPLE]
             self._held_from += dropped
+        while self._waiting_voiced and self._waiting_voiced[0] < self._held_from:
+            self._waiting_voiced.popleft()
 
     def _end(self, end: int, *, by_client: bool) -> list[TurnEnd]:
         start = self._held_from
         size = (end - start) * _BYTES_PER_SAMPLE
         pcm = bytes(self._pcm[:size])
-        voiced_seconds = self._voiced_windows * WINDOW_SECONDS
+        voiced_seconds = (
+            self._voiced_windows + len(self._waiting_voiced)
+        ) * WINDOW_SECONDS
         del self._pcm[:size]
         self._held_from = end
         self._speaking = False
         self._speech_windows = 0
         self._silent_windows = 0
         self._voiced_windows = 0
+        self._waiting_voiced.clear()
         self._last_partial_at = None
         self._last_partial_samples = 0
         if not pcm:

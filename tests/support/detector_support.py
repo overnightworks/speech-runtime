@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from speech_service.voice_activity import WINDOW_SAMPLES
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _BYTES_PER_WINDOW = WINDOW_SAMPLES * 2
 LOUD_LEVEL = 5000
@@ -29,3 +34,15 @@ class LevelDetector:
         samples = np.frombuffer(heard[:complete], dtype="<i2").astype(np.float64)
         levels = np.abs(samples).reshape(-1, WINDOW_SAMPLES).mean(axis=1)
         return [float(level >= _SPEECH_LEVEL) for level in levels]
+
+
+class ScriptedDetector:
+    """Answers the given probabilities in order, one for each whole window it is fed."""
+
+    def __init__(self, probabilities: Iterable[float]) -> None:
+        """Answer `probabilities`, then run out."""
+        self._probabilities = iter(probabilities)
+
+    def probabilities(self, pcm: bytes) -> list[float]:
+        """The next answers, one for each whole window `pcm` holds."""
+        return [next(self._probabilities) for _ in range(len(pcm) // _BYTES_PER_WINDOW)]
