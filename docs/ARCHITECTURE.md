@@ -115,9 +115,10 @@ flowchart LR
   measures all the same. The log line of each finished live turn holds the
   duration, voiced seconds, no-speech probability and average log probability of
   its decode, skipped or not (a partial decode logs its two measures on a line of
-  its own), and never its text. Hearing drops nothing that Silero calls a voice
-  and adds no gate beyond that rule; a gate on the measures waits for a recorded
-  corpus. The recording route has no turns and decodes the whole file under the
+  its own), and never its text. Hearing drops nothing that Silero calls a voice,
+  with one exception: a turn Silero opened whose decode meets the no-speech rule
+  ends with no words, and no new confidence gate is added; a gate on the measures
+  waits for a recorded corpus. The recording route has no turns and decodes the whole file under the
   same rule.
 - **The relay.** `speech_client.relay` (in `packages/client`) is what an app
   mounts behind its own login check: it forwards a browser's binary audio
