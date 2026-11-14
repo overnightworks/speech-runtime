@@ -124,7 +124,8 @@ overnightworks-speech-service @ git+https://github.com/overnightworks/speech@vX.
 ```
 
 The client carries the wire's types, the bounded speaking call
-(`speech_client.speak`), the bounded health fetch
+(`speech_client.speak`), the same call with an ordered voice preference that
+follows the voices the service offers (`speech_client.voice_preference`), the bounded health fetch
 (`speech_client.health`), the live hearing session
 (`speech_client.hearing`), the relay of a browser's audio frames to that session
 (`speech_client.relay`) and the finished utterances an app's server hears from
