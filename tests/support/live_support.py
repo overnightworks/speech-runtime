@@ -148,6 +148,13 @@ async def commit_a_turn(session: LiveSession, seconds: float = 0.3) -> None:
     await session.on_message(commit())
 
 
+async def one_question(session: LiveSession) -> None:
+    """Half a second of speech, then a silence that ends the turn, and a tick."""
+    await session.on_message(append(audio(0.5)))
+    await session.on_message(append(audio(0.8, 0)))
+    await session.on_tick()
+
+
 def end_is(socket: FakeSocket, code: str, failed: int) -> bool:
     """Whether the session failed `failed` items, sent `error` `code` and closed."""
     types = socket.types()

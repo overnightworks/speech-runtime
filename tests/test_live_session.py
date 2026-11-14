@@ -23,13 +23,13 @@ from tests.support.live_support import (
     commit,
     commit_a_turn,
     end_is,
+    one_question,
     started,
     update,
 )
 
 if TYPE_CHECKING:
     from speech_service.hearing import HearingEngine
-    from speech_service.live_session import LiveSession
 
 POLLS = 3
 THREE_TURNS_SECONDS = 4 * 30 + 1
@@ -37,17 +37,10 @@ BLOCKER_AND_MARKER = 2
 DELTA = "conversation.item.input_audio_transcription.delta"
 # Half a second of speech touches 16 windows; 16 windows of silence end the turn.
 QUESTION_WINDOWS = 32
-SPEECH_WINDOWS = 16
 
 
 def _transcribe_silence(engine: HearingEngine) -> str:
     return engine.transcribe(b"\0\0", (Language.DE,)).text
-
-
-async def _one_question(session: LiveSession) -> None:
-    await session.on_message(append(audio(0.5)))
-    await session.on_message(append(audio(0.8, 0)))
-    await session.on_tick()
 
 
 def test_the_session_opens_with_the_default_session() -> None:
@@ -68,7 +61,7 @@ def test_a_question_without_a_commit_is_announced_ended_and_heard_once() -> None
 
     async def scenario() -> FakeSocket:
         session, socket = await started(loaded(FakeHearing(), FakeClock()))
-        await _one_question(session)
+        await one_question(session)
         await session.settled()
         return socket
 
@@ -103,7 +96,7 @@ def test_a_session_hears_in_its_language(messages: list[str], language: str) -> 
         session, _ = await started(loaded(engine, FakeClock()))
         for message in messages:
             await session.on_message(message)
-        await _one_question(session)
+        await one_question(session)
         await session.settled()
         return engine
 
@@ -147,7 +140,7 @@ def test_every_completed_item_names_exactly_the_language_it_was_heard_in(
         session, socket = await started(loaded(engine, FakeClock()))
         for message in messages:
             await session.on_message(message)
-        await _one_question(session)
+        await one_question(session)
         await session.settled()
         return socket, engine
 
@@ -195,7 +188,7 @@ def test_two_questions_make_two_items_chained_by_their_predecessor() -> None:
     async def scenario() -> FakeSocket:
         session, socket = await started(loaded(FakeHearing(), FakeClock()))
         for _ in range(2):
-            await _one_question(session)
+            await one_question(session)
             await session.settled()
         return socket
 
@@ -367,7 +360,7 @@ def test_an_item_whose_final_decode_is_empty_completes_once_with_empty_text() ->
 
     async def scenario() -> FakeSocket:
         session, socket = await started(loaded(FakeHearing(text=""), FakeClock()))
-        await _one_question(session)
+        await one_question(session)
         await session.settled()
         return socket
 
@@ -639,7 +632,7 @@ def test_a_turn_that_fell_silent_while_one_waits_ends_the_session_as_busy() -> N
         session, socket = await started(loaded(engine, FakeClock()))
         await commit_a_turn(session)
         await commit_a_turn(session)
-        await _one_question(session)
+        await one_question(session)
         engine.release.set()
         await session.on_disconnect()
         return socket
@@ -715,117 +708,3 @@ def test_a_partial_that_returns_after_its_turn_ended_adds_no_delta() -> None:
     socket = asyncio.run(scenario())
 
     assert socket.of_type(DELTA) == []
-
-
-def _timing_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [
-        record.getMessage()
-        for record in caplog.records
-        if record.getMessage().startswith("live turn completed")
-    ]
-
-
-def test_a_completed_turn_logs_one_line_with_its_timings(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    async def scenario() -> str:
-        engine = FakeHearing(hold=True)
-        clock = FakeClock()
-        hearing = loaded(engine, clock)
-        session, socket = await started(hearing, final_wait_seconds=WAIT_SECONDS)
-        await session.on_message(append(audio(0.5)))
-        await session.on_tick()
-        clock.jump(0.3)
-        engine.release.set()
-        await session.settled()
-        engine.release.clear()
-        engine.entered.clear()
-        running = hearing.gate.try_acquire()
-        assert running is not None
-        await session.on_message(commit())
-        await clock.until_a_wait_begins()
-        clock.jump(0.2)
-        running.close()
-        assert await asyncio.to_thread(engine.entered.wait, WAIT_SECONDS)
-        clock.jump(0.5)
-        engine.release.set()
-        await session.settled()
-        return str(socket.of_type(COMPLETED)[0]["item_id"])
-
-    caplog.set_level(logging.INFO)
-
-    item_id = asyncio.run(scenario())
-
-    (line,) = _timing_lines(caplog)
-    assert line == (
-        f"live turn completed item_id={item_id} ended_by=client audio_seconds=0.50"
-        " voiced_seconds=0.48 no_speech_prob=none avg_logprob=none"
-        " wait_ms=200 decode_ms=500 completed_ms=700"
-        " partial_count=1 partial_decode_ms=300"
-    )
-
-
-def test_a_failed_turn_logs_no_timings(caplog: pytest.LogCaptureFixture) -> None:
-    async def scenario() -> None:
-        engine = FakeHearing()
-        engine.fail_transcription = True
-        session, socket = await started(loaded(engine, FakeClock()))
-        await commit_a_turn(session)
-        await socket.until_closed()
-
-    caplog.set_level(logging.INFO)
-
-    asyncio.run(scenario())
-
-    assert _timing_lines(caplog) == []
-
-
-def test_the_timing_line_holds_none_of_the_heard_text(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    async def scenario() -> None:
-        session, _ = await started(loaded(FakeHearing(), FakeClock()))
-        await commit_a_turn(session)
-        await session.settled()
-
-    caplog.set_level(logging.DEBUG)
-
-    asyncio.run(scenario())
-
-    (line,) = _timing_lines(caplog)
-    assert HEARD_TEXT not in line
-    assert HEARD_TEXT not in caplog.text
-
-
-def test_the_decode_of_a_turn_is_given_its_voiced_seconds() -> None:
-    async def scenario() -> FakeHearing:
-        engine = FakeHearing()
-        session, _ = await started(loaded(engine, FakeClock()))
-        await _one_question(session)
-        await session.settled()
-        return engine
-
-    engine = asyncio.run(scenario())
-
-    assert engine.heard_voiced[-1] == pytest.approx(SPEECH_WINDOWS * WINDOW_SECONDS)
-
-
-@pytest.mark.parametrize("text", [HEARD_TEXT, ""], ids=["heard", "judged-no-speech"])
-def test_the_timing_line_carries_the_measures_of_the_decode_and_never_its_text(
-    caplog: pytest.LogCaptureFixture, text: str
-) -> None:
-    async def scenario() -> None:
-        engine = FakeHearing(text)
-        engine.measures = (0.1, -0.3)
-        session, _ = await started(loaded(engine, FakeClock()))
-        await _one_question(session)
-        await session.settled()
-
-    caplog.set_level(logging.INFO)
-
-    asyncio.run(scenario())
-
-    (logged,) = _timing_lines(caplog)
-    assert "no_speech_prob=0.100 avg_logprob=-0.300" in logged
-    assert "voiced_seconds=0.51" in logged
-    assert HEARD_TEXT not in caplog.text
