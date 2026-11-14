@@ -118,7 +118,6 @@ def _head(status: str, *headers: str) -> bytes:
 _WAV_HEAD = _head("200 OK", "Content-Type: audio/wav", "Transfer-Encoding: chunked")
 _OGG_HEAD = _head("200 OK", "Content-Type: audio/ogg", "Transfer-Encoding: chunked")
 SAMPLE_RATE = 22_050
-SECONDS_PER_PCM_BYTE = 1 / (2 * SAMPLE_RATE)
 
 
 def _wav(pcm: bytes, *, with_data: bool = True) -> bytes:
@@ -527,7 +526,7 @@ def test_the_stream_ends_with_the_exact_seconds_whatever_the_chunking(
     *pieces, end = _streamed(_WAV_HEAD + chunks + _chunk(b""), raw_listener)
 
     assert b"".join(pieces) == wav
-    assert end == Finished(len(pcm) * SECONDS_PER_PCM_BYTE)
+    assert end == Finished(len(pcm) // 2 / SAMPLE_RATE)
 
 
 def test_a_wav_without_audio_data_is_malformed_in_the_stream_and_the_blocking_call(

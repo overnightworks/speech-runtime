@@ -310,9 +310,8 @@ def test_the_stream_carries_the_wav_and_ends_with_the_exact_seconds() -> None:
     assert all(isinstance(chunk, bytes) for chunk in chunks)
     assert b"".join(chunks) == spoken.audio
     assert isinstance(end, Finished)
-    assert end.seconds == pytest.approx(
-        int(0.3 * SPEAK_SAMPLE_RATE) / SPEAK_SAMPLE_RATE
-    )
+    pcm = spoken.audio.split(b"data", 1)[1][4:]  # after the chunk id and size
+    assert end.seconds == len(pcm) // 2 / SPEAK_SAMPLE_RATE
 
 
 def test_the_stream_hands_over_the_first_audio_while_the_voice_still_renders() -> None:
