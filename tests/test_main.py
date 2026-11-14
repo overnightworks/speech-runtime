@@ -417,9 +417,15 @@ def test_signal_exit_is_zero_and_closes_the_listener(
 
 
 def _signalled_stop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, hearing: Hearing
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    hearing: Hearing,
+    after: threading.Event | None = None,
 ) -> Settings:
-    """Serve over `hearing` with a server that SIGTERMs the process once it runs."""
+    """Serve over `hearing` with a server that SIGTERMs the process once it runs.
+
+    With `after` the SIGTERM waits until that event is set.
+    """
     runtime = Runtime(
         {VoiceId.THORSTEN: None},
         dependencies=RuntimeDependencies(
@@ -429,7 +435,7 @@ def _signalled_stop(
         hearing=hearing,
     )
     monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
-    monkeypatch.setattr(__main__, "build_server", lambda _app: _SignalledServer())
+    monkeypatch.setattr(__main__, "build_server", lambda _app: _SignalledServer(after))
     return _serving_settings(tmp_path, hearing_final_wait_seconds=0.05)
 
 
@@ -477,13 +483,20 @@ def test_a_hearing_load_that_will_not_end_ends_the_process_through_the_abort_wit
 ) -> None:
     """WIRE-147: a load that cannot be interrupted does not hold the exit."""
     engine = FakeHearing(hold_load=True)
-    settings = _signalled_stop(tmp_path, monkeypatch, Hearing(engine, LoopClock()))
+    settings = _signalled_stop(
+        tmp_path, monkeypatch, Hearing(engine, LoopClock()), engine.load_entered
+    )
     aborted: list[int] = []
     policy = StopPolicy(grace_seconds=0.05, abort=aborted.append)
 
-    outcome = asyncio.run(__main__.serve(settings, policy))
+    async def stopped_during_the_load() -> int:
+        try:
+            return await __main__.serve(settings, policy)
+        finally:
+            engine.load_release.set()
 
-    engine.load_release.set()
+    outcome = asyncio.run(stopped_during_the_load())
+
     assert outcome == 0
     assert aborted == [0]
 
