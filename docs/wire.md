@@ -208,9 +208,11 @@ PCM16 at 24 kHz) and
 `input_audio_buffer.commit`. **WIRE-60** Invalid base64 or an odd byte count ends the session. **WIRE-61** Any other event type, `input_audio_buffer.clear`
 included, is a protocol violation. **WIRE-62** A client `event_id` is optional; the service
 echoes it only in an `error` about that event. **WIRE-63** A commit ends the open turn at
-once, and with no turn open it ends one of the audio the service still holds (at most the
-last 0.35 s, WIRE-66); **WIRE-64** a commit with no audio since the last turn ended is a
-protocol violation.
+once, and with no turn open it ends one of the audio the service still holds: the last
+0.35 s up to the newest 32 ms window it has judged, plus the samples short of the next
+window, or, while one or two speech windows wait to be confirmed, the audio from 0.35 s
+before the first of them (WIRE-66); **WIRE-64** a commit with no audio since the last
+turn ended is a protocol violation.
 **WIRE-65** With server turn detection a client need not commit.
 
 **Turns.** **WIRE-66** Speech is what Silero VAD hears as a voice, whatever its loudness
@@ -243,7 +245,7 @@ never its text.
 the service received in this session, from its first byte, in the service's 16 kHz time,
 the dropped audio between turns included. They depend on neither the wall clock nor when
 an event is sent. Turns are ordered, not contiguous: a turn's end is the position of the
-last audio it holds in whole milliseconds, and the next turn starts after that end.
+last audio it holds in whole milliseconds, and the next turn starts at or after that end.
 `audio_start_ms` is where the first of the speech windows that opened the turn starts,
 so the audio the turn decodes begins up to 0.35 s earlier. `audio_end_ms` is the end of
 all audio in the turn: it includes the silence that ended it (WIRE-66), or lies 30 s
