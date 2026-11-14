@@ -1,8 +1,0 @@
-claim_id = "d493764fb15d4b8783eb5f3abcc5f11a"
-agent = "Claude 2d5729b4-af30-4106-bf50-a26da1bb0a81"
-role = "builder"
-base = "c99d8fb82bc274b7f3065eadc17aafd880af7d25"
-branch = "claude/issue-382-silero-turns"
-scope = ["docs/ARCHITECTURE.md", "docs/wire.md", "scripts/hearing_figures.py", "scripts/image_judgement.py", "src/speech_service", "tests"]
-opened_commit = "aacf58dd6028b5da4427c36e10b13a047fb64f70"
-whole_reason = "Turn detection, the utterance log and the invented-text gate are one hearing behaviour over the same utterances."
