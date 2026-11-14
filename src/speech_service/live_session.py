@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["POLL_WAIT_SECONDS", "LiveSession", "poll_forever"]
 
+_HEARING_FAILED: Final = "hearing failed"
 _PCM_BYTES_PER_SECOND: Final = 16_000 * BYTES_PER_SAMPLE
 _MAX_ENDED_TURNS: Final = 2
 
@@ -372,7 +373,7 @@ class LiveSession:
                 lease, self._transcription(final.pcm, final.voiced_seconds)
             )
         except Exception as error:  # noqa: BLE001 - logged by type and never by message
-            log_failure(logger, "hearing failed", error)
+            log_failure(logger, _HEARING_FAILED, error)
             await self._end(RefusalCode.UNAVAILABLE)
             return
         # On the worker, so a decode that finishes after the session ended still logs.
@@ -390,7 +391,7 @@ class LiveSession:
             heard = await asyncio.wrap_future(future)
             final.decode_finished_at = self._clock.now()
         except Exception as error:  # noqa: BLE001 - logged by type and never by message
-            log_failure(logger, "hearing failed", error)
+            log_failure(logger, _HEARING_FAILED, error)
             await self._end(RefusalCode.UNAVAILABLE)
             return
         if ahead is not None:
@@ -445,7 +446,7 @@ class LiveSession:
             partials.count += 1
             partials.seconds += self._clock.now() - started_at
         except Exception as error:  # noqa: BLE001 - logged by type and never by message
-            log_failure(logger, "hearing failed", error)
+            log_failure(logger, _HEARING_FAILED, error)
             await self._end(RefusalCode.UNAVAILABLE)
             return
         async with self._lock:
