@@ -45,7 +45,6 @@ from speech_client.wire import (
 )
 from speech_service.failures import log_failure
 from speech_service.hearing_session import (
-    DRAIN_TURN_SECONDS,
     MAX_TURN_SECONDS,
     POLL_WAIT_SECONDS,
     HearingSession,
@@ -239,23 +238,27 @@ class LiveSession:
             await self._decode_partial()
 
     async def _drain(self) -> None:
-        """Cut the open turn `DRAIN_TURN_SECONDS` into the drain; close when none is.
+        """Cut the open turn when the drain's turn bound passed; close when none is.
 
         The close is `1012` with no `error`: nothing failed, and every announced
-        item has completed.
+        item has completed. A turn or final still unfinished at the drain's bound
+        fails its items, then the session closes `1012` with an `error`.
         """
-        if (
-            self._scheduler.turn_open
-            and self._hearing.drain_age() >= DRAIN_TURN_SECONDS
-        ):
+        self._scheduler.stop_opening_turns()
+        if self._scheduler.turn_open and self._hearing.drain_turn_over():
             turn = self._scheduler.cut()
             if turn is not None:
                 await self._apply([turn])
-        if self._ended or self._scheduler.turn_open or self._finals:
+        if self._ended:
             return
-        self._ended = True
-        self._cancel_decodes()
-        await self._close(WS_1012_SERVICE_RESTART)
+        if not self._scheduler.turn_open and not self._finals:
+            self._ended = True
+            self._cancel_decodes()
+            await self._close(WS_1012_SERVICE_RESTART)
+        elif self._hearing.drain_left(self._final_wait_seconds) == 0:
+            await self._end_locked(
+                RefusalCode.UNAVAILABLE, close_code=WS_1012_SERVICE_RESTART
+            )
 
     async def on_disconnect(self) -> None:
         """The client left: cancel what is outstanding and send nothing."""
@@ -314,6 +317,8 @@ class LiveSession:
             await self._end_locked(RefusalCode.INVALID_REQUEST, "audio", event.event_id)
             return
         self._audio_seen = True
+        if self._hearing.draining:
+            self._scheduler.stop_opening_turns()
         await self._apply(self._scheduler.add(self._resampler.feed(raw)))
 
     async def _on_commit(self, event: AudioCommit) -> None:
@@ -517,6 +522,8 @@ class LiveSession:
         code: RefusalCode,
         param: str | None = None,
         event_id: str | None = None,
+        *,
+        close_code: int = WS_1000_NORMAL_CLOSURE,
     ) -> None:
         """Fail every announced unfinished item, then send `error`, then close."""
         self._ended = True
@@ -526,7 +533,7 @@ class LiveSession:
             await self._emit(TranscriptFailed(item_id=item_id, error=failure))
         self._unfinished.clear()
         await self._emit(error_event(code, param, event_id))
-        await self._close(WS_1000_NORMAL_CLOSURE)
+        await self._close(close_code)
 
     def _cancel_decodes(self) -> None:
         for task in self._tasks:

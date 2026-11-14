@@ -9,7 +9,7 @@ from starlette.status import HTTP_503_SERVICE_UNAVAILABLE, WS_1012_SERVICE_RESTA
 from starlette.testclient import WebSocketDenialResponse
 
 from speech_client.wire import RefusalCode
-from speech_service.hearing_session import DRAIN_TURN_SECONDS
+from speech_service.hearing import DRAIN_TURN_SECONDS
 from speech_service.voice_activity import WINDOW_SECONDS
 from tests.support.clock_support import FakeClock
 from tests.support.hear_support import (
@@ -40,46 +40,54 @@ _ANNOUNCED_AND_COMPLETED = [
     "conversation.item.created",
     COMPLETED,
 ]
+_FINAL_WAIT_SECONDS = 30.0
 _SESSION_URL = "/v1/realtime?intent=transcription"
 
 
-def test_a_session_with_no_open_turn_closes_with_1012_at_the_next_poll() -> None:
-    """WIRE-146: a session with no open turn closes 1012 at its next poll."""
+def test_a_draining_session_opens_no_second_turn_though_audio_keeps_coming() -> None:
+    """WIRE-146: the session takes audio only until its open turn ends."""
 
-    async def scenario() -> FakeSocket:
-        hearing = loaded(FakeHearing(), FakeClock())
-        session, socket = await started(hearing)
-        hearing.begin_drain()
-        await session.on_tick()
-        return socket
-
-    socket = asyncio.run(scenario())
-
-    assert socket.types() == ["session.created"]
-    assert socket.close_code == WS_1012_SERVICE_RESTART
-
-
-def test_a_session_ends_its_open_turn_by_silence_then_closes_after_the_completed() -> (
-    None
-):
-    """WIRE-146: a silence ends the open turn; the session closes after it."""
-
-    async def scenario() -> tuple[FakeSocket, bool]:
-        hearing = loaded(FakeHearing(), FakeClock())
+    async def scenario() -> tuple[FakeSocket, FakeHearing]:
+        engine = FakeHearing(hold=True)
+        hearing = loaded(engine, FakeClock())
         session, socket = await started(hearing)
         await session.on_message(append(audio(0.5)))
         hearing.begin_drain()
-        await session.on_tick()
-        open_after_the_poll = not socket.closed
-        await session.on_message(append(audio(0.8, 0)))
+        await session.on_message(append(audio(0.8, 0) + audio(0.5)))
+        await session.on_message(append(audio(0.5)))
+        engine.release.set()
         await session.settled()
         await session.on_tick()
-        return socket, open_after_the_poll
+        return socket, engine
 
-    socket, open_after_the_poll = asyncio.run(scenario())
+    socket, engine = asyncio.run(scenario())
 
-    assert open_after_the_poll
     assert socket.types() == _ANNOUNCED_AND_COMPLETED
+    assert len(engine.heard) == 1
+    assert socket.close_code == WS_1012_SERVICE_RESTART
+
+
+def test_a_final_unfinished_at_the_bound_fails_its_item_and_closes_1012() -> None:
+    """WIRE-80, WIRE-147: an announced item is failed when the drain's bound passes."""
+
+    async def scenario() -> tuple[FakeSocket, FakeHearing]:
+        clock = FakeClock()
+        engine = FakeHearing(hold=True)
+        hearing = loaded(engine, clock)
+        session, socket = await started(hearing, final_wait_seconds=_FINAL_WAIT_SECONDS)
+        await session.on_message(append(audio(0.5)))
+        await session.on_message(append(audio(0.8, 0)))
+        hearing.begin_drain()
+        clock.jump(DRAIN_TURN_SECONDS + _FINAL_WAIT_SECONDS)
+        await session.on_tick()
+        engine.release.set()
+        await session.settled()
+        return socket, engine
+
+    socket, _engine = asyncio.run(scenario())
+
+    assert socket.types()[-2:] == [FAILED, "error"]
+    assert COMPLETED not in socket.types()
     assert socket.close_code == WS_1012_SERVICE_RESTART
 
 

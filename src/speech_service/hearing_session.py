@@ -32,7 +32,6 @@ MIN_AUDIO_SECONDS: Final = 0.4
 SILENCE_SECONDS: Final = 0.5
 POLL_WAIT_SECONDS: Final = 0.3
 MAX_TURN_SECONDS: Final = 30.0
-DRAIN_TURN_SECONDS: Final = 30.0
 _BYTES_PER_SAMPLE: Final = 2
 _SAMPLES_PER_MILLISECOND: Final = SAMPLE_RATE // 1000
 _MAX_TURN_SAMPLES: Final = int(MAX_TURN_SECONDS * SAMPLE_RATE)
@@ -95,6 +94,7 @@ class HearingSession:
         self._waiting_voiced: deque[int] = deque()
         self._last_partial_at: float | None = None
         self._last_partial_samples = 0
+        self._last_turn = False
 
     def add(self, pcm: bytes) -> list[SpeechStart | TurnEnd]:
         """Take 16 kHz mono 16-bit audio; a turn that reaches the cap ends there."""
@@ -113,6 +113,10 @@ class HearingSession:
     def turn_open(self) -> bool:
         """Whether a turn is open or its first speech windows are being confirmed."""
         return self._speaking or self._speech_windows > 0
+
+    def stop_opening_turns(self) -> None:
+        """Open no turn after this call; a turn already open or confirming runs on."""
+        self._last_turn = True
 
     def cut(self) -> TurnEnd | None:
         """End the open turn for a drain; `None` when it was still being confirmed."""
@@ -154,7 +158,9 @@ class HearingSession:
     def _wait_for_speech(
         self, probability: float, start: int
     ) -> list[SpeechStart | TurnEnd]:
-        if probability < START_THRESHOLD:
+        if probability < START_THRESHOLD or (
+            self._last_turn and not self._speech_windows
+        ):
             self._speech_windows = 0
         else:
             if not self._speech_windows:
