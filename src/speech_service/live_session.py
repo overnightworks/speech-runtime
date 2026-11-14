@@ -219,7 +219,11 @@ class LiveSession:
         self._scheduler.partial_started()
         task = self._spawn(
             self._run_partial(
-                future, self._turn_number, self._clock.now(), self._partials
+                future,
+                self._turn_number,
+                self._open_item_id(),
+                self._clock.now(),
+                self._partials,
             )
         )
         task.add_done_callback(lambda _done: future.cancel())
@@ -378,6 +382,7 @@ class LiveSession:
         self,
         future: Future[Heard],
         turn_number: int,
+        item_id: str,
         started_at: float,
         partials: _Partials,
     ) -> None:
@@ -385,6 +390,12 @@ class LiveSession:
             heard = await asyncio.wrap_future(future)
             partials.count += 1
             partials.seconds += self._clock.now() - started_at
+            logger.info(
+                "live partial decoded item_id=%s no_speech_prob=%s avg_logprob=%s",
+                item_id,
+                _measure(heard.no_speech_prob),
+                _measure(heard.avg_logprob),
+            )
         except Exception as error:  # noqa: BLE001 - logged by type and never by message
             log_failure(logger, "hearing failed", error)
             await self._end(RefusalCode.UNAVAILABLE)

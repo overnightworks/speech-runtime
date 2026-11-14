@@ -149,3 +149,27 @@ def test_a_live_turn_is_decoded_without_the_recognisers_skip_of_no_speech() -> N
 
     assert engine.heard_skipping
     assert not any(engine.heard_skipping)
+
+
+def test_a_partial_decode_logs_its_measures_and_never_its_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def scenario() -> None:
+        engine = FakeHearing()
+        engine.measures = (0.2, -0.4)
+        session, _ = await started(loaded(engine, FakeClock()))
+        await session.on_message(append(audio(0.5)))
+        await session.on_tick()
+        await session.settled()
+
+    caplog.set_level(logging.INFO)
+
+    asyncio.run(scenario())
+
+    (logged,) = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("live partial decoded")
+    ]
+    assert "no_speech_prob=0.200 avg_logprob=-0.400" in logged
+    assert HEARD_TEXT not in caplog.text

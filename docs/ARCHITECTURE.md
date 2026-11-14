@@ -112,7 +112,8 @@ flowchart LR
   floor counts voiced seconds. A live decode never lets the recogniser skip a
   window as no speech, so the log line of each finished live turn holds the
   duration, voiced seconds, no-speech probability and average log probability of
-  every decode, and never its text. Hearing drops nothing that Silero calls a
+  every decode (a partial decode logs its two measures on a line of its own),
+  and never its text. Hearing drops nothing that Silero calls a
   voice and nothing on those values; a gate on them waits for a recorded corpus.
   The recording route has no turns, decodes the whole file and keeps the
   recogniser's own skip.
