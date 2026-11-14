@@ -133,5 +133,7 @@ def test_a_model_of_another_shape_fails_the_load() -> None:
 
 
 def test_a_stream_of_an_unloaded_model_is_refused() -> None:
+    unloaded = SileroDetectors(open_shipped_model)
+
     with pytest.raises(RuntimeError, match="not loaded"):
-        SileroDetectors(open_shipped_model).open()
+        unloaded.open()

@@ -228,8 +228,10 @@ def test_speech_only_cuts_the_silence_before_and_after_the_speech() -> None:
 
 
 def test_speech_only_refuses_a_clip_without_speech() -> None:
+    clip = silence(1.0)
+
     with pytest.raises(figures.ClipError, match="holds no speech"):
-        figures.speech_only(silence(1.0))
+        figures.speech_only(clip)
 
 
 def test_a_clip_that_reaches_the_turn_cap_is_refused() -> None:
@@ -240,13 +242,17 @@ def test_a_clip_that_reaches_the_turn_cap_is_refused() -> None:
 
 
 def test_a_clip_without_speech_is_refused() -> None:
+    clip = silence(3.0)
+
     with pytest.raises(figures.ClipError, match="no speech"):
-        figures.check_continuous_turn(silence(3.0))
+        figures.check_continuous_turn(clip)
 
 
 def test_a_tone_is_no_speech_however_loud() -> None:
+    clip = tone(3.0)
+
     with pytest.raises(figures.ClipError, match="no speech"):
-        figures.check_continuous_turn(tone(3.0))
+        figures.check_continuous_turn(clip)
 
 
 def test_the_voiced_seconds_of_speech_are_its_own_and_of_silence_are_none() -> None:
