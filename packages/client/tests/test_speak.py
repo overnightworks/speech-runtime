@@ -5,11 +5,13 @@ from __future__ import annotations
 import socket
 import struct
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 from pydantic import ValidationError
 
+from speech_client import _transport as transport_module
 from speech_client import speak as speak_module
 from speech_client.speak import (
     Busy,
@@ -545,8 +547,13 @@ def test_a_wav_without_audio_data_is_malformed_in_the_stream_and_the_blocking_ca
 
 def test_a_deadline_that_passes_while_the_stream_is_held_ends_it_past_the_deadline(
     raw_listener: RawListener,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The rest is buffered and needs no socket read, yet the stream does not finish."""
+    now = 0.0
+    monkeypatch.setattr(
+        transport_module, "time", SimpleNamespace(monotonic=lambda: now)
+    )
     wav = _wav(b"\x01\x00" * 100)
     raw = _WAV_HEAD + _chunk(wav) + _chunk(b"\x01\x00" * 100) + _chunk(b"")
     with raw_listener(raw) as (base_url, _):
@@ -556,11 +563,11 @@ def test_a_deadline_that_passes_while_the_stream_is_held_ends_it_past_the_deadli
             VOICE,
             workload_token=WORKLOAD_TOKEN,
             person_token=PERSON_TOKEN,
-            deadline_seconds=DEADLINE_SECONDS,
+            deadline_seconds=GENEROUS_DEADLINE_SECONDS,
             cap_bytes=CAP_BYTES,
         )
         first = next(stream)
-        time.sleep(DEADLINE_SECONDS + DRIP_SECONDS)
+        now += GENEROUS_DEADLINE_SECONDS
         rest = list(stream)
 
     assert first == wav
