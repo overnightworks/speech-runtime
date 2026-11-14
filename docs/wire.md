@@ -26,8 +26,11 @@ several languages, raises the request's validation error before the network.
 one: it reads health, speaks with the first voice that `speaking.voices` offers as
 `ready` in the requested language, sends `instructions` only to a voice that
 `takes_instructions` (WIRE-142) and says in its outcome which voice spoke and whether
-the instructions were left out. A speak answered `unavailable` (the service switched
-voices mid-call) reads health again and speaks with the next voice; with none offered
+the instructions were left out. Its `speak_stream_with_preference` streams the audio
+as `speak_stream` does, after a `VoiceChosen` item; `speak_with_preference` is that
+stream read to its end. A speak answered `unavailable` before its first chunk (the
+service switched voices mid-call) reads health again and speaks with the next voice;
+after a chunk a failure ends the stream and no other voice is tried. With none offered
 the outcome is `unavailable` for `voice`. It adds nothing to the wire.
 `speech_client.health` fetches `GET /health` (WIRE-122) within a deadline and a
 cap and answers with a typed outcome; the outcomes the calls share live in

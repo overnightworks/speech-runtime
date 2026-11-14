@@ -9,12 +9,19 @@ import pytest
 from pydantic import ValidationError
 
 from packages.client.tests.support.scripted_service_support import (
+    OGG,
+    SAMPLE_RATE,
     WAV,
     scripted_service,
 )
-from speech_client.outcomes import Malformed, OverCap, PastDeadline, Unreachable
-from speech_client.speak import Refused
-from speech_client.voice_preference import SpokenWithPreference, speak_with_preference
+from speech_client.outcomes import Cut, Malformed, OverCap, PastDeadline, Unreachable
+from speech_client.speak import Finished, Refused
+from speech_client.voice_preference import (
+    SpokenWithPreference,
+    VoiceChosen,
+    speak_stream_with_preference,
+    speak_with_preference,
+)
 from speech_client.wire import (
     HEALTH_PATH,
     Language,
@@ -28,7 +35,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from packages.client.tests.support.listener_support import RawListener
-    from speech_client.voice_preference import PreferenceOutcome
+    from speech_client.voice_preference import (
+        PreferenceOutcome,
+        PreferenceStreamItem,
+    )
 
 DEADLINE_SECONDS = 30.0
 CAP_BYTES = 1024 * 1024
@@ -59,6 +69,28 @@ def _speak(  # noqa: PLR0913 - the arguments a test varies, all keyword-only aft
         deadline_seconds=deadline_seconds,
         cap_bytes=cap_bytes,
         clock=clock,
+    )
+
+
+def _stream(
+    base_url: str,
+    preference: Sequence[VoiceId],
+    *,
+    language: Language | None = Language.DE,
+    instructions: str | None = None,
+) -> list[PreferenceStreamItem]:
+    return list(
+        speak_stream_with_preference(
+            base_url,
+            "Hallo",
+            preference,
+            language=language,
+            instructions=instructions,
+            workload_token="workload-token",  # noqa: S106 - a stand-in the script never checks
+            person_token="person-token",  # noqa: S106 - a stand-in the script never checks
+            deadline_seconds=DEADLINE_SECONDS,
+            cap_bytes=CAP_BYTES,
+        )
     )
 
 
@@ -251,6 +283,28 @@ def test_the_reads_and_speaks_share_one_deadline(
     assert [VoiceId(request["voice"]) for request in service.asked] == asked
 
 
+def test_a_deadline_passed_after_the_voice_is_chosen_ends_before_the_audio() -> None:
+    clock = _Clock()
+    with scripted_service({VoiceId.RYAN: True}) as (base_url, _):
+        stream = speak_stream_with_preference(
+            base_url,
+            "Hallo",
+            [VoiceId.RYAN],
+            language=Language.DE,
+            workload_token="workload-token",  # noqa: S106 - a stand-in the script never checks
+            person_token="person-token",  # noqa: S106 - a stand-in the script never checks
+            deadline_seconds=DEADLINE_SECONDS,
+            cap_bytes=CAP_BYTES,
+            clock=clock,
+        )
+        chosen = next(stream)
+        clock.pass_the_deadline()
+        rest = list(stream)
+
+    assert chosen == VoiceChosen(VoiceId.RYAN, instructions_left_out=False)
+    assert rest == [PastDeadline()]
+
+
 @pytest.mark.parametrize(
     ("deadline_seconds", "cap_bytes"),
     [
@@ -303,3 +357,95 @@ def test_a_defect_of_the_request_raises_before_the_network() -> None:
             [VoiceId.THORSTEN, VoiceId.RYAN],
             language=None,
         )
+
+
+def test_the_stream_names_the_voice_first_then_the_audio_then_the_exact_seconds() -> (
+    None
+):
+    offered = {VoiceId.THORSTEN: True, VoiceId.RYAN: True}
+    with scripted_service(offered) as (base_url, _):
+        first, *chunks, end = _stream(
+            base_url,
+            [VoiceId.THORSTEN, VoiceId.RYAN],
+            instructions=TONE,
+        )
+
+    assert first == VoiceChosen(VoiceId.THORSTEN, instructions_left_out=True)
+    assert b"".join(chunks) == WAV
+    assert end == Finished(4 / SAMPLE_RATE)
+
+
+def test_the_stream_moves_on_when_a_voice_is_unavailable_before_any_chunk() -> None:
+    offered = {VoiceId.RYAN: True, VoiceId.THORSTEN: True}
+    with scripted_service(offered) as (base_url, service):
+        service.unavailable_on_speak.add(VoiceId.RYAN)
+        first, *chunks, end = _stream(base_url, [VoiceId.RYAN, VoiceId.THORSTEN])
+
+    assert first == VoiceChosen(VoiceId.THORSTEN, instructions_left_out=False)
+    assert b"".join(chunks) == WAV
+    assert isinstance(end, Finished)
+
+
+def test_the_stream_ends_as_the_failure_after_a_chunk_and_tries_no_other_voice() -> (
+    None
+):
+    offered = {VoiceId.RYAN: True, VoiceId.THORSTEN: True}
+    with scripted_service(offered) as (base_url, service):
+        service.cut_after_first_chunk.add(VoiceId.RYAN)
+        first, *chunks, end = _stream(base_url, [VoiceId.RYAN, VoiceId.THORSTEN])
+
+    assert first == VoiceChosen(VoiceId.RYAN, instructions_left_out=False)
+    assert b"".join(chunks) == WAV
+    assert end == Cut()
+    assert [asked["voice"] for asked in service.asked] == [VoiceId.RYAN]
+
+
+def test_the_stream_with_no_voice_offered_is_the_refusal_alone() -> None:
+    with scripted_service({VoiceId.KERSTIN: True}) as (base_url, _):
+        items = _stream(base_url, [VoiceId.RYAN, VoiceId.THORSTEN])
+
+    assert items == [Refused(UNAVAILABLE)]
+
+
+def test_the_stream_raises_at_the_call_not_at_its_first_item() -> None:
+    with pytest.raises(ValueError, match=r"preference"):
+        speak_stream_with_preference(
+            "http://127.0.0.1:1",
+            "Hallo",
+            [],
+            workload_token="workload-token",  # noqa: S106 - a stand-in the script never checks
+            person_token="person-token",  # noqa: S106 - a stand-in the script never checks
+            deadline_seconds=DEADLINE_SECONDS,
+            cap_bytes=CAP_BYTES,
+        )
+
+
+def test_the_blocking_speak_ends_as_the_cut_after_a_chunk_without_another_voice() -> (
+    None
+):
+    offered = {VoiceId.RYAN: True, VoiceId.THORSTEN: True}
+    with scripted_service(offered) as (base_url, service):
+        service.cut_after_first_chunk.add(VoiceId.RYAN)
+        outcome = _speak(base_url, [VoiceId.RYAN, VoiceId.THORSTEN])
+
+    assert outcome == Cut()
+    assert [asked["voice"] for asked in service.asked] == [VoiceId.RYAN]
+
+
+def test_an_ogg_speak_returns_the_audio_judged_by_its_signature() -> None:
+    with scripted_service({VoiceId.THORSTEN: True}) as (base_url, service):
+        service.audio_format = ResponseFormat.OPUS
+        outcome = speak_with_preference(
+            base_url,
+            "Hallo",
+            [VoiceId.THORSTEN],
+            response_format=ResponseFormat.OPUS,
+            workload_token="workload-token",  # noqa: S106 - a stand-in the script never checks
+            person_token="person-token",  # noqa: S106 - a stand-in the script never checks
+            deadline_seconds=DEADLINE_SECONDS,
+            cap_bytes=CAP_BYTES,
+        )
+
+    assert outcome == SpokenWithPreference(
+        OGG, VoiceId.THORSTEN, instructions_left_out=False
+    )

@@ -1,7 +1,9 @@
 """A service over TCP that answers health and speaks from a script.
 
 The script is state a test changes between and during calls: the voices health
-offers, and the voices whose speak is refused as unavailable.
+offers, the voices whose speak is refused as unavailable and the voices whose
+speak ends after its first chunk without the body's last one. The audio it
+speaks is in `audio_format`.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from speech_client.wire import (
     REFUSAL_STATUS,
     VOICES,
     RefusalCode,
+    ResponseFormat,
     SpeakingModel,
     VoiceId,
     refusal,
@@ -44,6 +47,7 @@ def wav_of(pcm: bytes, *, with_data: bool = True) -> bytes:
 
 
 WAV = wav_of(b"\x01\x00" * 4)
+OGG = b"OggS" + bytes(64)
 
 
 def voice_health(voice: VoiceId, *, ready: bool = True) -> dict[str, object]:
@@ -66,6 +70,8 @@ class ScriptedService:
         """Start with `offered` (voice to ready), refusing nothing."""
         self.offered = offered
         self.unavailable_on_speak: set[VoiceId] = set()
+        self.cut_after_first_chunk: set[VoiceId] = set()
+        self.audio_format = ResponseFormat.WAV
         self.on_health: Callable[[], None] = lambda: None
         self.on_speak: Callable[[VoiceId], None] = lambda _voice: None
         self.asked: list[dict[str, object]] = []
@@ -113,10 +119,15 @@ def _handler(service: ScriptedService) -> type[BaseHTTPRequestHandler]:
                 self._send(REFUSAL_STATUS[RefusalCode.UNAVAILABLE], body.encode())
                 return
             self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "audio/wav")
+            self.send_header("Content-Type", service.audio_format.media_type)
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
-            self.wfile.write(b"%x\r\n%b\r\n0\r\n\r\n" % (len(WAV), WAV))
+            audio = OGG if service.audio_format is ResponseFormat.OPUS else WAV
+            self.wfile.write(b"%x\r\n%b\r\n" % (len(audio), audio))
+            if voice in service.cut_after_first_chunk:
+                self.close_connection = True
+                return
+            self.wfile.write(b"0\r\n\r\n")
 
     return Handler
 
@@ -129,7 +140,7 @@ def scripted_service(
     service = ScriptedService(offered)
     server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(service))
     thread = threading.Thread(
-        target=server.serve_forever, kwargs={"poll_interval": 0.01}
+        target=server.serve_forever, kwargs={"poll_interval": POLL_SECONDS}
     )
     thread.start()
     try:

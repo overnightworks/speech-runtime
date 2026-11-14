@@ -128,7 +128,12 @@ The client carries the wire's types, the bounded speaking call
 and ends with `Finished`, the exact seconds of audio, or a failure, so an app
 can play while the voice renders; `speak` is that stream read to its end), the
 same call with an ordered voice preference that
-follows the voices the service offers (`speech_client.voice_preference`), the bounded health fetch
+follows the voices the service offers (`speech_client.voice_preference`:
+`speak_stream_with_preference` yields `VoiceChosen`, which names the voice before
+any audio, then the WAV's chunks and `Finished` or a failure; a voice that is
+unavailable before its first chunk hands over to the next, and after a chunk a
+failure ends the stream; `speak_with_preference` is that stream read to its end),
+the bounded health fetch
 (`speech_client.health`), the live hearing session
 (`speech_client.hearing`), the relay of a browser's audio frames to that session
 (`speech_client.relay`) and the finished utterances an app's server hears from
