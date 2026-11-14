@@ -13,6 +13,7 @@ import httpx2
 import pytest
 
 from speech_client.wire import SPEECH_PATH, RefusalCode, VoiceId
+from speech_service import __main__
 from tests.support.fakes_support import GatedSpeaking
 from tests.support.gpu_voice_support import (
     LOOPBACK,
@@ -53,6 +54,17 @@ if TYPE_CHECKING:
 
 _LOADING = StageSetup(started=False)
 _SERVING = StageSetup("normal", started=False)
+_DRAIN_BOUND_SECONDS = 1.0
+
+
+def _short_drain(monkeypatch: pytest.MonkeyPatch) -> dict[str, float]:
+    """The settings and the module constant that make the drain bound a second.
+
+    The fake worker holds a stream until the engine closes, so a stream the test
+    leaves running lasts until the bound.
+    """
+    monkeypatch.setattr(__main__, "DRAIN_TURN_SECONDS", _DRAIN_BOUND_SECONDS / 2)
+    return {"hearing_final_wait_seconds": _DRAIN_BOUND_SECONDS / 2}
 
 
 def test_sigterm_during_a_load_refuses_its_waiters_reaps_the_worker_and_exits_zero(
@@ -166,12 +178,16 @@ async def _load_and_stream(client: httpx2.AsyncClient) -> httpx2.Response:
     return streaming
 
 
-def test_sigterm_mid_stream_aborts_the_gpu_stream_reaps_the_worker_and_exits_zero(
+def test_sigterm_mid_stream_lets_the_stream_run_to_the_drain_bound_then_aborts_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def scenario(serving: Serving) -> tuple[bool, int]:
+    """WIRE-145, WIRE-147: a stream still running at the drain bound is cut."""
+    settings = _short_drain(monkeypatch)
+
+    async def scenario(serving: Serving) -> tuple[bool, int, float]:
         async with await serving.start() as client:
             streaming = await _load_and_stream(client)
+            stopped_at = time.monotonic()
             serving.sigterm()
             try:
                 await streaming.aread()
@@ -179,14 +195,16 @@ def test_sigterm_mid_stream_aborts_the_gpu_stream_reaps_the_worker_and_exits_zer
                 aborted = True
             else:
                 aborted = False
-            return aborted, await serving.task
+            outcome = await serving.task
+            return aborted, outcome, time.monotonic() - stopped_at
 
-    with gpu_voice_stage(tmp_path, monkeypatch, _SERVING) as stage:
+    with gpu_voice_stage(tmp_path, monkeypatch, _SERVING, **settings) as stage:
         serving = Serving(stage, monkeypatch)
         with serving.listener:
-            aborted, outcome = asyncio.run(scenario(serving))
+            aborted, outcome, waited_seconds = asyncio.run(scenario(serving))
 
     assert aborted is True
+    assert waited_seconds >= _DRAIN_BOUND_SECONDS
     assert outcome == 0
     (pid,) = stage.starts()
     assert_reaped(pid)
@@ -253,7 +271,8 @@ def test_a_request_the_stop_meets_on_a_kept_alive_connection_is_unavailable_not_
             await streaming.aclose()
             return status, body, await serving.task
 
-    with gpu_voice_stage(tmp_path, monkeypatch, _SERVING) as stage:
+    settings = _short_drain(monkeypatch)
+    with gpu_voice_stage(tmp_path, monkeypatch, _SERVING, **settings) as stage:
         serving = Serving(stage, monkeypatch)
         with serving.listener:
             status, body, outcome = asyncio.run(scenario(serving, stage))

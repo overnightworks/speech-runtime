@@ -7,7 +7,6 @@ import subprocess
 import sys
 import threading
 import traceback
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
@@ -20,6 +19,7 @@ from speech_service.config import Settings
 from speech_service.provider_process import ProviderLaunch, ProviderProcess
 from speech_service.service import Runtime, RuntimeDependencies
 from tests.support.fakes_support import FakeSpeaking
+from tests.support.hear_support import FakeHearing, loaded
 from tests.support.identity_support import write_caller_configuration
 from tests.support.tcp_server_support import free_loopback_port, listens_on
 from tests.support.worker_support import provider_worker
@@ -52,18 +52,14 @@ class _BlockedSpeaking(FakeSpeaking):
         self.ready = True
 
 
-@dataclass(slots=True)
-class _CloseOrderingScenario:
-    spawned: threading.Event
-    stopping: list[asyncio.Event]
-    closed: threading.Event
-    cache: Path
-    observations: list[bool]
+class _StoppedByTheSignalServer:
+    """A server that ends once the orchestrator asks it to, after the signal arrived."""
 
-
-class _CloseOrderingServer:
-    def __init__(self, *, scenario: _CloseOrderingScenario) -> None:
-        self.scenario = scenario
+    def __init__(
+        self, *, spawned: threading.Event, stopping: list[asyncio.Event]
+    ) -> None:
+        self._spawned = spawned
+        self._stopping = stopping
         self.stopped = asyncio.Event()
 
     @property
@@ -77,14 +73,9 @@ class _CloseOrderingServer:
 
     async def serve(self, *, sockets: list[socket.socket] | None = None) -> None:
         del sockets
-        assert await asyncio.to_thread(self.scenario.spawned.wait, 5)
-        self.scenario.stopping[0].set()
+        assert await asyncio.to_thread(self._spawned.wait, 5)
+        self._stopping[0].set()
         await self.stopped.wait()
-        closed_first = await asyncio.to_thread(self.scenario.closed.wait, 1)
-        self.scenario.observations.append(closed_first)
-        if not closed_first:
-            self.scenario.cache.mkdir(parents=True, exist_ok=True)
-            (self.scenario.cache / "allow-ready").touch()
 
 
 class _HealthServer:
@@ -173,7 +164,7 @@ def test_an_offered_piper_voice_without_its_files_ends_the_start_naming_the_voic
     assert not listens_on(settings.port)
 
 
-def test_shutdown_closes_a_pending_real_adapter_before_awaiting_tasks(
+def test_shutdown_closes_a_pending_real_adapter_before_awaiting_its_load(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "providers"
@@ -233,15 +224,14 @@ while True:
         return process
 
     stopping: list[asyncio.Event] = []
-    close_before_await: list[bool] = []
-    scenario = _CloseOrderingScenario(
-        spawned=spawned,
-        stopping=stopping,
-        closed=closed,
-        cache=cache,
-        observations=close_before_await,
-    )
-    server = _CloseOrderingServer(scenario=scenario)
+    server = _StoppedByTheSignalServer(spawned=spawned, stopping=stopping)
+
+    def release_the_load() -> None:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "allow-ready").touch()
+
+    # Only a missing close would need it: the load then waits for its release.
+    watchdog = threading.Timer(5, release_the_load)
 
     def install(stop: asyncio.Event) -> None:
         stopping.append(stop)
@@ -253,10 +243,15 @@ while True:
         "speech_service.provider_process.subprocess.Popen", observed_popen
     )
 
-    outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
+    watchdog.start()
+    try:
+        outcome = asyncio.run(__main__.serve(_serving_settings(tmp_path)))
+    finally:
+        watchdog.cancel()
 
     assert outcome == 0
-    assert close_before_await == [True]
+    assert closed.is_set()
+    assert not (cache / "allow-ready").exists()
 
 
 def test_owned_speaking_failure_stops_the_server_and_returns_failure(
@@ -421,6 +416,28 @@ def test_signal_exit_is_zero_and_closes_the_listener(
 
     assert outcome == 0
     assert not listens_on(settings.port)
+
+
+def test_a_session_that_outlasts_the_drain_bound_is_logged_and_the_exit_is_still_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """WIRE-147: the drain ends at its bound, whatever still runs."""
+    hearing = loaded(FakeHearing())
+    runtime = Runtime({VoiceId.THORSTEN: FakeSpeaking()}, hearing=hearing)
+    place = hearing.open_session(1)
+    assert place is not None
+    monkeypatch.setattr(Runtime, "from_settings", lambda _settings: runtime)
+    monkeypatch.setattr(__main__, "build_server", lambda _app: _ShutdownOnlyServer())
+    monkeypatch.setattr(__main__, "_install_signal_handlers", lambda s: s.set())
+    monkeypatch.setattr(__main__, "DRAIN_TURN_SECONDS", 0.0)
+    settings = _serving_settings(tmp_path, hearing_final_wait_seconds=0.05)
+
+    outcome = asyncio.run(__main__.serve(settings))
+
+    assert outcome == 0
+    assert "outlasted the drain" in caplog.text
 
 
 def test_server_ending_on_its_own_returns_failure_and_closes_the_listener(

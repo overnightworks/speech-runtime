@@ -181,11 +181,24 @@ class Runtime:
         )
 
     def begin_shutdown(self) -> None:
-        """Refuse new work before the server starts its own shutdown."""
+        """Refuse new work and report not ready; work already admitted runs on.
+
+        Engines stay open until `close`, so a stream, a recording or a live
+        session already admitted can end whole.
+        """
         with self._phase_lock:
             self._stopping = True
         for slot in self.slots.values():
             slot.begin_shutdown()
+        self.hearing.begin_drain()
+
+    def abandon_loads(self) -> None:
+        """Stop the voice loads under way, so no request waits on one through a drain.
+
+        Blocks while a building engine closes; call it off the event loop.
+        """
+        for slot in self.slots.values():
+            slot.abandon_load()
 
     def set_fatal_callback(self, callback: Callable[[], None]) -> None:
         """Route an owned speaking-engine failure to the service orchestrator."""

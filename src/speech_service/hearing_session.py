@@ -32,6 +32,7 @@ MIN_AUDIO_SECONDS: Final = 0.4
 SILENCE_SECONDS: Final = 0.5
 POLL_WAIT_SECONDS: Final = 0.3
 MAX_TURN_SECONDS: Final = 30.0
+DRAIN_TURN_SECONDS: Final = 30.0
 _BYTES_PER_SAMPLE: Final = 2
 _SAMPLES_PER_MILLISECOND: Final = SAMPLE_RATE // 1000
 _MAX_TURN_SAMPLES: Final = int(MAX_TURN_SECONDS * SAMPLE_RATE)
@@ -60,6 +61,7 @@ class TurnEnd:
     end_ms: int
     voiced_seconds: float
     by_client: bool
+    by_drain: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +108,18 @@ class HearingSession:
         """End the open turn at the client's word; `None` when it holds no audio."""
         ended = self._end(self._held_end, by_client=True)
         return ended[0] if ended else None
+
+    @property
+    def turn_open(self) -> bool:
+        """Whether a turn is open or its first speech windows are being confirmed."""
+        return self._speaking or self._speech_windows > 0
+
+    def cut(self) -> TurnEnd | None:
+        """End the open turn for a drain; `None` when it was still being confirmed."""
+        if not self._speaking:
+            self._speech_windows = 0
+            return None
+        return self._end(self._held_end, by_client=False, by_drain=True)[0]
 
     def partial_due(self) -> OpenTurn | None:
         """The open turn's audio when a partial is due, else `None`."""
@@ -186,7 +200,9 @@ class HearingSession:
         while self._waiting_voiced and self._waiting_voiced[0] < self._held_from:
             self._waiting_voiced.popleft()
 
-    def _end(self, end: int, *, by_client: bool) -> list[TurnEnd]:
+    def _end(
+        self, end: int, *, by_client: bool, by_drain: bool = False
+    ) -> list[TurnEnd]:
         start = self._held_from
         size = (end - start) * _BYTES_PER_SAMPLE
         pcm = bytes(self._pcm[:size])
@@ -211,5 +227,6 @@ class HearingSession:
                 end // _SAMPLES_PER_MILLISECOND,
                 voiced_seconds,
                 by_client,
+                by_drain,
             )
         ]

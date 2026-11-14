@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
 
+from starlette.status import WS_1000_NORMAL_CLOSURE, WS_1012_SERVICE_RESTART
+
 from speech_client.wire import (
     AudioAppend,
     AudioCommit,
@@ -43,6 +45,7 @@ from speech_client.wire import (
 )
 from speech_service.failures import log_failure
 from speech_service.hearing_session import (
+    DRAIN_TURN_SECONDS,
     MAX_TURN_SECONDS,
     POLL_WAIT_SECONDS,
     HearingSession,
@@ -72,6 +75,7 @@ class _TurnEndedBy(StrEnum):
     SILENCE = "silence"
     CAP = "cap"
     CLIENT = "client"
+    DRAIN = "drain"
 
 
 @dataclass(slots=True)
@@ -120,6 +124,8 @@ class _Final:
 def _turn_ended_by(turn: TurnEnd) -> _TurnEndedBy:
     if turn.by_client:
         return _TurnEndedBy.CLIENT
+    if turn.by_drain:
+        return _TurnEndedBy.DRAIN
     reached_cap = len(turn.pcm) / _PCM_BYTES_PER_SECOND >= MAX_TURN_SECONDS
     return _TurnEndedBy.CAP if reached_cap else _TurnEndedBy.SILENCE
 
@@ -167,9 +173,9 @@ class LiveSession:
         *,
         final_wait_seconds: float,
         send: Callable[[str], Awaitable[None]],
-        close: Callable[[], Awaitable[None]],
+        close: Callable[[int], Awaitable[None]],
     ) -> None:
-        """Hear through `hearing`; send events with `send` and end with `close`.
+        """Hear through `hearing`; send events with `send` and end with `close(code)`.
 
         A final may wait `final_wait_seconds` from its turn's end. Deadlines and
         the partials' pace follow the clock of the hearing's gate.
@@ -222,11 +228,34 @@ class LiveSession:
                 await self._on_commit(event)
 
     async def on_tick(self) -> None:
-        """Decode a partial when due."""
+        """Decode a partial when due; a draining hearing ends the session at a turn."""
         async with self._lock:
             if self._ended:
                 return
+            if self._hearing.draining:
+                await self._drain()
+                if self._ended:
+                    return
             await self._decode_partial()
+
+    async def _drain(self) -> None:
+        """Cut the open turn `DRAIN_TURN_SECONDS` into the drain; close when none is.
+
+        The close is `1012` with no `error`: nothing failed, and every announced
+        item has completed.
+        """
+        if (
+            self._scheduler.turn_open
+            and self._hearing.drain_age() >= DRAIN_TURN_SECONDS
+        ):
+            turn = self._scheduler.cut()
+            if turn is not None:
+                await self._apply([turn])
+        if self._ended or self._scheduler.turn_open or self._finals:
+            return
+        self._ended = True
+        self._cancel_decodes()
+        await self._close(WS_1012_SERVICE_RESTART)
 
     async def on_disconnect(self) -> None:
         """The client left: cancel what is outstanding and send nothing."""
@@ -497,7 +526,7 @@ class LiveSession:
             await self._emit(TranscriptFailed(item_id=item_id, error=failure))
         self._unfinished.clear()
         await self._emit(error_event(code, param, event_id))
-        await self._close()
+        await self._close(WS_1000_NORMAL_CLOSURE)
 
     def _cancel_decodes(self) -> None:
         for task in self._tasks:

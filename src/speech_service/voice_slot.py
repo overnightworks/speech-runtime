@@ -102,6 +102,16 @@ class VoiceSlot:
             self._stopping = True
             self._state_changed.notify_all()
 
+    def abandon_load(self) -> None:
+        """Close the engine a load is building, so its waiters are refused.
+
+        Blocks while the engine closes; call it off the event loop.
+        """
+        with self._state_lock:
+            building, self._pending_engine = self._pending_engine, None
+        if building is not None:
+            self._closed(building, _CLEANUP_FAILED)
+
     def set_fatal_callback(self, callback: Callable[[], None]) -> None:
         """Route an owned engine failure to the service orchestrator."""
         with self._state_lock:

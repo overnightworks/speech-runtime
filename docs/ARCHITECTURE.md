@@ -79,7 +79,7 @@ flowchart LR
   not ready, while the Piper voices and hearing keep serving; the next request loads it
   again. A worker that cannot be reaped ends the process.
 - **One readiness.** `/health` and the refusal read the same answer, so no voice
-  is ready during the start load or once shutdown began, and `speaking.ready`
+  is ready during the start load or once the drain began, and `speaking.ready`
   is every offered Piper voice's. A request that held its voice's gate across a stop or a crash is
   refused `unavailable`, never `busy`.
 - **One gate per voice.** Each voice's slot owns an `AdmissionGate` with the
@@ -142,8 +142,10 @@ flowchart LR
 - **One submission owner.** `Hearing` owns a one-worker executor for file and
   live decodes. A decode carries its lease: the worker closes it when the native
   call returns, the done-callback when the decode was cancelled before it
-  started, the submitter when the submission fails. At shutdown `Hearing` takes
-  no new submission and frees the engine after the running decode returns.
+  started, the submitter when the submission fails. `Hearing` admits no new
+  session or recording from the drain on, and keeps taking submissions of those
+  admitted; at the close it takes no new submission and frees the engine after
+  the running decode returns.
 - **The live session.** `/v1/realtime` is one state machine per socket. Receiving
   never waits for a decode: audio is resampled from 24 to 16 kHz and scheduled
   into turns (Silero speech, then silence, or the 30 s cap), and decodes run in the
@@ -154,7 +156,10 @@ flowchart LR
   recordings, each with a deadline counted from it, and an expired final is never
   started; the second's terminal waits for the first's.
   A session end sends a `failed` per announced unfinished item, then `error`, then
-  closes; a disconnect sends nothing.
+  closes; a disconnect sends nothing. In a drain the session's poll ends it at a
+  turn boundary: it takes audio until the open turn ends (by itself, or cut 30 s
+  after the drain began), lets the queued finals complete, then closes `1012` with
+  no `error`.
 
 ## Delivery
 
@@ -189,6 +194,19 @@ shared with the gateway that carries the key set, and one per app that reaches i
 on hal's Compose path, shared with that app only. An absent network stops the
 start, so a run never has egress. The root is read-only, the user is not root and
 no capability is kept.
+
+The service owns the stop signal: uvicorn's own signal handling is off. On
+SIGTERM or SIGINT the shutdown runs in one order. The runtime reports not ready
+and refuses new work (the drain begins); the live sessions end at their turn
+boundaries; the server then shuts down, waiting for the speak streams and
+recordings still running; the engines close last. A speak stream or a final is
+never cut by an engine closing under it. The drain is bounded by one number,
+30 s (the open turn) plus `SPEECH_HEARING_FINAL_WAIT_SECONDS` (default 60 s), so
+90 s by default; past it the server's shutdown cuts what still runs, the engines
+close and the process exits 0. A pod's grace period must be at least the drain
+bound plus the time its endpoint takes to leave the balancer (a preStop sleep),
+and a replacement must start before the old pod stops (a rolling update that
+never lowers the ready count).
 
 ## Crosscutting Concepts
 
@@ -269,6 +287,12 @@ no capability is kept.
 - **The service never downloads.** Shipped commands fetch voices and hearing
   models at a pinned revision, so the dated tag fixes what runs and the
   container needs no egress.
+- **A replica holds connections only.** A live hearing session lives on the one
+  process that serves its socket, and that process drains it on a stop (see
+  [Delivery](#delivery)); a client that was closed `1012` opens a new session on
+  any replica. Nothing a session holds outlives it, so replicas share no store
+  and need no sticky routing: readiness (`/health`) alone steers new
+  connections.
 - **Piper is resident and on the CPU.** Each offered Piper voice loads at start
   and stays resident. A taken card never silences speaking, and a failed Piper
   load ends the process. With hearing on `cpu`, as the image runs it, speaking

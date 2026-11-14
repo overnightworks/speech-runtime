@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import signal
 import socket
@@ -16,9 +17,11 @@ from webauth.https_client import fetch_key_set_over_https
 from speech_service.callers import SpeechCallers
 from speech_service.config import Settings, load_caller_config, load_settings
 from speech_service.control import create_control_app
+from speech_service.hearing_session import DRAIN_TURN_SECONDS
 from speech_service.service import Runtime
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 _USAGE_DESCRIPTION = "Serve the speech wire over TCP."
@@ -95,6 +98,7 @@ async def _serve_on(
     runtime = Runtime.from_settings(settings)
     runtime.set_fatal_callback(lambda: loop.call_soon_threadsafe(fatal.set))
     server = build_server(create_control_app(settings, runtime, callers))
+    drain_seconds = DRAIN_TURN_SECONDS + settings.hearing_final_wait_seconds
     stopping = asyncio.Event()
     _install_signal_handlers(stopping)
     server_task = asyncio.create_task(server.serve(sockets=[listener]))
@@ -125,10 +129,16 @@ async def _serve_on(
                 )
                 result = 0 if stopped in done else 1
     finally:
+        deadline = loop.time() + drain_seconds
         runtime.begin_shutdown()
+        await asyncio.to_thread(runtime.abandon_loads)
+        if result == 0:
+            await _until_sessions_end(runtime, deadline - loop.time())
         server.should_exit = True
         stopped.cancel()
         fatal_task.cancel()
+        await asyncio.wait({server_task}, timeout=max(0.0, deadline - loop.time()))
+        server_task.cancel()
         try:
             await asyncio.to_thread(runtime.close)
         except RuntimeError:
@@ -138,9 +148,26 @@ async def _serve_on(
     return result
 
 
+async def _until_sessions_end(runtime: Runtime, seconds: float) -> None:
+    """Wait up to `seconds` for the live hearing sessions to drain and close."""
+    try:
+        async with asyncio.timeout(seconds):
+            await runtime.hearing.sessions_ended()
+    except TimeoutError:
+        logging.getLogger(__name__).warning("live hearing sessions outlasted the drain")
+
+
+class _ServiceServer(uvicorn.Server):
+    """uvicorn's server without its own signal handling: the service owns the stop."""
+
+    @contextlib.contextmanager
+    def capture_signals(self) -> Iterator[None]:
+        yield
+
+
 def build_server(app: object) -> uvicorn.Server:
     """Build the uvicorn server for the control application."""
-    return uvicorn.Server(uvicorn.Config(app, log_level="info"))
+    return _ServiceServer(uvicorn.Config(app, log_level="info"))
 
 
 def _require_config_file(settings: Settings) -> Path:

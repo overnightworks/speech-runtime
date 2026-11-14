@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -377,6 +378,9 @@ class Hearing:
         self.gate = AdmissionGate(clock)
         self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="hearing")
         self._sessions = 0
+        self._no_sessions = asyncio.Event()
+        self._no_sessions.set()
+        self._drain_began_at: float | None = None
 
     def load(self) -> None:
         """Load the engine.
@@ -405,8 +409,31 @@ class Hearing:
             raise RuntimeError(message)
 
     def capture(self) -> HearingEngine | None:
-        """The loaded engine, or `None` while hearing is unavailable."""
-        return self._ready
+        """The loaded engine, or `None` while hearing is unavailable or draining.
+
+        A session or recording already admitted keeps using the engine to its end.
+        """
+        return None if self.draining else self._ready
+
+    def begin_drain(self) -> None:
+        """Admit no new session or recording; the ones admitted run on."""
+        if self._drain_began_at is None:
+            self._drain_began_at = self.gate.clock.now()
+
+    @property
+    def draining(self) -> bool:
+        """Whether the drain began."""
+        return self._drain_began_at is not None
+
+    def drain_age(self) -> float:
+        """Seconds on the gate's clock since the drain began; 0 before it."""
+        if self._drain_began_at is None:
+            return 0.0
+        return self.gate.clock.now() - self._drain_began_at
+
+    async def sessions_ended(self) -> None:
+        """Wait until no live session holds a place."""
+        await self._no_sessions.wait()
 
     def open_detector(self) -> SpeechDetector:
         """A detector at the start of one live session's audio.
@@ -427,10 +454,13 @@ class Hearing:
         if self._sessions >= limit:
             return None
         self._sessions += 1
+        self._no_sessions.clear()
         return Lease(self._end_session)
 
     def _end_session(self) -> None:
         self._sessions -= 1
+        if not self._sessions:
+            self._no_sessions.set()
 
     def submit[Result](
         self, lease: Lease, job: Callable[[HearingEngine], Result]
@@ -473,7 +503,7 @@ class Hearing:
         """The contract body of hearing for GET /health."""
         return {
             "model": self._engine.model_name if self._engine else "unavailable",
-            "ready": self._ready is not None,
+            "ready": self.capture() is not None,
         }
 
 
