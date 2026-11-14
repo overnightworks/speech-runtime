@@ -208,8 +208,8 @@ it the server's shutdown cuts what still runs and the engines close, each of fiv
 steps with a 5 s grace of its own; engines that will not close (a decode cannot be
 interrupted) end the process without them, with exit 0. A pod's grace period must
 be at least the drain bound, the five graces (25 s) and the time its endpoint
-takes to leave the balancer (a preStop sleep), and a replacement must start before the old pod stops (a rolling update that
-never lowers the ready count).
+takes to leave the balancer (a preStop sleep), and a replacement must start before
+the old pod stops (a rolling update that never lowers the ready count).
 
 ## Crosscutting Concepts
 

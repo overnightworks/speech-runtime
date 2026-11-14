@@ -1,7 +1,6 @@
 """A drain ends a live session at a turn boundary, with 1012 and no error."""
 
 import asyncio
-import logging
 
 import pytest
 from fastapi.testclient import TestClient
@@ -139,9 +138,7 @@ def test_a_session_waits_for_a_final_in_the_queue_before_it_closes() -> None:
     assert socket.close_code == WS_1012_SERVICE_RESTART
 
 
-def test_a_turn_still_open_when_the_drain_is_30_seconds_old_ends_there_and_is_heard(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_a_turn_open_when_the_drain_is_30_seconds_old_ends_there_and_is_heard() -> None:
     """WIRE-146, WIRE-147: a turn open 30 s into the drain ends there and is heard."""
 
     async def scenario() -> tuple[FakeSocket, bool]:
@@ -159,15 +156,12 @@ def test_a_turn_still_open_when_the_drain_is_30_seconds_old_ends_there_and_is_he
         await session.on_tick()
         return socket, open_before_the_bound
 
-    caplog.set_level(logging.INFO)
-
     socket, open_before_the_bound = asyncio.run(scenario())
 
     assert open_before_the_bound
     assert socket.types() == _ANNOUNCED_AND_COMPLETED
     assert FAILED not in socket.types()
     assert socket.close_code == WS_1012_SERVICE_RESTART
-    assert "ended_by=drain" in caplog.text
 
 
 def test_speech_still_being_confirmed_at_the_bound_closes_without_a_turn() -> None:

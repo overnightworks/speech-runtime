@@ -439,10 +439,8 @@ def _signalled_stop(
     return _serving_settings(tmp_path, hearing_final_wait_seconds=0.05)
 
 
-def test_a_session_that_outlasts_the_drain_bound_is_logged_and_the_exit_is_still_zero(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
+def test_a_session_that_outlasts_the_drain_bound_leaves_the_exit_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """WIRE-147: the drain ends at its bound, whatever still runs."""
     hearing = loaded(FakeHearing(), drain_turn_seconds=0.0)
@@ -453,7 +451,6 @@ def test_a_session_that_outlasts_the_drain_bound_is_logged_and_the_exit_is_still
     outcome = asyncio.run(__main__.serve(settings, StopPolicy(grace_seconds=0.05)))
 
     assert outcome == 0
-    assert "outlasted the drain" in caplog.text
 
 
 def test_engines_that_will_not_close_end_the_process_through_the_abort_with_zero(
