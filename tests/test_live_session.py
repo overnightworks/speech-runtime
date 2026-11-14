@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import logging
 from typing import TYPE_CHECKING
 
 import pytest
@@ -395,23 +394,6 @@ def test_a_decode_failure_fails_every_announced_item_then_errors_and_closes() ->
 
     assert end_is(socket, "unavailable", failed=2)
     assert socket.of_type(COMPLETED) == []
-
-
-def test_no_log_record_holds_the_heard_text_of_a_failed_decode(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    async def scenario() -> None:
-        engine = FakeHearing()
-        engine.fail_transcription = True
-        session, socket = await started(loaded(engine, FakeClock()))
-        await commit_a_turn(session)
-        await socket.until_closed()
-
-    caplog.set_level(logging.DEBUG)
-
-    asyncio.run(scenario())
-
-    assert HEARD_TEXT not in caplog.text
 
 
 def test_a_lost_engine_ends_the_session_as_unavailable() -> None:

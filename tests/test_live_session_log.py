@@ -81,7 +81,9 @@ def test_a_completed_turn_logs_one_line_with_its_timings(
     )
 
 
-def test_a_failed_turn_logs_no_timings(caplog: pytest.LogCaptureFixture) -> None:
+def test_a_failed_turn_logs_no_timings_and_none_of_the_heard_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     async def scenario() -> None:
         engine = FakeHearing()
         engine.fail_transcription = True
@@ -89,11 +91,12 @@ def test_a_failed_turn_logs_no_timings(caplog: pytest.LogCaptureFixture) -> None
         await commit_a_turn(session)
         await socket.until_closed()
 
-    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.DEBUG)
 
     asyncio.run(scenario())
 
     assert _timing_lines(caplog) == []
+    assert HEARD_TEXT not in caplog.text
 
 
 def test_the_timing_line_holds_none_of_the_heard_text(
