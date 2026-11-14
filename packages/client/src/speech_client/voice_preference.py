@@ -229,9 +229,17 @@ class _Speaking:
     chosen: VoiceChosen
     first: bytes
     chunks: Generator[bytes | StreamFailure]
+    seconds_left: Callable[[], float]
 
     def resumed(self) -> Generator[bytes | StreamFailure]:
-        """The first chunk and the ones after it."""
+        """The first chunk and the ones after it, unless the deadline passed.
+
+        The first chunk is already read, so no socket read ends it at the
+        deadline; the consumer may have held the stream past it.
+        """
+        if self.seconds_left() <= 0:
+            yield PastDeadline()
+            return
         yield self.first
         yield from self.chunks
 
@@ -286,6 +294,7 @@ def _choose(  # noqa: PLR0913
                 ),
                 first,
                 chunks,
+                lambda: _seconds_left(deadline_seconds, began, clock),
             )
         chunks.close()
         if not _is_unavailable(first):
