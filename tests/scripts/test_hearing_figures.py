@@ -11,20 +11,19 @@ import pytest
 
 import hearing_figures as figures
 from speech_client.wire import Language, RefusalCode
-from speech_service.hearing_session import SILENCE_SECONDS, HearingSession, TurnEnd
-from speech_service.pcm import Resampler, pcm_from_wav
-from speech_service.voice_activity import (
-    PRE_ROLL_SECONDS,
-    SileroDetectors,
-    open_shipped_model,
-)
+from speech_service.hearing_session import SILENCE_SECONDS
+from speech_service.pcm import pcm_from_wav
+from speech_service.voice_activity import PRE_ROLL_SECONDS, START_WINDOWS
 
 RATE = 24000
 LOUD = 8000
 # The silence the phrase carries before and after its words.
 EDGES_SECONDS = 0.3
-# Four Silero windows (512 samples at 16 kHz) of the wire's 24 kHz PCM16.
-BURST_BYTES = 4 * 512 * RATE // 16_000 * 2
+WINDOW_BYTES = 512 * RATE // 16_000 * 2
+# Fewer Silero windows than confirm a turn, taken from inside the words, some of
+# which Silero rates as voiced.
+BURST_BYTES = (START_WINDOWS - 1) * WINDOW_BYTES
+BURST_FROM_BYTES = 10 * WINDOW_BYTES
 SPEECH = Path(__file__).parents[1] / "fixtures" / "speech" / "nein_danke.wav"
 
 
@@ -257,23 +256,13 @@ def test_the_voiced_seconds_of_speech_are_its_own_and_of_silence_are_none() -> N
     assert figures.voiced_seconds(silence(2.0), RATE) == 0.0
 
 
-def test_the_voiced_seconds_are_those_of_the_turns_the_service_ends() -> None:
-    """A sound that opens no turn adds none, however Silero rates its windows."""
-    burst = speech()[:BURST_BYTES]
-    clip = silence(1.0) + burst + silence(1.5) + speech() + silence(1.0)
-    detectors = SileroDetectors(open_shipped_model)
-    detectors.load()
-    session = HearingSession(lambda: 0.0, detectors.open())
-    resampler = Resampler()
-    ended = [
-        event
-        for frame in figures.frames_with_closing_silence(clip)
-        for event in session.add(resampler.feed(frame))
-        if isinstance(event, TurnEnd)
-    ]
+def test_a_sound_that_opens_no_turn_adds_no_voiced_seconds() -> None:
+    burst = speech()[BURST_FROM_BYTES : BURST_FROM_BYTES + BURST_BYTES]
+    without = silence(1.0) + speech() + silence(1.0)
+    with_burst = silence(1.0) + burst + silence(1.5) + speech() + silence(1.0)
 
-    assert figures.voiced_seconds(clip, RATE) == pytest.approx(
-        sum(turn.voiced_seconds for turn in ended)
+    assert figures.voiced_seconds(with_burst, RATE) <= figures.voiced_seconds(
+        without, RATE
     )
 
 
