@@ -372,6 +372,45 @@ def test_the_stream_hands_over_the_first_audio_while_the_voice_still_renders() -
     assert isinstance(rest[-1], Finished)
 
 
+def test_a_streamed_preference_hands_over_the_first_audio_while_the_voice_renders() -> (
+    None
+):
+    """WIRE-90: a preference stream plays as it arrives, not after the whole speak."""
+    voice = GatedSpeaking(hold_last_chunk=True)
+    pair = valid_pair()
+
+    def stream(base_url: str) -> Iterator[PreferenceStreamItem]:
+        return speak_stream_with_preference(
+            base_url,
+            "Hallo",
+            [VoiceId.RYAN, VoiceId.THORSTEN],
+            language=Language.DE,
+            workload_token=pair.workload,
+            person_token=pair.person,
+            deadline_seconds=GATE_TIMEOUT_SECONDS,
+            cap_bytes=CAP_BYTES,
+        )
+
+    async def scenario() -> tuple[
+        bool, PreferenceStreamItem, list[PreferenceStreamItem]
+    ]:
+        async with _serving(voice) as server:
+            voice.release_first_step.set()
+            items = stream(server.base_url)
+            chosen = await asyncio.to_thread(next, items)
+            first = await asyncio.to_thread(next, items)
+            still_rendering = not voice.release_last_chunk.is_set()
+            voice.release_all()
+            rest = await asyncio.to_thread(list, items)
+            return still_rendering and isinstance(first, bytes), chosen, rest
+
+    first_came_early, chosen, rest = asyncio.run(scenario())
+
+    assert chosen == VoiceChosen(VoiceId.THORSTEN, instructions_left_out=False)
+    assert first_came_early
+    assert isinstance(rest[-1], Finished)
+
+
 @pytest.mark.parametrize("chunks_before_failing", [0, 1])
 def test_a_stream_the_service_aborted_ends_cut_and_never_finished(
     chunks_before_failing: int,
